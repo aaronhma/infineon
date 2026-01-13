@@ -1,14 +1,213 @@
+import os
 import random
 import time
+import uuid
 from collections import deque
+from datetime import datetime
 
 import cv2
 import mediapipe as mp
 import numpy as np
 import pygame
+from dotenv import load_dotenv
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from scipy.spatial import distance
+from supabase import Client, create_client
+
+# Load environment variables from .env file
+load_dotenv()
+
+
+class SupabaseUploader:
+    """Handles uploading face detection data and vehicle telemetry to Supabase"""
+
+    def __init__(self):
+        # Load from environment variables
+        supabase_url = os.environ.get("SUPABASE_URL")
+        supabase_key = os.environ.get("SUPABASE_SECRET_KEY")
+        self.vehicle_id = os.environ.get("VEHICLE_ID")
+        self.vehicle_name = os.environ.get("VEHICLE_NAME", "Unknown Vehicle")
+
+        if not supabase_url:
+            raise RuntimeError(
+                "SUPABASE_URL not found. Please set it in your .env file."
+            )
+        if not supabase_key:
+            raise RuntimeError(
+                "SUPABASE_KEY not found. Please set it in your .env file."
+            )
+        if not self.vehicle_id:
+            raise RuntimeError("VEHICLE_ID not found. Please set it in your .env file.")
+
+        self.client: Client = create_client(supabase_url, supabase_key)
+        self.session_id = str(uuid.uuid4())
+        self.last_upload_time = 0
+        self.last_realtime_update = 0
+        self.upload_cooldown = 2.0  # Minimum seconds between face uploads
+        self.realtime_cooldown = 0.5  # Update realtime every 500ms
+
+        # Register vehicle on startup
+        self._register_vehicle()
+
+        print(
+            f"Supabase connected. Vehicle ID: {self.vehicle_id}, Session ID: {self.session_id}"
+        )
+
+    def _generate_invite_code(self):
+        """Generate a random 6-character alphanumeric invite code"""
+        chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        return "".join(random.choice(chars) for _ in range(6))
+
+    def _register_vehicle(self):
+        """Register or update vehicle in database on startup"""
+        try:
+            # Check if vehicle exists
+            existing = (
+                self.client.table("vehicles")
+                .select("id, invite_code")
+                .eq("id", self.vehicle_id)
+                .execute()
+            )
+
+            if existing.data:
+                # Vehicle exists, update name if changed
+                self.client.table("vehicles").update(
+                    {
+                        "name": self.vehicle_name,
+                        "updated_at": datetime.now().isoformat(),
+                    }
+                ).eq("id", self.vehicle_id).execute()
+                invite_code = existing.data[0]["invite_code"]
+                print(f"Vehicle registered. Invite code: {invite_code}")
+            else:
+                # Create new vehicle with invite code
+                invite_code = self._generate_invite_code()
+                self.client.table("vehicles").insert(
+                    {
+                        "id": self.vehicle_id,
+                        "name": self.vehicle_name,
+                        "invite_code": invite_code,
+                    }
+                ).execute()
+                print(f"New vehicle created. Invite code: {invite_code}")
+
+            # Initialize realtime record
+            self.client.table("vehicle_realtime").upsert(
+                {
+                    "vehicle_id": self.vehicle_id,
+                    "updated_at": datetime.now().isoformat(),
+                }
+            ).execute()
+
+        except Exception as e:
+            print(f"Error registering vehicle: {e}")
+            raise
+
+    def update_vehicle_realtime(
+        self,
+        speed_mph: int,
+        heading_degrees: int,
+        compass_direction: str,
+        is_speeding: bool,
+        driver_status: str = "unknown",
+        intoxication_score: int = 0,
+    ):
+        """Update vehicle real-time location/status (called frequently)"""
+        current_time = time.time()
+        if current_time - self.last_realtime_update < self.realtime_cooldown:
+            return None
+
+        try:
+            record = {
+                "vehicle_id": self.vehicle_id,
+                "updated_at": datetime.now().isoformat(),
+                "speed_mph": speed_mph,
+                "heading_degrees": heading_degrees,
+                "compass_direction": compass_direction,
+                "is_speeding": is_speeding,
+                "is_moving": speed_mph > 0,
+                "driver_status": driver_status,
+                "intoxication_score": intoxication_score,
+            }
+
+            self.client.table("vehicle_realtime").upsert(record).execute()
+            self.last_realtime_update = current_time
+
+        except Exception as e:
+            print(f"Error updating vehicle realtime: {e}")
+
+    def should_upload(self):
+        """Check if enough time has passed since last upload"""
+        current_time = time.time()
+        return current_time - self.last_upload_time >= self.upload_cooldown
+
+    def upload_face_detection(
+        self,
+        face_image: np.ndarray,
+        face_bbox: dict,
+        left_eye_state: str,
+        left_eye_ear: float,
+        right_eye_state: str,
+        right_eye_ear: float,
+        intox_data: dict,
+        driving_data: dict = None,
+    ):
+        """Upload face snapshot and metadata to Supabase"""
+        if not self.should_upload():
+            return None
+
+        try:
+            # Generate unique filename (vehicle_id/session_id/timestamp.jpg)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            filename = f"{self.vehicle_id}/{self.session_id}/{timestamp}.jpg"
+
+            # Encode image to JPEG bytes
+            _, buffer = cv2.imencode(".jpg", face_image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            image_bytes = buffer.tobytes()
+
+            # Upload image to storage
+            storage_response = self.client.storage.from_("face-snapshots").upload(
+                path=filename,
+                file=image_bytes,
+                file_options={"content-type": "image/jpeg"},
+            )
+
+            # Prepare metadata record
+            avg_ear = (left_eye_ear + right_eye_ear) / 2
+            record = {
+                "vehicle_id": self.vehicle_id,
+                "face_bbox": face_bbox,
+                "left_eye_state": left_eye_state,
+                "left_eye_ear": round(left_eye_ear, 4),
+                "right_eye_state": right_eye_state,
+                "right_eye_ear": round(right_eye_ear, 4),
+                "avg_ear": round(avg_ear, 4),
+                "is_drowsy": intox_data.get("drowsy", False),
+                "is_excessive_blinking": intox_data.get("excessive_blinking", False),
+                "is_unstable_eyes": intox_data.get("unstable_eyes", False),
+                "intoxication_score": intox_data.get("score", 0),
+                "image_path": filename,
+                "session_id": self.session_id,
+            }
+
+            # Add driving data if available
+            if driving_data:
+                record["speed_mph"] = driving_data.get("speed")
+                record["heading_degrees"] = driving_data.get("heading")
+                record["compass_direction"] = driving_data.get("direction")
+                record["is_speeding"] = driving_data.get("is_speeding", False)
+
+            # Insert record into database
+            db_response = self.client.table("face_detections").insert(record).execute()
+
+            self.last_upload_time = time.time()
+            print(f"Uploaded face detection: {filename}")
+            return db_response
+
+        except Exception as e:
+            print(f"Error uploading to Supabase: {e}")
+            return None
 
 
 class WarningSound:
@@ -295,7 +494,12 @@ class FaceAnalyzer:
         }
 
     def process_frame(self, frame, timestamp_ms):
-        """Process a single frame for face and eye detection"""
+        """Process a single frame for face and eye detection
+
+        Returns:
+            tuple: (processed_frame, detection_data)
+                detection_data contains: intox_data, face_crop, face_bbox, eye_states
+        """
         h, w, _ = frame.shape
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -305,7 +509,8 @@ class FaceAnalyzer:
         # Detect face landmarks
         results = self.landmarker.detect_for_video(mp_image, timestamp_ms)
 
-        intox_data = None  # Track intoxication data for alert system
+        # Detection data to return
+        detection_data = None
 
         if results.face_landmarks:
             for face_landmarks in results.face_landmarks:
@@ -341,6 +546,30 @@ class FaceAnalyzer:
 
                 # Detect intoxication
                 intox_data = self.detect_intoxication(left_ear, right_ear)
+
+                # Extract face crop for upload (with padding)
+                padding = 20
+                crop_x_min = max(0, x_min - padding)
+                crop_y_min = max(0, y_min - padding)
+                crop_x_max = min(w, x_max + padding)
+                crop_y_max = min(h, y_max + padding)
+                face_crop = frame[crop_y_min:crop_y_max, crop_x_min:crop_x_max].copy()
+
+                # Build detection data for upload
+                detection_data = {
+                    "intox_data": intox_data,
+                    "face_crop": face_crop,
+                    "face_bbox": {
+                        "x_min": x_min,
+                        "y_min": y_min,
+                        "x_max": x_max,
+                        "y_max": y_max,
+                    },
+                    "left_eye_state": left_eye_state,
+                    "left_eye_ear": left_ear,
+                    "right_eye_state": right_eye_state,
+                    "right_eye_ear": right_ear,
+                }
 
                 # Display information
                 y_offset = y_min - 10
@@ -421,7 +650,7 @@ class FaceAnalyzer:
                         2,
                     )
 
-        return frame, intox_data
+        return frame, detection_data
 
 
 def apply_zoom(frame, zoom_level):
@@ -1034,6 +1263,7 @@ def main():
     print("- Camera zoom control (0.5x - 10x)")
     print("- Driving speed simulation (0-100 MPH)")
     print("- Warning sound alerts for speeding and drowsiness")
+    print("- Supabase cloud sync with real-time vehicle tracking")
     print("\nIntoxication Indicators:")
     print("- Drowsiness (prolonged eye closure)")
     print("- Excessive blinking patterns")
@@ -1051,6 +1281,7 @@ def main():
     settings = Settings()
     driving_sim = DrivingSimulator()
     warning_sound = WarningSound()
+    supabase_uploader = SupabaseUploader()
     frame_count = 0
 
     while True:
@@ -1072,11 +1303,58 @@ def main():
         driving_sim.update_speed()
 
         # Process frame with AI detection
-        processed_frame, intox_data = analyzer.process_frame(zoomed_frame, timestamp_ms)
+        processed_frame, detection_data = analyzer.process_frame(
+            zoomed_frame, timestamp_ms
+        )
+
+        # Extract intox_data for alerts
+        intox_data = detection_data["intox_data"] if detection_data else None
 
         # Check for drowsy/intoxicated driver and play alert
         if intox_data and intox_data["score"] >= 4:
             warning_sound.play_drowsy_alert()
+
+        # Determine driver status for realtime update
+        if intox_data:
+            if intox_data["score"] >= 4:
+                driver_status = "impaired"
+            elif intox_data["score"] >= 2:
+                driver_status = "drowsy"
+            else:
+                driver_status = "alert"
+            intox_score = intox_data["score"]
+        else:
+            driver_status = "unknown"
+            intox_score = 0
+
+        # Update vehicle realtime data (every 500ms)
+        supabase_uploader.update_vehicle_realtime(
+            speed_mph=driving_sim.get_speed(),
+            heading_degrees=driving_sim.get_heading(),
+            compass_direction=driving_sim.get_compass_direction(),
+            is_speeding=driving_sim.is_speeding(),
+            driver_status=driver_status,
+            intoxication_score=intox_score,
+        )
+
+        # Upload face detection to Supabase (every 2s when face detected)
+        if detection_data and supabase_uploader.should_upload():
+            driving_data = {
+                "speed": driving_sim.get_speed(),
+                "heading": driving_sim.get_heading(),
+                "direction": driving_sim.get_compass_direction(),
+                "is_speeding": driving_sim.is_speeding(),
+            }
+            supabase_uploader.upload_face_detection(
+                face_image=detection_data["face_crop"],
+                face_bbox=detection_data["face_bbox"],
+                left_eye_state=detection_data["left_eye_state"],
+                left_eye_ear=detection_data["left_eye_ear"],
+                right_eye_state=detection_data["right_eye_state"],
+                right_eye_ear=detection_data["right_eye_ear"],
+                intox_data=detection_data["intox_data"],
+                driving_data=driving_data,
+            )
 
         # Draw driving info with warning sound
         processed_frame = draw_driving_info(processed_frame, driving_sim, warning_sound)

@@ -4,4 +4,5 @@ numpy
 scipy
 pygame
 supabase
+python-dotenv
 # TODO: add grok?

@@ -72,20 +72,24 @@ $ curl -L -o hand_landmarker.task https://storage.googleapis.com/mediapipe-model
 ## Running Locally
 
 1. Initialize the project:
-   ```bash
-   uv init
-   uv venv
-   ```
+
+```zsh
+$ uv init
+$ uv venv
+$ source .venv/bin/activate
+```
 
 2. Install dependencies:
-   ```bash
-   uv pip install -r requirements.txt
-   ```
+
+```zsh
+$ uv pip install -r requirements.txt
+```
 
 3. Run the camera viewer:
-   ```bash
-   uv run python camera_viewer.py
-   ```
+
+```zsh
+$ uv run python main.py
+```
 
 4. Press 'q' to quit the application
 
