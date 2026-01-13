@@ -1,0 +1,7 @@
+opencv-python
+mediapipe
+numpy
+scipy
+pygame
+supabase
+# TODO: add grok?

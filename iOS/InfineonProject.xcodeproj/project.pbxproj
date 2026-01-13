@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		8BA03AE12F16D76100F32CD2 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = 8BA03AE02F16D76100F32CD2 /* Auth */; };
+		8BA03AE32F16D76100F32CD2 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 8BA03AE22F16D76100F32CD2 /* Supabase */; };
 		8BCC5F0F2F15FAAC0073CF6E /* AaronUI in Frameworks */ = {isa = PBXBuildFile; productRef = 8BCC5F0E2F15FAAC0073CF6E /* AaronUI */; };
 /* End PBXBuildFile section */
 
@@ -56,7 +58,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8BA03AE12F16D76100F32CD2 /* Auth in Frameworks */,
 				8BCC5F0F2F15FAAC0073CF6E /* AaronUI in Frameworks */,
+				8BA03AE32F16D76100F32CD2 /* Supabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +122,8 @@
 			name = InfineonProject;
 			packageProductDependencies = (
 				8BCC5F0E2F15FAAC0073CF6E /* AaronUI */,
+				8BA03AE02F16D76100F32CD2 /* Auth */,
+				8BA03AE22F16D76100F32CD2 /* Supabase */,
 			);
 			productName = InfineonProject;
 			productReference = 8BEAA9FC2F15E92F00D3D09D /* InfineonProject.app */;
@@ -203,6 +209,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8BCC5F0D2F15FAAC0073CF6E /* XCRemoteSwiftPackageReference "AaronUI" */,
+				8BA03ADF2F16D76100F32CD2 /* XCRemoteSwiftPackageReference "supabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 8BEAA9FD2F15E92F00D3D09D /* Products */;
@@ -591,6 +598,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		8BA03ADF2F16D76100F32CD2 /* XCRemoteSwiftPackageReference "supabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/supabase/supabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.5.1;
+			};
+		};
 		8BCC5F0D2F15FAAC0073CF6E /* XCRemoteSwiftPackageReference "AaronUI" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/aaronhma/AaronUI.git";
@@ -602,6 +617,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		8BA03AE02F16D76100F32CD2 /* Auth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8BA03ADF2F16D76100F32CD2 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Auth;
+		};
+		8BA03AE22F16D76100F32CD2 /* Supabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 8BA03ADF2F16D76100F32CD2 /* XCRemoteSwiftPackageReference "supabase-swift" */;
+			productName = Supabase;
+		};
 		8BCC5F0E2F15FAAC0073CF6E /* AaronUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 8BCC5F0D2F15FAAC0073CF6E /* XCRemoteSwiftPackageReference "AaronUI" */;
