@@ -83,6 +83,11 @@ struct ContentView: View {
                     .safeAreaPadding(.bottom, safeAreaBottomPadding)
             }
             
+            Tab("Vehicle", systemImage: "car.fill") {
+                VehicleView()
+                    .safeAreaPadding(.bottom, safeAreaBottomPadding)
+            }
+            
             Tab("New", systemImage: "square.grid.2x2.fill") {
                 NavigationStack {
                     List {
@@ -91,18 +96,6 @@ struct ContentView: View {
                         }
                     }
                     .navigationTitle("New")
-                    .safeAreaPadding(.bottom, safeAreaBottomPadding)
-                }
-            }
-            
-            Tab("Radio", systemImage: "dot.radiowaves.left.and.right") {
-                NavigationStack {
-                    List {
-                        ForEach(1..<35) { i in
-                            Text("Row \(i)")
-                        }
-                    }
-                    .navigationTitle("Radio")
                     .safeAreaPadding(.bottom, safeAreaBottomPadding)
                 }
             }

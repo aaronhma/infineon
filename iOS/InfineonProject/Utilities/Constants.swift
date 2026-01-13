@@ -9,7 +9,7 @@ import SwiftUI
 
 struct Constants {
     enum HomeRouteAnnouncer: String {
-        case _trips = "_trips"
+        case trips = "_trips"
         case _tripDetail = "_tripDetail"
     }
 }

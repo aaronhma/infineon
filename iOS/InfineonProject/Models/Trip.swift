@@ -58,12 +58,12 @@ final class Trip: Identifiable {
     }
     
     @Transient
-    var approachIcon: String {
+    var tripIcon: String {
         return switch status {
         case .danger:
             "xmark"
         case .warning:
-            "questionmark"
+            "exclamationmark.triangle.fill"
         case .ok:
             "checkmark"
         }

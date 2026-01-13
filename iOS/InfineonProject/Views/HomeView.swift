@@ -13,6 +13,8 @@ struct HomeView: View {
     @State var progressMiddle = CGFloat.zero
     @State var progressInner = CGFloat.zero
     
+    @Namespace private var namespace
+    
     let trips: [Trip] = (0..<35).map { _ in
         let statuses = Trip.Status.allCases
         let randomStatus = statuses.randomElement() ?? .ok
@@ -64,7 +66,7 @@ struct HomeView: View {
                         Text("Today")
                             .foregroundStyle(Color.primary)
                             .font(.title2)
-                                        
+                        
                         Spacer()
                         
                         Button("Update") {
@@ -78,9 +80,9 @@ struct HomeView: View {
                 }
                 
                 Section {
-                    ForEach(trips) { i in
-                        NavigationLink(value: i) {
-                            Text("Trip #\(i)")
+                    ForEach(trips.prefix(8)) { trip in
+                        NavigationLink(value: trip) {
+                            TripInfoView(trip: trip, namespace: namespace)
                         }
                     }
                 } header: {
@@ -104,13 +106,23 @@ struct HomeView: View {
             .navigationTitle("Home")
             .navigationDestination(for: String.self) { i in
                 switch i {
-                case Constants.HomeRouteAnnouncer._trips.rawValue:
-                    Text("Recent trips will appear here.")
+                case Constants.HomeRouteAnnouncer.trips.rawValue:
+                    List {
+                        ForEach(trips) { trip in
+//                            NavigationLink(value: trip) {
+//                                TripInfoView(trip: trip, namespace: namespace)
+//                            }
+                        }
+                        .navigationTitle("Trips")
+                    }
                 default:
                     Text("Unknown destination: \(i)")
                 }
             }
-            .navigationDestination(for: Trip.self, destination: TripDetailView.init)
+            .navigationDestination(for: Trip.self) { trip in
+                TripDetailView(trip: trip, namespace: namespace)
+//                    .navigationTransition(.zoom(sourceID: trip.id, in: namespace))
+            }
         }
     }
 }
