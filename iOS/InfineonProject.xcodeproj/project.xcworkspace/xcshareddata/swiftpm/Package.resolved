@@ -1,0 +1,15 @@
+{
+  "originHash" : "9e314e08495573d67b8b06fa98c649ee0aa82c0e9c5fd643b9b1e6f3442b4897",
+  "pins" : [
+    {
+      "identity" : "aaronui",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/aaronhma/AaronUI.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "3949b4cd0b20993d19cd70865fb3a7760532fcd6"
+      }
+    }
+  ],
+  "version" : 3
+}
