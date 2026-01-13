@@ -25,8 +25,25 @@ struct InfineonProjectApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
         .modelContainer(sharedModelContainer)
+    }
+}
+
+struct RootView: View {
+    var body: some View {
+        Group {
+            if supabase.isLoading {
+                ProgressView("Loading...")
+                    .controlSize(.extraLarge)
+            } else if supabase.isLoggedIn {
+                ContentView()
+            } else {
+                AuthView()
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: supabase.isLoggedIn)
+        .animation(.easeInOut(duration: 0.3), value: supabase.isLoading)
     }
 }

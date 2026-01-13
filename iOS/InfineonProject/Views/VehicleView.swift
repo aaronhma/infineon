@@ -9,6 +9,8 @@ import SwiftUI
 import AaronUI
 
 struct VehicleView: View {
+    @State private var showingVehicleSettings = false
+    
     var body: some View {
         NavigationStack {
             ZStack {
@@ -40,25 +42,29 @@ struct VehicleView: View {
                             
                             Spacer()
                             
-                            Image(systemName: "person.fill")
-                                .font(.system(size: 30))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 32)
-                                .overlay {
-                                    Circle()
-                                        .stroke(
-                                            LinearGradient(
-                                                gradient: Gradient(
-                                                    colors: [
-                                                        Color.white,
-                                                        Color.white.opacity(0.4)
-                                                    ]
-                                                ),
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
+                            Button {
+                                showingVehicleSettings.toggle()
+                            } label: {
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 30))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 32)
+                                    .overlay {
+                                        Circle()
+                                            .stroke(
+                                                LinearGradient(
+                                                    gradient: Gradient(
+                                                        colors: [
+                                                            Color.white,
+                                                            Color.white.opacity(0.4)
+                                                        ]
+                                                    ),
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                )
                                             )
-                                        )
-                                }
+                                    }
+                            }
                         }
                         
                         HStack {
@@ -144,6 +150,9 @@ struct VehicleView: View {
                 }
                 .scrollIndicators(.hidden)
             }
+        }
+        .sheet(isPresented: $showingVehicleSettings) {
+            VehicleListView()
         }
     }
 }

@@ -119,16 +119,17 @@ class SupabaseUploader:
             return None
 
         try:
+            # Convert to native Python types to ensure JSON serialization
             record = {
                 "vehicle_id": self.vehicle_id,
                 "updated_at": datetime.now().isoformat(),
-                "speed_mph": speed_mph,
-                "heading_degrees": heading_degrees,
-                "compass_direction": compass_direction,
-                "is_speeding": is_speeding,
-                "is_moving": speed_mph > 0,
-                "driver_status": driver_status,
-                "intoxication_score": intoxication_score,
+                "speed_mph": int(speed_mph),
+                "heading_degrees": int(heading_degrees),
+                "compass_direction": str(compass_direction),
+                "is_speeding": bool(is_speeding),
+                "is_moving": bool(speed_mph > 0),
+                "driver_status": str(driver_status),
+                "intoxication_score": int(intoxication_score),
             }
 
             self.client.table("vehicle_realtime").upsert(record).execute()
@@ -173,30 +174,30 @@ class SupabaseUploader:
                 file_options={"content-type": "image/jpeg"},
             )
 
-            # Prepare metadata record
-            avg_ear = (left_eye_ear + right_eye_ear) / 2
+            # Prepare metadata record (convert numpy types to Python native types)
+            avg_ear = float((left_eye_ear + right_eye_ear) / 2)
             record = {
                 "vehicle_id": self.vehicle_id,
                 "face_bbox": face_bbox,
                 "left_eye_state": left_eye_state,
-                "left_eye_ear": round(left_eye_ear, 4),
+                "left_eye_ear": float(round(left_eye_ear, 4)),
                 "right_eye_state": right_eye_state,
-                "right_eye_ear": round(right_eye_ear, 4),
-                "avg_ear": round(avg_ear, 4),
-                "is_drowsy": intox_data.get("drowsy", False),
-                "is_excessive_blinking": intox_data.get("excessive_blinking", False),
-                "is_unstable_eyes": intox_data.get("unstable_eyes", False),
-                "intoxication_score": intox_data.get("score", 0),
+                "right_eye_ear": float(round(right_eye_ear, 4)),
+                "avg_ear": float(round(avg_ear, 4)),
+                "is_drowsy": bool(intox_data.get("drowsy", False)),
+                "is_excessive_blinking": bool(intox_data.get("excessive_blinking", False)),
+                "is_unstable_eyes": bool(intox_data.get("unstable_eyes", False)),
+                "intoxication_score": int(intox_data.get("score", 0)),
                 "image_path": filename,
                 "session_id": self.session_id,
             }
 
             # Add driving data if available
             if driving_data:
-                record["speed_mph"] = driving_data.get("speed")
-                record["heading_degrees"] = driving_data.get("heading")
-                record["compass_direction"] = driving_data.get("direction")
-                record["is_speeding"] = driving_data.get("is_speeding", False)
+                record["speed_mph"] = int(driving_data.get("speed", 0))
+                record["heading_degrees"] = int(driving_data.get("heading", 0))
+                record["compass_direction"] = str(driving_data.get("direction", "N"))
+                record["is_speeding"] = bool(driving_data.get("is_speeding", False))
 
             # Insert record into database
             db_response = self.client.table("face_detections").insert(record).execute()
