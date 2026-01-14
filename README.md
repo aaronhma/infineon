@@ -4,6 +4,14 @@
 
 We use a monorepo structure, so all project components can be in one repo.
 
+## [Firmware](firmware/README.md)
+
+**Folder:** [`firmware`](firmware/README.md)
+
+- *Built with:* C, MediaPipe
+
+The actual low-level C code that runs on the Infineon AI board.
+
 ## [iOS Project](iOS/)
 
 **Folder:** [`iOS`](iOS/)
