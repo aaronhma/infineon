@@ -124,7 +124,7 @@ struct VehicleRowView: View {
                     Spacer()
 
                     // Last updated
-                    Text(data.updatedAt, style: .relative)
+                    Text(data.updatedAt.formatted(date: .abbreviated, time: .standard))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -185,9 +185,45 @@ struct VehicleDetailView: View {
     let vehicle: Vehicle
     let realtimeData: VehicleRealtime?
 
+    @State private var unidentifiedCount: Int = 0
+    @State private var showingUnidentifiedFaces = false
+
     var body: some View {
         NavigationStack {
             List {
+                // Unidentified Faces Banner
+                if unidentifiedCount > 0 {
+                    Section {
+                        Button {
+                            showingUnidentifiedFaces.toggle()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "face.smiling")
+                                    .font(.title2)
+                                    .foregroundStyle(.orange)
+                                    .frame(width: 40)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(unidentifiedCount) unidentified face\(unidentifiedCount == 1 ? "" : "s")")
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+
+                                    Text("Add a profile")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                Image(systemName: "chevron.right")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+
                 // Vehicle Info
                 Section("Vehicle Info") {
                     LabeledContent("ID", value: vehicle.id)
@@ -236,7 +272,12 @@ struct VehicleDetailView: View {
 
                     Section("Activity") {
                         LabeledContent("Moving", value: data.isMoving ? "Yes" : "No")
-                        LabeledContent("Last Updated", value: data.updatedAt.formatted())
+                        HStack {
+                            Text("Last Updated")
+                            Spacer()
+                            Text(data.updatedAt, style: .relative)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 } else {
                     Section {
@@ -257,6 +298,23 @@ struct VehicleDetailView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingUnidentifiedFaces) {
+                UnidentifiedFacesView(vehicle: vehicle)
+            }
+            .task {
+                await loadUnidentifiedCount()
+            }
+        }
+    }
+
+    private func loadUnidentifiedCount() async {
+        do {
+            let count = try await supabase.getUnidentifiedFacesCount(for: vehicle.id)
+            await MainActor.run {
+                unidentifiedCount = count
+            }
+        } catch {
+            print("Error loading unidentified count: \(error)")
         }
     }
 }

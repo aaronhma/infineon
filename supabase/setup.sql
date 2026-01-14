@@ -92,6 +92,36 @@ CREATE INDEX IF NOT EXISTS idx_vehicles_invite_code ON public.vehicles(invite_co
 -- FACE DETECTIONS TABLE (updated with vehicle_id)
 -- ============================================
 
+-- ============================================
+-- DRIVER PROFILES TABLE
+-- ============================================
+
+-- Driver profiles: named faces for identification
+CREATE TABLE IF NOT EXISTS public.driver_profiles (
+    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+
+    -- Link to vehicle (drivers are per-vehicle)
+    vehicle_id TEXT NOT NULL REFERENCES public.vehicles(id) ON DELETE CASCADE,
+
+    -- Driver info
+    name TEXT NOT NULL,
+    notes TEXT,
+
+    -- Reference face image (path in storage bucket)
+    profile_image_path TEXT,
+
+    -- Created by user
+    created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_driver_profiles_vehicle_id ON public.driver_profiles(vehicle_id);
+
+-- ============================================
+-- FACE DETECTIONS TABLE (with driver profile link)
+-- ============================================
+
 -- Create table for face detection events
 CREATE TABLE IF NOT EXISTS public.face_detections (
     id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -99,6 +129,9 @@ CREATE TABLE IF NOT EXISTS public.face_detections (
 
     -- Link to vehicle
     vehicle_id TEXT REFERENCES public.vehicles(id) ON DELETE CASCADE,
+
+    -- Link to identified driver (NULL if unidentified)
+    driver_profile_id UUID REFERENCES public.driver_profiles(id) ON DELETE SET NULL,
 
     -- Face detection metadata
     face_bbox JSONB, -- {x_min, y_min, x_max, y_max}
@@ -134,6 +167,8 @@ CREATE INDEX IF NOT EXISTS idx_face_detections_created_at ON public.face_detecti
 CREATE INDEX IF NOT EXISTS idx_face_detections_session_id ON public.face_detections(session_id);
 CREATE INDEX IF NOT EXISTS idx_face_detections_intoxication ON public.face_detections(intoxication_score) WHERE intoxication_score >= 2;
 CREATE INDEX IF NOT EXISTS idx_face_detections_vehicle_id ON public.face_detections(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_face_detections_driver_profile ON public.face_detections(driver_profile_id);
+CREATE INDEX IF NOT EXISTS idx_face_detections_unidentified ON public.face_detections(vehicle_id) WHERE driver_profile_id IS NULL;
 
 -- ============================================
 -- ROW LEVEL SECURITY POLICIES
@@ -144,6 +179,7 @@ ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vehicle_access ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vehicle_realtime ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.face_detections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.driver_profiles ENABLE ROW LEVEL SECURITY;
 
 -- ============================================
 -- VEHICLES TABLE POLICIES
@@ -214,6 +250,71 @@ CREATE POLICY "face_detections_service_role_all" ON public.face_detections
 -- Authenticated users can read detections for vehicles they have access to
 CREATE POLICY "face_detections_select_with_access" ON public.face_detections
     FOR SELECT TO authenticated
+    USING (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    );
+
+-- Authenticated users can update driver_profile_id for vehicles they have access to
+CREATE POLICY "face_detections_update_driver_profile" ON public.face_detections
+    FOR UPDATE TO authenticated
+    USING (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    )
+    WITH CHECK (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    );
+
+-- ============================================
+-- DRIVER PROFILES TABLE POLICIES
+-- ============================================
+
+-- Service role can do everything
+CREATE POLICY "driver_profiles_service_role_all" ON public.driver_profiles
+    FOR ALL TO service_role
+    USING (true) WITH CHECK (true);
+
+-- Authenticated users can read profiles for vehicles they have access to
+CREATE POLICY "driver_profiles_select_with_access" ON public.driver_profiles
+    FOR SELECT TO authenticated
+    USING (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    );
+
+-- Authenticated users can create profiles for vehicles they have access to
+CREATE POLICY "driver_profiles_insert_with_access" ON public.driver_profiles
+    FOR INSERT TO authenticated
+    WITH CHECK (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    );
+
+-- Authenticated users can update profiles for vehicles they have access to
+CREATE POLICY "driver_profiles_update_with_access" ON public.driver_profiles
+    FOR UPDATE TO authenticated
+    USING (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    );
+
+-- Authenticated users can delete profiles for vehicles they have access to
+CREATE POLICY "driver_profiles_delete_with_access" ON public.driver_profiles
+    FOR DELETE TO authenticated
     USING (
         vehicle_id IN (
             SELECT vehicle_id FROM public.vehicle_access

@@ -7,16 +7,57 @@
 
 import SwiftUI
 
+enum DetectionFilter: Hashable {
+    case all
+    case driver(UUID)
+    case unidentified
+
+    var displayName: String {
+        switch self {
+        case .all:
+            return "All Drivers"
+        case .driver:
+            return "Driver"
+        case .unidentified:
+            return "Unidentified"
+        }
+    }
+}
+
 struct FaceDetectionsView: View {
     let vehicle: Vehicle
 
-    @State private var detections: [FaceDetection] = []
+    @State private var allDetections: [FaceDetection] = []
+    @State private var driverProfiles: [DriverProfile] = []
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var selectedFilter: DetectionFilter = .all
 
     private let columns = [
         GridItem(.adaptive(minimum: 100, maximum: 150), spacing: 8)
     ]
+
+    private var filteredDetections: [FaceDetection] {
+        switch selectedFilter {
+        case .all:
+            return allDetections
+        case .driver(let profileId):
+            return allDetections.filter { $0.driverProfileId == profileId }
+        case .unidentified:
+            return allDetections.filter { $0.driverProfileId == nil }
+        }
+    }
+
+    private var filterTitle: String {
+        switch selectedFilter {
+        case .all:
+            return "All Drivers"
+        case .driver(let profileId):
+            return driverProfiles.first { $0.id == profileId }?.name ?? "Driver"
+        case .unidentified:
+            return "Unidentified"
+        }
+    }
 
     var body: some View {
         Group {
@@ -30,20 +71,30 @@ struct FaceDetectionsView: View {
                 } actions: {
                     Button("Retry") {
                         Task {
-                            await loadDetections()
+                            await loadData()
                         }
                     }
                 }
-            } else if detections.isEmpty {
+            } else if filteredDetections.isEmpty {
                 ContentUnavailableView {
                     Label("No Detections", systemImage: "face.dashed")
                 } description: {
-                    Text("No face detections recorded for this vehicle yet.")
+                    if selectedFilter == .all {
+                        Text("No face detections recorded for this vehicle yet.")
+                    } else {
+                        Text("No detections found for this filter.")
+                    }
+                } actions: {
+                    if selectedFilter != .all {
+                        Button("Show All") {
+                            selectedFilter = .all
+                        }
+                    }
                 }
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 8) {
-                        ForEach(detections) { detection in
+                        ForEach(filteredDetections) { detection in
                             NavigationLink {
                                 FaceDetectionDetailView(detection: detection)
                             } label: {
@@ -58,22 +109,65 @@ struct FaceDetectionsView: View {
         }
         .navigationTitle("Face Detections")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button {
+                        selectedFilter = .all
+                    } label: {
+                        Label("All Drivers", systemImage: selectedFilter == .all ? "checkmark" : "")
+                    }
+
+                    Divider()
+
+                    ForEach(driverProfiles) { profile in
+                        Button {
+                            selectedFilter = .driver(profile.id)
+                        } label: {
+                            Label(profile.name, systemImage: selectedFilter == .driver(profile.id) ? "checkmark" : "")
+                        }
+                    }
+
+                    if !driverProfiles.isEmpty {
+                        Divider()
+                    }
+
+                    Button {
+                        selectedFilter = .unidentified
+                    } label: {
+                        Label("Unidentified", systemImage: selectedFilter == .unidentified ? "checkmark" : "")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(filterTitle)
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down")
+                            .font(.caption)
+                    }
+                }
+            }
+        }
         .task {
-            await loadDetections()
+            await loadData()
         }
         .refreshable {
-            await loadDetections()
+            await loadData()
         }
     }
 
-    private func loadDetections() async {
+    private func loadData() async {
         isLoading = true
         errorMessage = nil
 
         do {
-            let fetched = try await supabase.fetchFaceDetections(for: vehicle.id)
+            async let fetchedDetections = supabase.fetchFaceDetections(for: vehicle.id)
+            async let fetchedProfiles = supabase.fetchDriverProfiles(for: vehicle.id)
+
+            let (detections, profiles) = try await (fetchedDetections, fetchedProfiles)
+
             await MainActor.run {
-                detections = fetched
+                allDetections = detections
+                driverProfiles = profiles
                 isLoading = false
             }
         } catch {
@@ -167,6 +261,8 @@ struct FaceDetectionDetailView: View {
 
     @State private var image: UIImage?
     @State private var isLoadingImage = true
+    @State private var driverProfile: DriverProfile?
+    @State private var showingDriverDetections = false
 
     var body: some View {
         ScrollView {
@@ -176,6 +272,32 @@ struct FaceDetectionDetailView: View {
 
                 // Metadata sections
                 VStack(spacing: 16) {
+                    // Driver Profile section (if identified)
+                    if let profile = driverProfile {
+                        driverProfileSection(profile: profile)
+                    } else if detection.driverProfileId != nil {
+                        // Loading state
+                        GroupBox("Driver") {
+                            HStack {
+                                ProgressView()
+                                Text("Loading profile...")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } else {
+                        // Unidentified
+                        GroupBox("Driver") {
+                            HStack {
+                                Image(systemName: "person.crop.circle.badge.questionmark")
+                                    .font(.title2)
+                                    .foregroundStyle(.orange)
+                                Text("Unidentified")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                            }
+                        }
+                    }
+
                     eyeStateSection
                     alertsSection
                     drivingContextSection
@@ -188,6 +310,62 @@ struct FaceDetectionDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadImage()
+            await loadDriverProfile()
+        }
+        .sheet(isPresented: $showingDriverDetections) {
+            if let profile = driverProfile, let vehicleId = detection.vehicleId {
+                DriverDetectionsView(profile: profile, vehicleId: vehicleId)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func driverProfileSection(profile: DriverProfile) -> some View {
+        GroupBox("Driver") {
+            Button {
+                showingDriverDetections = true
+            } label: {
+                HStack(spacing: 12) {
+                    // Profile avatar
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 44, height: 44)
+                        .overlay {
+                            Text(profile.name.prefix(1).uppercased())
+                                .font(.headline)
+                                .foregroundStyle(.blue)
+                        }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(profile.name)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text("View all detections")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func loadDriverProfile() async {
+        guard let profileId = detection.driverProfileId,
+              let vehicleId = detection.vehicleId else { return }
+
+        do {
+            let profiles = try await supabase.fetchDriverProfiles(for: vehicleId)
+            await MainActor.run {
+                driverProfile = profiles.first { $0.id == profileId }
+            }
+        } catch {
+            print("Error loading driver profile: \(error)")
         }
     }
 
@@ -384,6 +562,123 @@ struct FaceDetectionDetailView: View {
             print("Error loading image: \(error)")
             await MainActor.run {
                 isLoadingImage = false
+            }
+        }
+    }
+}
+
+// MARK: - Driver Detections View
+
+struct DriverDetectionsView: View {
+    let profile: DriverProfile
+    let vehicleId: String
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var detections: [FaceDetection] = []
+    @State private var isLoading = true
+    @State private var errorMessage: String?
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 100, maximum: 150), spacing: 8)
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView("Loading detections...")
+                } else if let errorMessage {
+                    ContentUnavailableView {
+                        Label("Error", systemImage: "exclamationmark.triangle")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("Retry") {
+                            Task {
+                                await loadDetections()
+                            }
+                        }
+                    }
+                } else if detections.isEmpty {
+                    ContentUnavailableView {
+                        Label("No Detections", systemImage: "face.dashed")
+                    } description: {
+                        Text("No detections found for \(profile.name).")
+                    }
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            // Profile header
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(Color.blue.opacity(0.2))
+                                    .frame(width: 60, height: 60)
+                                    .overlay {
+                                        Text(profile.name.prefix(1).uppercased())
+                                            .font(.title)
+                                            .fontWeight(.semibold)
+                                            .foregroundStyle(.blue)
+                                    }
+
+                                VStack(alignment: .leading) {
+                                    Text(profile.name)
+                                        .font(.title2)
+                                        .fontWeight(.semibold)
+                                    Text("\(detections.count) detection\(detections.count == 1 ? "" : "s")")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.horizontal)
+
+                            // Detections grid
+                            LazyVGrid(columns: columns, spacing: 8) {
+                                ForEach(detections) { detection in
+                                    NavigationLink {
+                                        FaceDetectionDetailView(detection: detection)
+                                    } label: {
+                                        FaceDetectionThumbnail(detection: detection)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                        .padding(.vertical)
+                    }
+                }
+            }
+            .navigationTitle("Driver Detections")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .task {
+                await loadDetections()
+            }
+            .refreshable {
+                await loadDetections()
+            }
+        }
+    }
+
+    private func loadDetections() async {
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            let fetched = try await supabase.fetchDetectionsForDriver(profileId: profile.id, vehicleId: vehicleId)
+            await MainActor.run {
+                detections = fetched
+                isLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                isLoading = false
             }
         }
     }

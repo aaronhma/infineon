@@ -63,8 +63,11 @@ struct JoinVehicleView: View {
                             }
                             Spacer()
                         }
+                        .padding(.vertical, 8)
                     }
+                    .buttonStyle(.borderedProminent)
                     .disabled(inviteCode.count != 6 || isJoining)
+                    .listRowInsets(EdgeInsets())
                 }
             }
             .navigationTitle("Join Vehicle")

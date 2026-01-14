@@ -44,11 +44,22 @@ class SupabaseUploader:
         self.session_id = str(uuid.uuid4())
         self.last_upload_time = 0
         self.last_realtime_update = 0
+        self.last_driver_check = 0
         self.upload_cooldown = 2.0  # Minimum seconds between face uploads
         self.realtime_cooldown = 0.5  # Update realtime every 500ms
+        self.driver_check_cooldown = 5.0  # Check for driver identification every 5s
+
+        # Driver identification
+        self.driver_profiles = {}  # {profile_id: profile_data}
+        self.current_driver_name = None
+        self.current_driver_profile_id = None
+        self.last_announced_driver = None
 
         # Register vehicle on startup
         self._register_vehicle()
+
+        # Load driver profiles
+        self._load_driver_profiles()
 
         print(
             f"Supabase connected. Vehicle ID: {self.vehicle_id}, Session ID: {self.session_id}"
@@ -103,6 +114,83 @@ class SupabaseUploader:
         except Exception as e:
             print(f"Error registering vehicle: {e}")
             raise
+
+    def _load_driver_profiles(self):
+        """Load all driver profiles for this vehicle"""
+        try:
+            response = (
+                self.client.table("driver_profiles")
+                .select("id, name, profile_image_path")
+                .eq("vehicle_id", self.vehicle_id)
+                .execute()
+            )
+
+            self.driver_profiles = {}
+            for profile in response.data:
+                self.driver_profiles[profile["id"]] = {
+                    "name": profile["name"],
+                    "image_path": profile.get("profile_image_path"),
+                }
+
+            if self.driver_profiles:
+                print(f"Loaded {len(self.driver_profiles)} driver profile(s)")
+                for profile_id, data in self.driver_profiles.items():
+                    print(f"  - {data['name']}")
+            else:
+                print("No driver profiles found for this vehicle")
+
+        except Exception as e:
+            print(f"Error loading driver profiles: {e}")
+
+    def check_current_driver(self):
+        """Check the most recently identified driver for this vehicle"""
+        current_time = time.time()
+        if current_time - self.last_driver_check < self.driver_check_cooldown:
+            return self.current_driver_name
+
+        self.last_driver_check = current_time
+
+        try:
+            # Refresh driver profiles periodically
+            self._load_driver_profiles()
+
+            # Get the most recent face detection with a driver profile assigned
+            response = (
+                self.client.table("face_detections")
+                .select("driver_profile_id, created_at")
+                .eq("vehicle_id", self.vehicle_id)
+                .not_.is_("driver_profile_id", "null")
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+
+            if response.data and len(response.data) > 0:
+                profile_id = response.data[0]["driver_profile_id"]
+                if profile_id in self.driver_profiles:
+                    driver_name = self.driver_profiles[profile_id]["name"]
+                    self.current_driver_name = driver_name
+                    self.current_driver_profile_id = profile_id
+
+                    # Announce driver if changed
+                    if driver_name != self.last_announced_driver:
+                        print(f"\n>>> Driver detected: {driver_name} <<<\n")
+                        self.last_announced_driver = driver_name
+
+                    return driver_name
+
+            # No identified driver found
+            self.current_driver_name = None
+            self.current_driver_profile_id = None
+            return None
+
+        except Exception as e:
+            print(f"Error checking current driver: {e}")
+            return None
+
+    def get_current_driver(self):
+        """Get the current driver name (cached)"""
+        return self.current_driver_name
 
     def update_vehicle_realtime(
         self,
@@ -192,6 +280,10 @@ class SupabaseUploader:
                 "session_id": self.session_id,
             }
 
+            # Add current driver profile if identified
+            if self.current_driver_profile_id:
+                record["driver_profile_id"] = self.current_driver_profile_id
+
             # Add driving data if available
             if driving_data:
                 record["speed_mph"] = int(driving_data.get("speed", 0))
@@ -203,7 +295,13 @@ class SupabaseUploader:
             db_response = self.client.table("face_detections").insert(record).execute()
 
             self.last_upload_time = time.time()
-            print(f"Uploaded face detection: {filename}")
+
+            # Print upload info with driver name if available
+            if self.current_driver_name:
+                print(f"Uploaded face detection: {filename} (Driver: {self.current_driver_name})")
+            else:
+                print(f"Uploaded face detection: {filename} (Unidentified)")
+
             return db_response
 
         except Exception as e:
@@ -1356,6 +1454,10 @@ def main():
                 intox_data=detection_data["intox_data"],
                 driving_data=driving_data,
             )
+
+        # Check for identified driver (every 5s when face detected)
+        if detection_data:
+            supabase_uploader.check_current_driver()
 
         # Draw driving info with warning sound
         processed_frame = draw_driving_info(processed_frame, driving_sim, warning_sound)

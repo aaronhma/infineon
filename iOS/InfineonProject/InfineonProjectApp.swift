@@ -43,6 +43,7 @@ struct RootView: View {
                 AuthView()
             }
         }
+        .transition(.blurReplace)
         .animation(.easeInOut(duration: 0.3), value: supabase.isLoggedIn)
         .animation(.easeInOut(duration: 0.3), value: supabase.isLoading)
     }

@@ -93,6 +93,7 @@ struct FaceDetection: Codable, Identifiable {
     let id: UUID
     let createdAt: Date
     let vehicleId: String?
+    let driverProfileId: UUID?
     let faceBbox: FaceBbox?
     let leftEyeState: String?
     let leftEyeEar: Double?
@@ -114,6 +115,7 @@ struct FaceDetection: Codable, Identifiable {
         case id
         case createdAt = "created_at"
         case vehicleId = "vehicle_id"
+        case driverProfileId = "driver_profile_id"
         case faceBbox = "face_bbox"
         case leftEyeState = "left_eye_state"
         case leftEyeEar = "left_eye_ear"
@@ -144,6 +146,28 @@ struct FaceBbox: Codable {
         case yMin = "y_min"
         case xMax = "x_max"
         case yMax = "y_max"
+    }
+}
+
+struct DriverProfile: Codable, Identifiable {
+    let id: UUID
+    let createdAt: Date
+    let updatedAt: Date
+    let vehicleId: String
+    let name: String
+    let notes: String?
+    let profileImagePath: String?
+    let createdBy: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case vehicleId = "vehicle_id"
+        case name
+        case notes
+        case profileImagePath = "profile_image_path"
+        case createdBy = "created_by"
     }
 }
 
@@ -349,6 +373,111 @@ class SupabaseService {
             .createSignedURL(path: path, expiresIn: 3600) // 1 hour expiry
 
         return signedURL
+    }
+
+    // MARK: - Driver Profile Methods
+
+    func fetchDriverProfiles(for vehicleId: String) async throws -> [DriverProfile] {
+        let profiles: [DriverProfile] = try await client
+            .from("driver_profiles")
+            .select()
+            .eq("vehicle_id", value: vehicleId)
+            .order("name", ascending: true)
+            .execute()
+            .value
+
+        return profiles
+    }
+
+    func createDriverProfile(vehicleId: String, name: String, notes: String?, imagePath: String?) async throws -> DriverProfile {
+        struct CreateProfileRequest: Encodable {
+            let vehicle_id: String
+            let name: String
+            let notes: String?
+            let profile_image_path: String?
+            let created_by: UUID?
+        }
+
+        let request = CreateProfileRequest(
+            vehicle_id: vehicleId,
+            name: name,
+            notes: notes,
+            profile_image_path: imagePath,
+            created_by: currentUser?.id
+        )
+
+        let profile: DriverProfile = try await client
+            .from("driver_profiles")
+            .insert(request)
+            .select()
+            .single()
+            .execute()
+            .value
+
+        return profile
+    }
+
+    func assignDriverToDetection(detectionId: UUID, driverProfileId: UUID) async throws {
+        struct UpdateRequest: Encodable {
+            let driver_profile_id: UUID
+        }
+
+        try await client
+            .from("face_detections")
+            .update(UpdateRequest(driver_profile_id: driverProfileId))
+            .eq("id", value: detectionId)
+            .execute()
+    }
+
+    func fetchUnidentifiedFaces(for vehicleId: String, limit: Int = 20) async throws -> [FaceDetection] {
+        let detections: [FaceDetection] = try await client
+            .from("face_detections")
+            .select()
+            .eq("vehicle_id", value: vehicleId)
+            .filter("driver_profile_id", operator: "is", value: "null")
+            .filter("image_path", operator: "not.is", value: "null")
+            .order("created_at", ascending: false)
+            .limit(limit)
+            .execute()
+            .value
+
+        return detections
+    }
+
+    func getUnidentifiedFacesCount(for vehicleId: String) async throws -> Int {
+        let response = try await client
+            .from("face_detections")
+            .select("id", head: true, count: .exact)
+            .eq("vehicle_id", value: vehicleId)
+            .filter("driver_profile_id", operator: "is", value: "null")
+            .filter("image_path", operator: "not.is", value: "null")
+            .execute()
+
+        return response.count ?? 0
+    }
+
+    func fetchDetectionsForDriver(profileId: UUID, vehicleId: String, limit: Int = 50) async throws -> [FaceDetection] {
+        let detections: [FaceDetection] = try await client
+            .from("face_detections")
+            .select()
+            .eq("vehicle_id", value: vehicleId)
+            .eq("driver_profile_id", value: profileId)
+            .order("created_at", ascending: false)
+            .limit(limit)
+            .execute()
+            .value
+
+        return detections
+    }
+
+    func uploadProfileImage(vehicleId: String, imageData: Data) async throws -> String {
+        let fileName = "\(vehicleId)/profiles/\(UUID().uuidString).jpg"
+
+        try await client.storage
+            .from("face-snapshots")
+            .upload(fileName, data: imageData, options: .init(contentType: "image/jpeg"))
+
+        return fileName
     }
 
     // MARK: - Realtime Subscription
