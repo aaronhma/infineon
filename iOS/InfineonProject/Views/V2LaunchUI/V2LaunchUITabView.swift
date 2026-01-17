@@ -40,17 +40,19 @@ struct V2Profile: Identifiable {
 }
 
 var mockProfiles: [V2Profile] = [
-  .init(name: "Benji", icon: "benji"), .init(name: "Benji 2", icon: "benji"),
+  .init(name: "Benji", icon: "benji"), .init(name: "Model Y", icon: "modelY"),
 ]
 
 @Observable
 class V2AppData {
   var isSplashFinished = false
   var activeTab = V2Tab.home
+  var hideMainView = false
   var showProfileView = false
   var tabProfileRect: CGRect = .zero
   var watchingProfile: V2Profile?
   var animateProfile = false
+  var fromTabBar = false
 }
 
 private struct NoAnimationButtonStyle: ButtonStyle {
@@ -73,16 +75,24 @@ struct V2LaunchUITabView: View {
             Group {
               if tab.icon == "__profileImage__" {
                 GeometryReader { proxy in
-                  let rect = proxy.frame(in: .named("MAINVIEW"))
+                  let rect = proxy.frame(
+                    in: .named("MAINVIEW")
+                  )
 
-                  Image(.benji)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(width: 25, height: 25)
-                    .clipShape(.rect(cornerRadius: 4))
+                  if let profile = appData.watchingProfile, !appData.animateProfile {
+                    Image(profile.icon)
+                      .resizable()
+                      .aspectRatio(contentMode: .fill)
+                      .frame(width: 25, height: 25)
+                      .clipShape(.rect(cornerRadius: 4))
+                      .frame(maxWidth: .infinity, maxHeight: .infinity)
+                  }
 
                   Color.clear
-                    .preference(key: RectKey.self, value: rect)
+                    .preference(
+                      key: RectKey.self,
+                      value: rect
+                    )
                     .onPreferenceChange(RectKey.self) {
                       appData.tabProfileRect = $0
                     }
@@ -94,9 +104,16 @@ struct V2LaunchUITabView: View {
                   .frame(width: 35, height: 35)
               }
             }
-            .keyframeAnimator(initialValue: 1, trigger: appData.activeTab) { content, scale in
+            .keyframeAnimator(
+              initialValue: 1,
+              trigger: appData.activeTab
+            ) {
+              content,
+              scale in
               content
-                .scaleEffect(appData.activeTab == tab ? scale : 1)
+                .scaleEffect(
+                  appData.activeTab == tab ? scale : 1
+                )
             } keyframes: { _ in
               CubicKeyframe(1.2, duration: 0.2)
               CubicKeyframe(1, duration: 0.2)
@@ -114,6 +131,16 @@ struct V2LaunchUITabView: View {
           .contentShape(.rect)
         }
         .buttonStyle(NoAnimationButtonStyle())
+        .simultaneousGesture(
+          LongPressGesture().onEnded { _ in
+            guard tab == .account else { return }
+
+            withAnimation(.snappy(duration: 0.3)) {
+              appData.showProfileView = true
+              appData.hideMainView = true
+              appData.fromTabBar = true
+            }
+          })
       }
     }
     .padding(.bottom, 10)

@@ -19,11 +19,10 @@ struct V2MainView: View {
       }
       .coordinateSpace(.named("MAINVIEW"))
 
-      if appData.showProfileView {
+      if appData.hideMainView {
         Rectangle()
           .fill(.black)
           .ignoresSafeArea()
-          .transition(.identity)
       }
 
       ZStack {
@@ -33,12 +32,28 @@ struct V2MainView: View {
       }
       .animation(.snappy, value: appData.showProfileView)
 
+      ZStack {
+        if let profile = appData.watchingProfile, !appData.animateProfile {
+          Group {
+            switch appData.activeTab {
+            case .home:
+              HomeView()
+            case .new:
+              VehicleView()
+            case .account:
+              Text("Long hold to change tabs.")
+            }
+          }
+        }
+      }
+
       if !appData.isSplashFinished {
         ProgressView()
           .task {
             try? await Task.sleep(for: .seconds(1))
             appData.isSplashFinished = true
             appData.showProfileView = appData.isSplashFinished
+            appData.hideMainView = appData.showProfileView
           }
       }
     }

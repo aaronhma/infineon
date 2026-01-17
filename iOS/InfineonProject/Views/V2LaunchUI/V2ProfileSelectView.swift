@@ -5,12 +5,14 @@
 //  Created by Aaron Ma on 1/16/26.
 //
 
+import AaronUI
 import SwiftUI
 
 struct RectAnchorKey: PreferenceKey {
   static var defaultValue: [String: Anchor<CGRect>] = [:]
   static func reduce(
-    value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]
+    value: inout [String: Anchor<CGRect>],
+    nextValue: () -> [String: Anchor<CGRect>]
   ) {
     value.merge(nextValue()) { $1 }
   }
@@ -42,7 +44,12 @@ struct AnimatedPositionModifier: ViewModifier, Animatable {
       .position(
         animateToCenter
           ? animateToMainView
-            ? (path.trimmedPath(from: 0, to: progress).currentPoint ?? center) : center : source)
+            ? (path
+              .trimmedPath(
+                from: 0,
+                to: progress
+              ).currentPoint ?? center) : center : source
+      )
   }
 }
 
@@ -63,10 +70,16 @@ struct V2ProfileSelectView: View {
 
     await prefetchStatus()
 
-    withAnimation(.snappy(duration: 0.6, extraBounce: 0.1), completionCriteria: .removed) {
+    withAnimation(
+      .snappy(duration: 0.6, extraBounce: 0.1),
+      completionCriteria: .removed
+    ) {
       animateToMainView = true
+      appData.hideMainView = false
       progress = 0.97
     } completion: {
+      appData.showProfileView = false
+      appData.animateProfile = false
     }
   }
 
@@ -80,8 +93,31 @@ struct V2ProfileSelectView: View {
         Text("Who's watching?")
           .font(.title3.bold())
       }
+      .overlay(alignment: .leading) {
+        if appData.fromTabBar {
+          Button {
+            withAnimation(.snappy(duration: 0.3, extraBounce: 0)) {
+              appData.showProfileView = false
+              appData.hideMainView = false
+              appData.fromTabBar = false
+            }
+          } label: {
+            Image(systemName: "xmark")
+              .font(.title3)
+              .foregroundStyle(.white)
+              .contentShape(.rect)
+          }
+          .padding()
+          .possibleGlassEffect()
+        }
+      }
 
-      LazyVGrid(columns: Array(repeating: GridItem(.fixed(100), spacing: 25), count: 2)) {
+      LazyVGrid(
+        columns: Array(
+          repeating: GridItem(.fixed(100), spacing: 25),
+          count: 2
+        )
+      ) {
         ForEach(mockProfiles) { profile in
           profileCard(profile)
         }
@@ -122,7 +158,10 @@ struct V2ProfileSelectView: View {
         let screenRect = proxy.frame(in: .global)
 
         let sourcePosition = CGPoint(x: sRect.midX, y: sRect.midY)
-        let centerPosition = CGPoint(x: screenRect.width / 2, y: (screenRect.height / 2) - 40)
+        let centerPosition = CGPoint(
+          x: screenRect.width / 2,
+          y: (screenRect.height / 2) - 40
+        )
         let destinationPosition = CGPoint(
           x: appData.tabProfileRect.midX, y: appData.tabProfileRect.midY)
 
@@ -131,15 +170,25 @@ struct V2ProfileSelectView: View {
           path.addQuadCurve(
             to: destinationPosition,
             control: CGPoint(
-              x: centerPosition.x * 2, y: centerPosition.y - (centerPosition.y / 0.8)))
+              x: centerPosition.x * 2,
+              y: centerPosition
+                .y - (centerPosition.y / 0.8)))
         }
 
-        animationPath.stroke(lineWidth: 2)
+        //                animationPath.stroke(lineWidth: 2) // TODO: get rid of debug line eventually
 
         let endPosition =
-          animationPath.trimmedPath(from: 0, to: 1).currentPoint ?? destinationPosition
+          animationPath
+          .trimmedPath(
+            from: 0,
+            to: 1
+          ).currentPoint ?? destinationPosition
         let currentPosition =
-          animationPath.trimmedPath(from: 0, to: 0.97).currentPoint ?? destinationPosition
+          animationPath
+          .trimmedPath(
+            from: 0,
+            to: 0.97
+          ).currentPoint ?? destinationPosition
 
         let diff = CGSize(
           width: endPosition.x - currentPosition.x, height: endPosition.y - currentPosition.y)
@@ -152,7 +201,11 @@ struct V2ProfileSelectView: View {
               width: animateToMainView ? 25 : sRect.width,
               height: animateToMainView ? 25 : sRect.height
             )
-            .clipShape(.rect(cornerRadius: animateToMainView ? 4 : 10))
+            .clipShape(
+              .rect(cornerRadius: animateToMainView ? 4 : 10)
+            )
+            .animation(.snappy(duration: 0.3, extraBounce: 0), value: animateToMainView)
+            .opacity(animateToMainView && appData.activeTab != .account ? 0.6 : 1)
             .modifier(
               AnimatedPositionModifier(
                 source: sourcePosition, center: centerPosition, destination: destinationPosition,
@@ -165,6 +218,7 @@ struct V2ProfileSelectView: View {
             .frame(width: 60, height: 60)
             .offset(y: 80)
             .opacity(animateToCenter ? 1 : 0)
+            .opacity(animateToMainView ? 0 : 1)
         }
         .transition(.identity)
         .task {
@@ -189,7 +243,10 @@ struct V2ProfileSelectView: View {
           .clipShape(.rect(cornerRadius: 10))
           .opacity(animateToCenter ? 0 : 1)
       }
-      .animation(status ? .none : .bouncy(duration: 0.35), value: animateToCenter)
+      .animation(
+        status ? .none : .bouncy(duration: 0.35),
+        value: animateToCenter
+      )
       .frame(width: 100, height: 100)
       .anchorPreference(
         key: RectAnchorKey.self, value: .bounds,

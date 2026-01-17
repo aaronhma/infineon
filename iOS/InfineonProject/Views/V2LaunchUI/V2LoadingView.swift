@@ -15,13 +15,20 @@ struct V2LoadingView: View {
       .stroke(
         .linearGradient(
           colors: [
-            .accentColor, .accentColor, .accentColor, .accentColor, .accentColor.opacity(0.7),
-            .accentColor.opacity(0.4), .accentColor.opacity(0.1), .clear,
+            .accentColor, .accentColor, .accentColor, .accentColor,
+            .accentColor
+              .opacity(0.7),
+            .accentColor
+              .opacity(0.4),
+            .accentColor
+              .opacity(0.1), .clear,
           ], startPoint: .top, endPoint: .bottom), lineWidth: 6
       )
       .rotationEffect(.init(degrees: isSpinning ? 360 : 0))
       .onAppear {
-        withAnimation(.linear(duration: 0.7).repeatForever(autoreverses: false)) {
+        withAnimation(
+          .linear(duration: 0.7).repeatForever(autoreverses: false)
+        ) {
           isSpinning = true
         }
       }
