@@ -25,7 +25,8 @@ struct InfineonProjectApp: App {
 
   var body: some Scene {
     WindowGroup {
-      RootView()
+      V2MainView()
+      //      RootView()
     }
     .modelContainer(sharedModelContainer)
   }
