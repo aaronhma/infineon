@@ -153,25 +153,27 @@ struct GetStartedView: View {
           .frame(height: height)
           .foregroundStyle(
             LinearGradient(
-              gradient: Gradient(colors: [colorScheme == .dark ? .white : .black]),
+              gradient: Gradient(colors: [.white]),
               startPoint: .leading,
               endPoint: .trailing)
           )
           .overlay(alignment: .top) {
-            if isSigningIn {
-              ProgressView()
-                .progressViewStyle(.circular)
-                .tint(.white)
-            } else {
-              HStack {
-                Image(systemName: "apple.logo")
-                Text("Continue with Apple")
+            Group {
+              if isSigningIn {
+                ProgressView()
+                  .controlSize(.extraLarge)
+                  .tint(.white)
+              } else {
+                HStack {
+                  Image(systemName: "apple.logo")
+                  Text("Continue with Apple")
+                }
+                .foregroundStyle(.black)
+                .font(.title2)
+                .bold()
               }
-              .foregroundStyle(colorScheme == .dark ? .black : .white)
-              .font(.title2)
-              .bold()
-              .padding(.top, 60)
             }
+            .padding(.top, 60)
           }
       }
       .buttonStyle(.plain)
@@ -287,6 +289,7 @@ struct OnboardingView: View {
         //                    showingAuthSheet.toggle()
         //                }
       }
+      .background(.black)
       .offset(y: finalOffset + currentDrag)
       .animation(.smooth, value: finalOffset)
       .animation(.smooth, value: currentDrag)
