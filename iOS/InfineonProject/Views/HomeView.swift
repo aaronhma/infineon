@@ -103,7 +103,7 @@ struct HomeView: View {
           .foregroundStyle(.primary)
         }
       }
-      .navigationTitle("Home")
+      .navigationTitle("Trips")
       .navigationDestination(for: String.self) { i in
         switch i {
         case Constants.HomeRouteAnnouncer.trips.rawValue:

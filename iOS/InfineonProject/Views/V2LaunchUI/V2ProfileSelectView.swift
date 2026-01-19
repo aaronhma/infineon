@@ -59,8 +59,29 @@ struct V2ProfileSelectView: View {
   @State private var animateToMainView = false
   @State private var progress = CGFloat.zero
 
+  @State private var showingJoinVehicleSheet = false
+  @State private var editMode: EditMode = .inactive
+  @State private var selectedEditProfile: V2Profile?
+  @State private var showingDeleteVehicleConfirmation = false
+
   func prefetchStatus() async {
-    try? await Task.sleep(for: .seconds(1))
+    do {
+      let count = try await supabase.getUnidentifiedFacesCount(
+        for: appData.watchingProfile!.vehicleId
+      )
+
+      await supabase.subscribeToVehicleRealtime(vehicleId: appData.watchingProfile!.vehicleId)
+      await supabase.loadVehicleRealtimeData(vehicleId: appData.watchingProfile!.vehicleId)
+
+      await MainActor.run {
+        withAnimation {
+          appData.watchingProfile!.unidentifiedFacesCount = count
+          print("unidentified face count: \(appData.watchingProfile!.unidentifiedFacesCount)")
+        }
+      }
+    } catch {
+      print("Error loading unidentified count: \(error)")
+    }
   }
 
   func animateCard() async {
@@ -83,35 +104,12 @@ struct V2ProfileSelectView: View {
     }
   }
 
+  private var isEditing: Bool {
+    editMode == .active
+  }
+
   var body: some View {
-    VStack {
-      Button("Edit") {
-
-      }
-      .frame(maxWidth: .infinity, alignment: .trailing)
-      .overlay {
-        Text("Who's watching?")
-          .font(.title3.bold())
-      }
-      .overlay(alignment: .leading) {
-        if appData.fromTabBar {
-          Button {
-            withAnimation(.snappy(duration: 0.3, extraBounce: 0)) {
-              appData.showProfileView = false
-              appData.hideMainView = false
-              appData.fromTabBar = false
-            }
-          } label: {
-            Image(systemName: "xmark")
-              .font(.title3)
-              .foregroundStyle(.white)
-              .contentShape(.rect)
-          }
-          .padding()
-          .possibleGlassEffect()
-        }
-      }
-
+    NavigationStack {
       LazyVGrid(
         columns: Array(
           repeating: GridItem(.fixed(100), spacing: 25),
@@ -123,6 +121,8 @@ struct V2ProfileSelectView: View {
         }
 
         Button {
+          Haptics.impact()
+          showingJoinVehicleSheet.toggle()
         } label: {
           ZStack {
             RoundedRectangle(cornerRadius: 10)
@@ -136,9 +136,85 @@ struct V2ProfileSelectView: View {
           .contentShape(.rect)
         }
       }
+      .padding(15)
       .frame(maxHeight: .infinity)
+      .navigationTitle("Select Vehicle")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        if appData.fromTabBar {
+          ToolbarItem(placement: .topBarLeading) {
+            CloseButton {
+              withAnimation(
+                .snappy(duration: 0.3, extraBounce: 0)
+              ) {
+                appData.showProfileView = false
+                appData.hideMainView = false
+                appData.fromTabBar = false
+              }
+            }
+          }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+          EditButton()
+        }
+      }
+      .environment(\.editMode, $editMode)
     }
-    .padding(15)
+    .sheet(isPresented: $showingJoinVehicleSheet) {
+      JoinVehicleView()
+    }
+    .sheet(item: $selectedEditProfile) { profile in
+      NavigationStack {
+        List {
+          Section {
+            Text("Add Code")
+          }
+
+          Section {
+            Button(role: .destructive) {
+              Haptics.impact()
+              showingDeleteVehicleConfirmation = true
+            } label: {
+              Label {
+                Text("Remove Vehicle")
+              } icon: {
+                SettingsBoxView(
+                  icon: "trash",
+                  color: .red
+                )
+              }
+            }
+            .confirmationDialog(
+              "Are you sure you want to remove this vehicle?",
+              isPresented: $showingDeleteVehicleConfirmation,
+              titleVisibility: .visible
+            ) {
+              Button(
+                "Remove Vehicle",
+                role: .destructive
+              ) {
+                Haptics.impact()
+              }
+              Button("Cancel", role: .cancel) {}
+            } message: {
+              Text(
+                "You won't be able to rejoin without an invite code."
+              )
+            }
+          }
+        }
+        .navigationTitle(profile.name)
+        .toolbar {
+          ToolbarItem(placement: .topBarLeading) {
+            CloseButton {
+              Haptics.impact()
+              selectedEditProfile = nil
+            }
+          }
+        }
+      }
+    }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .opacity(animateToCenter ? 0 : 1)
     .background(.black)
@@ -204,8 +280,13 @@ struct V2ProfileSelectView: View {
             .clipShape(
               .rect(cornerRadius: animateToMainView ? 4 : 10)
             )
-            .animation(.snappy(duration: 0.3, extraBounce: 0), value: animateToMainView)
-            .opacity(animateToMainView && appData.activeTab != .account ? 0.6 : 1)
+            .animation(
+              .snappy(duration: 0.3, extraBounce: 0),
+              value: animateToMainView
+            )
+            .opacity(
+              animateToMainView && appData.activeTab != .account ? 0.6 : 1
+            )
             .modifier(
               AnimatedPositionModifier(
                 source: sourcePosition, center: centerPosition, destination: destinationPosition,
@@ -241,7 +322,15 @@ struct V2ProfileSelectView: View {
           .aspectRatio(contentMode: .fill)
           .frame(width: 100, height: 100)
           .clipShape(.rect(cornerRadius: 10))
-          .opacity(animateToCenter ? 0 : 1)
+          .opacity(isEditing ? 0.6 : animateToCenter ? 0 : 1)
+          .overlay {
+            if isEditing {
+              Image(systemName: "pencil")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 50, height: 50)
+            }
+          }
       }
       .animation(
         status ? .none : .bouncy(duration: 0.35),
@@ -255,8 +344,14 @@ struct V2ProfileSelectView: View {
         }
       )
       .onTapGesture {
-        appData.watchingProfile = profile
-        appData.animateProfile = true
+        Haptics.impact()
+
+        if isEditing {
+          selectedEditProfile = profile
+        } else {
+          appData.watchingProfile = profile
+          appData.animateProfile = true
+        }
       }
 
       Text(profile.name)

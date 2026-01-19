@@ -22,8 +22,12 @@ struct JoinVehicleView: View {
     errorMessage = nil
 
     Task {
+      try? await Task.sleep(for: .milliseconds(400))
+
       do {
-        let response = try await supabase.joinVehicleByInviteCode(inviteCode)
+        let response = try await supabase.joinVehicleByInviteCode(
+          inviteCode
+        )
 
         await MainActor.run {
           isJoining = false
@@ -31,7 +35,7 @@ struct JoinVehicleView: View {
           if response.success {
             dismiss()
           } else {
-            print(response.error ?? "Unknown Supabase error.")
+            print(response.error ?? "Unknown error, please try again.")
             errorMessage = "Invalid or expired code."
           }
         }
@@ -62,15 +66,20 @@ struct JoinVehicleView: View {
               }
             }
         } header: {
-          Text("Enter the 6-digit invite code")
+          Text("Enter the invite code")
         } footer: {
-          Text("Ask the vehicle owner for the invite code to get access to real-time vehicle data.")
+          Text(
+            "Ask the vehicle owner for the invite code to get access to real-time vehicle data."
+          )
         }
 
         if let errorMessage {
           Section {
-            Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-              .foregroundStyle(.red)
+            Label(
+              errorMessage,
+              systemImage: "exclamationmark.triangle.fill"
+            )
+            .foregroundStyle(.red)
           }
         }
 

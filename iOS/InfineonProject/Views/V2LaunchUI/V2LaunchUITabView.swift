@@ -9,16 +9,16 @@ import AaronUI
 import SwiftUI
 
 enum V2Tab: String, CaseIterable {
-  case home = "Home"
-  case new = "New & Hot"
+  case home = "Vehicle"
+  case new = "Trips"
   case account = "Account"
 
   var icon: String {
     switch self {
     case .home:
-      "house.fill"
+      "car.side.fill"
     case .new:
-      "play.rectangle.on.rectangle"
+      "airplane.up.forward"
     case .account:
       "__profileImage__"
     }
@@ -29,6 +29,8 @@ struct V2Profile: Identifiable {
   var id = UUID()
   var name: String
   var icon: String
+  var vehicleId: String
+  var unidentifiedFacesCount = 0
 
   var sourceAnchorID: String {
     id.uuidString + "SOURCE"
@@ -37,10 +39,19 @@ struct V2Profile: Identifiable {
   var destinationAnchorID: String {
     id.uuidString + "DESTINATION"
   }
+
+  var vehicle: Vehicle {
+    supabase.vehicles.first { $0.id == vehicleId }!
+  }
+
+  var realtimeData: VehicleRealtime? {
+    supabase.vehicleRealtimeData[vehicleId]
+  }
 }
 
 var mockProfiles: [V2Profile] = [
-  .init(name: "Benji", icon: "benji"), .init(name: "Model Y", icon: "modelY"),
+  .init(name: "Benji", icon: "benji", vehicleId: "BENJI123"),
+  .init(name: "Model Y", icon: "modelY", vehicleId: "BENJI123"),
 ]
 
 @Observable

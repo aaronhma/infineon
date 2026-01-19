@@ -22,9 +22,9 @@ struct V2MainView: View {
           Group {
             switch appData.activeTab {
             case .home:
-              HomeView()
+              VehicleView(vehicle: profile)
             case .new:
-              VehicleView()
+              HomeView()
             case .account:
               NavigationStack {
                 List {
@@ -40,7 +40,10 @@ struct V2MainView: View {
                       Label {
                         Text("Sign out")
                       } icon: {
-                        SettingsBoxView(icon: "rectangle.portrait.and.arrow.right", color: .red)
+                        SettingsBoxView(
+                          icon: "rectangle.portrait.and.arrow.right",
+                          color: .red
+                        )
                       }
                     }
                     .confirmationDialog(
@@ -48,11 +51,15 @@ struct V2MainView: View {
                       isPresented: $showingSignOutConfirmation,
                       titleVisibility: .visible
                     ) {
-                      Button("Sign out", role: .destructive) {
+                      Button(
+                        "Sign out",
+                        role: .destructive
+                      ) {
                         Haptics.impact()
 
                         Task {
-                          try? await supabase.signOut()
+                          try? await supabase
+                            .signOut()
                           showOnboarding = true
                         }
                       }
@@ -69,7 +76,9 @@ struct V2MainView: View {
           Spacer(minLength: 0)
         }
 
-        V2LaunchUITabView()
+        if appData.watchingProfile != nil {
+          V2LaunchUITabView()
+        }
       }
       .coordinateSpace(.named("MAINVIEW"))
 
@@ -88,8 +97,9 @@ struct V2MainView: View {
 
       if !appData.isSplashFinished {
         ProgressView()
+          .controlSize(.extraLarge)
           .task {
-            try? await Task.sleep(for: .seconds(1))
+            await supabase.loadVehicles()
             appData.isSplashFinished = true
             appData.showProfileView = appData.isSplashFinished
             appData.hideMainView = appData.showProfileView
