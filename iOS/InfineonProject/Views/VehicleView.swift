@@ -6,6 +6,7 @@
 //
 
 import AaronUI
+import ActivityKit
 import SwiftUI
 
 struct VehicleView: View {
@@ -15,6 +16,8 @@ struct VehicleView: View {
   @State private var showingUnidentifiedFaces = false
   @State private var showingFaceDetections = false
   @State private var unidentifiedCount = 0
+
+  @State var currentLiveActivity: Activity<VehicleLiveActivityAttributes>?
 
   var body: some View {
     NavigationStack {
@@ -144,6 +147,41 @@ struct VehicleView: View {
               LabeledContent("Last Updated") {
                 Text(data.updatedAt, style: .relative)
                   .foregroundStyle(.secondary)
+              }
+            }
+            .onAppear {
+              Task {
+                do {
+                  currentLiveActivity = try Activity<VehicleLiveActivityAttributes>
+                    .request(
+                      attributes: VehicleLiveActivityAttributes(
+                        name: vehicle.name,
+                        speedLimit: 65
+                      ),
+                      content: .init(
+                        state: .init(
+                          speed: data.speedMph, riskScore: data.intoxicationScore,
+                          driverStatus: data.driverStatus),
+                        staleDate: .now
+                          .addingTimeInterval(
+                            60 * 60
+                          ))
+                    )
+                } catch {
+                  print(error.localizedDescription)
+                }
+              }
+            }
+            .onChange(of: data.speedMph) {
+              Task {
+                if let currentLiveActivity {
+                  await currentLiveActivity.update(
+                    ActivityContent(
+                      state: .init(
+                        speed: data.speedMph, riskScore: data.intoxicationScore,
+                        driverStatus: data.driverStatus),
+                      staleDate: .now.addingTimeInterval(60 * 60)))
+                }
               }
             }
           }

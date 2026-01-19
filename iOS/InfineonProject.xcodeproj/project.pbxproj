@@ -10,10 +10,20 @@
 		8BA03AE12F16D76100F32CD2 /* Auth in Frameworks */ = {isa = PBXBuildFile; productRef = 8BA03AE02F16D76100F32CD2 /* Auth */; };
 		8BA03AE32F16D76100F32CD2 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 8BA03AE22F16D76100F32CD2 /* Supabase */; };
 		8BA03AFD2F171CA400F32CD2 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 8BA03AFC2F171CA400F32CD2 /* AppIcon.icon */; };
+		8BABFE322F1EEBBC00572AF7 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8BABFE312F1EEBBC00572AF7 /* WidgetKit.framework */; };
+		8BABFE342F1EEBBC00572AF7 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8BABFE332F1EEBBC00572AF7 /* SwiftUI.framework */; };
+		8BABFE412F1EEBBE00572AF7 /* VehicleLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 8BABFE2F2F1EEBBC00572AF7 /* VehicleLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		8BCC5F0F2F15FAAC0073CF6E /* AaronUI in Frameworks */ = {isa = PBXBuildFile; productRef = 8BCC5F0E2F15FAAC0073CF6E /* AaronUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		8BABFE3F2F1EEBBE00572AF7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 8BEAA9F42F15E92F00D3D09D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8BABFE2E2F1EEBBC00572AF7;
+			remoteInfo = VehicleLiveActivityExtension;
+		};
 		8BEAAA0C2F15E93000D3D09D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 8BEAA9F42F15E92F00D3D09D /* Project object */;
@@ -30,16 +40,69 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		8BABFE462F1EEBBE00572AF7 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				8BABFE412F1EEBBE00572AF7 /* VehicleLiveActivityExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		8BA03AFC2F171CA400F32CD2 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
+		8BABFE2F2F1EEBBC00572AF7 /* VehicleLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VehicleLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		8BABFE312F1EEBBC00572AF7 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		8BABFE332F1EEBBC00572AF7 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		8BEAA9FC2F15E92F00D3D09D /* InfineonProject.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = InfineonProject.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8BEAAA0B2F15E93000D3D09D /* InfineonProjectTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = InfineonProjectTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		8BEAAA152F15E93000D3D09D /* InfineonProjectUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = InfineonProjectUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		8BABFE422F1EEBBE00572AF7 /* Exceptions for "VehicleLiveActivity" folder in "VehicleLiveActivityExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 8BABFE2E2F1EEBBC00572AF7 /* VehicleLiveActivityExtension */;
+		};
+		8BABFE482F1EEBF100572AF7 /* Exceptions for "InfineonProject" folder in "InfineonProject" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 8BEAA9FB2F15E92F00D3D09D /* InfineonProject */;
+		};
+		8BABFE4C2F1EED3500572AF7 /* Exceptions for "VehicleLiveActivity" folder in "InfineonProject" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				VehicleLiveActivityAttributes.swift,
+			);
+			target = 8BEAA9FB2F15E92F00D3D09D /* InfineonProject */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		8BABFE352F1EEBBC00572AF7 /* VehicleLiveActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				8BABFE4C2F1EED3500572AF7 /* Exceptions for "VehicleLiveActivity" folder in "InfineonProject" target */,
+				8BABFE422F1EEBBE00572AF7 /* Exceptions for "VehicleLiveActivity" folder in "VehicleLiveActivityExtension" target */,
+			);
+			path = VehicleLiveActivity;
+			sourceTree = "<group>";
+		};
 		8BEAA9FE2F15E92F00D3D09D /* InfineonProject */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				8BABFE482F1EEBF100572AF7 /* Exceptions for "InfineonProject" folder in "InfineonProject" target */,
+			);
 			path = InfineonProject;
 			sourceTree = "<group>";
 		};
@@ -56,6 +119,15 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		8BABFE2C2F1EEBBC00572AF7 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8BABFE342F1EEBBC00572AF7 /* SwiftUI.framework in Frameworks */,
+				8BABFE322F1EEBBC00572AF7 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8BEAA9F92F15E92F00D3D09D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -83,6 +155,15 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		8BABFE302F1EEBBC00572AF7 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				8BABFE312F1EEBBC00572AF7 /* WidgetKit.framework */,
+				8BABFE332F1EEBBC00572AF7 /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		8BEAA9F32F15E92F00D3D09D = {
 			isa = PBXGroup;
 			children = (
@@ -90,6 +171,8 @@
 				8BEAA9FE2F15E92F00D3D09D /* InfineonProject */,
 				8BEAAA0E2F15E93000D3D09D /* InfineonProjectTests */,
 				8BEAAA182F15E93000D3D09D /* InfineonProjectUITests */,
+				8BABFE352F1EEBBC00572AF7 /* VehicleLiveActivity */,
+				8BABFE302F1EEBBC00572AF7 /* Frameworks */,
 				8BEAA9FD2F15E92F00D3D09D /* Products */,
 			);
 			sourceTree = "<group>";
@@ -100,6 +183,7 @@
 				8BEAA9FC2F15E92F00D3D09D /* InfineonProject.app */,
 				8BEAAA0B2F15E93000D3D09D /* InfineonProjectTests.xctest */,
 				8BEAAA152F15E93000D3D09D /* InfineonProjectUITests.xctest */,
+				8BABFE2F2F1EEBBC00572AF7 /* VehicleLiveActivityExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -107,6 +191,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		8BABFE2E2F1EEBBC00572AF7 /* VehicleLiveActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 8BABFE432F1EEBBE00572AF7 /* Build configuration list for PBXNativeTarget "VehicleLiveActivityExtension" */;
+			buildPhases = (
+				8BABFE2B2F1EEBBC00572AF7 /* Sources */,
+				8BABFE2C2F1EEBBC00572AF7 /* Frameworks */,
+				8BABFE2D2F1EEBBC00572AF7 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				8BABFE352F1EEBBC00572AF7 /* VehicleLiveActivity */,
+			);
+			name = VehicleLiveActivityExtension;
+			packageProductDependencies = (
+			);
+			productName = VehicleLiveActivityExtension;
+			productReference = 8BABFE2F2F1EEBBC00572AF7 /* VehicleLiveActivityExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		8BEAA9FB2F15E92F00D3D09D /* InfineonProject */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 8BEAAA1F2F15E93000D3D09D /* Build configuration list for PBXNativeTarget "InfineonProject" */;
@@ -114,10 +220,12 @@
 				8BEAA9F82F15E92F00D3D09D /* Sources */,
 				8BEAA9F92F15E92F00D3D09D /* Frameworks */,
 				8BEAA9FA2F15E92F00D3D09D /* Resources */,
+				8BABFE462F1EEBBE00572AF7 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				8BABFE402F1EEBBE00572AF7 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				8BEAA9FE2F15E92F00D3D09D /* InfineonProject */,
@@ -188,6 +296,9 @@
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2620;
 				TargetAttributes = {
+					8BABFE2E2F1EEBBC00572AF7 = {
+						CreatedOnToolsVersion = 26.2;
+					};
 					8BEAA9FB2F15E92F00D3D09D = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -222,11 +333,19 @@
 				8BEAA9FB2F15E92F00D3D09D /* InfineonProject */,
 				8BEAAA0A2F15E93000D3D09D /* InfineonProjectTests */,
 				8BEAAA142F15E93000D3D09D /* InfineonProjectUITests */,
+				8BABFE2E2F1EEBBC00572AF7 /* VehicleLiveActivityExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		8BABFE2D2F1EEBBC00572AF7 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8BEAA9FA2F15E92F00D3D09D /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -252,6 +371,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		8BABFE2B2F1EEBBC00572AF7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8BEAA9F82F15E92F00D3D09D /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -276,6 +402,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		8BABFE402F1EEBBE00572AF7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 8BABFE2E2F1EEBBC00572AF7 /* VehicleLiveActivityExtension */;
+			targetProxy = 8BABFE3F2F1EEBBE00572AF7 /* PBXContainerItemProxy */;
+		};
 		8BEAAA0D2F15E93000D3D09D /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 8BEAA9FB2F15E92F00D3D09D /* InfineonProject */;
@@ -289,6 +420,68 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		8BABFE442F1EEBBE00572AF7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = NMJRG9GQTL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VehicleLiveActivity/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = VehicleLiveActivity;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aaronhma.InfineonProject.VehicleLiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		8BABFE452F1EEBBE00572AF7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = NMJRG9GQTL;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = VehicleLiveActivity/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = VehicleLiveActivity;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aaronhma.InfineonProject.VehicleLiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		8BEAAA1D2F15E93000D3D09D /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -421,8 +614,11 @@
 				DEVELOPMENT_TEAM = NMJRG9GQTL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = InfineonProject/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = InfineonProject;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -457,8 +653,11 @@
 				DEVELOPMENT_TEAM = NMJRG9GQTL;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = InfineonProject/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = InfineonProject;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
+				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -490,7 +689,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NMJRG9GQTL;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aaronhma.InfineonProjectTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -512,7 +711,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NMJRG9GQTL;
 				GENERATE_INFOPLIST_FILE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 26.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aaronhma.InfineonProjectTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -533,6 +732,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NMJRG9GQTL;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aaronhma.InfineonProjectUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -553,6 +753,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = NMJRG9GQTL;
 				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aaronhma.InfineonProjectUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -569,6 +770,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		8BABFE432F1EEBBE00572AF7 /* Build configuration list for PBXNativeTarget "VehicleLiveActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8BABFE442F1EEBBE00572AF7 /* Debug */,
+				8BABFE452F1EEBBE00572AF7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		8BEAA9F72F15E92F00D3D09D /* Build configuration list for PBXProject "InfineonProject" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
