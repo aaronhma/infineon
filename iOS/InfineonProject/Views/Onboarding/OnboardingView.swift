@@ -10,7 +10,6 @@ import AaronUI
 import AuthenticationServices
 import Supabase
 import SwiftUI
-import UIKit
 
 struct GradientView: View {
   var fromBottom: Bool
@@ -31,6 +30,8 @@ struct GradientView: View {
 }
 
 struct GetStartedView: View {
+  @Environment(\.colorScheme) private var colorScheme
+
   @AppStorage("showOnboarding") private var showOnboarding = true
 
   var height = CGFloat(300)
@@ -152,7 +153,8 @@ struct GetStartedView: View {
           .frame(height: height)
           .foregroundStyle(
             LinearGradient(
-              gradient: Gradient(colors: [.orange, .yellow]), startPoint: .leading,
+              gradient: Gradient(colors: [colorScheme == .dark ? .white : .black]),
+              startPoint: .leading,
               endPoint: .trailing)
           )
           .overlay(alignment: .top) {
@@ -163,10 +165,10 @@ struct GetStartedView: View {
             } else {
               HStack {
                 Image(systemName: "apple.logo")
-                  .font(.system(size: 18, weight: .medium))
-                Text("Sign in with Apple")
-                  .font(.system(size: 16, weight: .semibold))
+                Text("Continue with Apple")
               }
+              .foregroundStyle(colorScheme == .dark ? .black : .white)
+              .font(.title2)
               .bold()
               .padding(.top, 60)
             }

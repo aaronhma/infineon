@@ -53,13 +53,6 @@ struct AccountView: View {
           }
         }
         .navigationTitle("Account")
-        .toolbar {
-          ToolbarItem(placement: .topBarLeading) {
-            CloseButton {
-              showingSettingsSheet.toggle()
-            }
-          }
-        }
       }
     }
   }
