@@ -13,7 +13,21 @@ struct V2MainView: View {
   var body: some View {
     ZStack {
       VStack {
-        Spacer(minLength: 0)
+        if let profile = appData.watchingProfile, !appData.animateProfile {
+          Group {
+            switch appData.activeTab {
+            case .home:
+              HomeView()
+            case .new:
+              VehicleView()
+            case .account:
+              Text("Long hold to change tabs.")
+            }
+          }
+          .frame(maxHeight: .infinity)
+        } else {
+          Spacer(minLength: 0)
+        }
 
         V2LaunchUITabView()
       }
@@ -31,21 +45,6 @@ struct V2MainView: View {
         }
       }
       .animation(.snappy, value: appData.showProfileView)
-
-      ZStack {
-        if let profile = appData.watchingProfile, !appData.animateProfile {
-          Group {
-            switch appData.activeTab {
-            case .home:
-              HomeView()
-            case .new:
-              VehicleView()
-            case .account:
-              Text("Long hold to change tabs.")
-            }
-          }
-        }
-      }
 
       if !appData.isSplashFinished {
         ProgressView()

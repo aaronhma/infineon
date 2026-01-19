@@ -128,46 +128,6 @@ struct VehicleRowView: View {
   }
 }
 
-struct DriverStatusBadge: View {
-  let status: String
-
-  var statusColor: Color {
-    switch status.lowercased() {
-    case "alert":
-      return .green
-    case "drowsy":
-      return .orange
-    case "impaired":
-      return .red
-    default:
-      return .gray
-    }
-  }
-
-  var statusIcon: String {
-    switch status.lowercased() {
-    case "alert":
-      return "checkmark.circle.fill"
-    case "drowsy":
-      return "moon.fill"
-    case "impaired":
-      return "exclamationmark.triangle.fill"
-    default:
-      return "questionmark.circle.fill"
-    }
-  }
-
-  var body: some View {
-    Label(status.capitalized, systemImage: statusIcon)
-      .font(.caption)
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
-      .background(statusColor.opacity(0.2))
-      .foregroundStyle(statusColor)
-      .clipShape(Capsule())
-  }
-}
-
 struct VehicleDetailView: View {
   @Environment(\.dismiss) private var dismiss
 

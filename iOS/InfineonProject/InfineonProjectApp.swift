@@ -10,14 +10,30 @@ import SwiftUI
 
 @main
 struct InfineonProjectApp: App {
+  @AppStorage("showOnboarding") private var showOnboarding = true
+
+  //    init() {
+  //        Task {
+  //            try await supabase.signOut()
+  //        }
+  //
+  //        showOnboarding = true
+  //    }
+
   var sharedModelContainer: ModelContainer = {
     let schema = Schema([
       Trip.self
     ])
-    let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    let modelConfiguration = ModelConfiguration(
+      schema: schema,
+      isStoredInMemoryOnly: false
+    )
 
     do {
-      return try ModelContainer(for: schema, configurations: [modelConfiguration])
+      return try ModelContainer(
+        for: schema,
+        configurations: [modelConfiguration]
+      )
     } catch {
       fatalError("Could not create ModelContainer: \(error)")
     }
@@ -26,6 +42,9 @@ struct InfineonProjectApp: App {
   var body: some Scene {
     WindowGroup {
       V2MainView()
+        .fullScreenCover(isPresented: $showOnboarding) {
+          OnboardingView()
+        }
       //      RootView()
     }
     .modelContainer(sharedModelContainer)
