@@ -171,6 +171,83 @@ struct DriverProfile: Codable, Identifiable {
   }
 }
 
+struct VehicleTrip: Codable, Identifiable {
+  let id: UUID
+  let createdAt: Date
+  let vehicleId: String
+  let sessionId: UUID
+  let driverProfileId: UUID?
+  let startedAt: Date
+  let endedAt: Date?
+  let status: String
+  let maxSpeedMph: Int
+  let avgSpeedMph: Double
+  let maxIntoxicationScore: Int
+  let speedingEventCount: Int
+  let drowsyEventCount: Int
+  let excessiveBlinkingEventCount: Int
+  let unstableEyesEventCount: Int
+  let faceDetectionCount: Int
+  let speedSampleCount: Int
+  let speedSampleSum: Int
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case createdAt = "created_at"
+    case vehicleId = "vehicle_id"
+    case sessionId = "session_id"
+    case driverProfileId = "driver_profile_id"
+    case startedAt = "started_at"
+    case endedAt = "ended_at"
+    case status
+    case maxSpeedMph = "max_speed_mph"
+    case avgSpeedMph = "avg_speed_mph"
+    case maxIntoxicationScore = "max_intoxication_score"
+    case speedingEventCount = "speeding_event_count"
+    case drowsyEventCount = "drowsy_event_count"
+    case excessiveBlinkingEventCount = "excessive_blinking_event_count"
+    case unstableEyesEventCount = "unstable_eyes_event_count"
+    case faceDetectionCount = "face_detection_count"
+    case speedSampleCount = "speed_sample_count"
+    case speedSampleSum = "speed_sample_sum"
+  }
+
+  /// Returns the trip status as an enum for easier handling
+  var tripStatus: TripStatus {
+    TripStatus(rawValue: status) ?? .ok
+  }
+
+  enum TripStatus: String, Codable, CaseIterable {
+    case ok
+    case warning
+    case danger
+
+    var displayName: String {
+      switch self {
+      case .ok: "OK"
+      case .warning: "Warning"
+      case .danger: "Danger"
+      }
+    }
+
+    var color: Color {
+      switch self {
+      case .ok: .green
+      case .warning: .yellow
+      case .danger: .red
+      }
+    }
+
+    var icon: String {
+      switch self {
+      case .ok: "checkmark"
+      case .warning: "exclamationmark.triangle.fill"
+      case .danger: "xmark"
+      }
+    }
+  }
+}
+
 struct NotificationPreferences: Codable {
   var unidentifiedFace: Bool
   var collision: Bool
@@ -743,6 +820,107 @@ class SupabaseService {
       .upload(fileName, data: imageData, options: .init(contentType: "image/jpeg"))
 
     return fileName
+  }
+
+  // MARK: - Vehicle Trip Methods
+
+  func fetchTrips(for vehicleId: String, limit: Int = 50) async throws -> [VehicleTrip] {
+    let trips: [VehicleTrip] =
+      try await client
+      .from("vehicle_trips")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .order("started_at", ascending: false)
+      .limit(limit)
+      .execute()
+      .value
+
+    return trips
+  }
+
+  func fetchTripsForToday(for vehicleId: String) async throws -> [VehicleTrip] {
+    let calendar = Calendar.current
+    let startOfDay = calendar.startOfDay(for: Date())
+
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime]
+    let startOfDayString = formatter.string(from: startOfDay)
+
+    let trips: [VehicleTrip] =
+      try await client
+      .from("vehicle_trips")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .gte("started_at", value: startOfDayString)
+      .order("started_at", ascending: false)
+      .execute()
+      .value
+
+    return trips
+  }
+
+  func fetchDrowsyEvents(for sessionId: UUID, vehicleId: String) async throws -> [FaceDetection] {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .eq("is_drowsy", value: true)
+      .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  func fetchSpeedingEvents(for sessionId: UUID, vehicleId: String) async throws -> [FaceDetection] {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .eq("is_speeding", value: true)
+      .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  func fetchExcessiveBlinkingEvents(for sessionId: UUID, vehicleId: String) async throws
+    -> [FaceDetection]
+  {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .eq("is_excessive_blinking", value: true)
+      .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  func fetchUnstableEyesEvents(for sessionId: UUID, vehicleId: String) async throws
+    -> [FaceDetection]
+  {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .eq("is_unstable_eyes", value: true)
+      .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
   }
 
   // MARK: - Realtime Subscription

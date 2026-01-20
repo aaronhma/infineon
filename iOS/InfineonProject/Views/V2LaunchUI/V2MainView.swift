@@ -22,7 +22,7 @@ struct V2MainView: View {
             case .home:
               VehicleView(vehicle: profile)
             case .new:
-              HomeView()
+              HomeView(vehicle: profile)
             case .account:
               NavigationStack {
                 List {

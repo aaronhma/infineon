@@ -13,9 +13,8 @@ struct TripDetailView: View {
   var trip: Trip
   var namespace: Namespace.ID
 
-  // Apple Park
+  // Placeholder locations for map (in a real app, these would come from trip data)
   private let startLocation = CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090)
-  // Golden Gate Bridge
   private let endLocation = CLLocationCoordinate2D(latitude: 37.8199, longitude: -122.4783)
 
   @State private var route: MKRoute?
@@ -39,6 +38,7 @@ struct TripDetailView: View {
       .ignoresSafeArea()
 
       List {
+        // Header section
         Section {
           VStack(spacing: 10) {
             Circle()
@@ -55,34 +55,175 @@ struct TripDetailView: View {
               .bold()
               .titleVisibilityAnchor()
 
-            Text(trip.timeStarted.formatted(.dateTime))
+            if trip.isOngoing {
+              Text("Trip in progress")
+                .font(.subheadline)
+                .foregroundStyle(.orange)
+            } else {
+              Text(trip.timeStarted.formatted(.dateTime))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            }
+
+            Text("Duration: \(trip.formattedDuration)")
+              .font(.subheadline)
               .foregroundStyle(.secondary)
-              .multilineTextAlignment(.center)
           }
           .frame(maxWidth: .infinity, alignment: .center)
         }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
 
-        Section("Distracted Driving") {
-          Text("No infractions.")
+        // Trip Statistics
+        Section("Trip Statistics") {
+          LabeledContent("Max Speed") {
+            Text("\(trip.maxSpeedMph) mph")
+              .foregroundStyle(trip.maxSpeedMph > 65 ? .red : .primary)
+          }
+
+          LabeledContent("Average Speed") {
+            Text(trip.avgSpeedMph, format: .number.precision(.fractionLength(1)))
+              + Text(" mph")
+          }
+
+          LabeledContent("Face Detections") {
+            Text("\(trip.faceDetectionCount)")
+          }
+
+          LabeledContent("Session ID") {
+            Text(trip.sessionId.uuidString.prefix(8) + "...")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
         }
 
+        // Driver Monitoring Section - Now with NavigationLinks
+        Section("Driver Monitoring") {
+          // Drowsiness events
+          if trip.drowsyEventCount > 0 {
+            NavigationLink(value: TripEventDestination.drowsinessEvents(trip: trip)) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text(
+                    "\(trip.drowsyEventCount) Drowsiness Event\(trip.drowsyEventCount == 1 ? "" : "s")"
+                  )
+                  Text("Tap to view details")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                Image(systemName: "moon.fill")
+                  .foregroundStyle(.yellow)
+              }
+            }
+            .tint(.primary)
+          } else {
+            Label {
+              Text("No drowsiness detected")
+            } icon: {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            }
+          }
+
+          // Excessive blinking events
+          if trip.excessiveBlinkingEventCount > 0 {
+            NavigationLink(value: TripEventDestination.excessiveBlinkingEvents(trip: trip)) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text(
+                    "\(trip.excessiveBlinkingEventCount) Excessive Blinking Event\(trip.excessiveBlinkingEventCount == 1 ? "" : "s")"
+                  )
+                  Text("Tap to view details")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                Image(systemName: "eye")
+                  .foregroundStyle(.orange)
+              }
+            }
+            .tint(.primary)
+          } else {
+            Label {
+              Text("No excessive blinking detected")
+            } icon: {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            }
+          }
+
+          // Unstable eyes events
+          if trip.unstableEyesEventCount > 0 {
+            NavigationLink(value: TripEventDestination.unstableEyesEvents(trip: trip)) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text(
+                    "\(trip.unstableEyesEventCount) Unstable Eyes Event\(trip.unstableEyesEventCount == 1 ? "" : "s")"
+                  )
+                  Text("Tap to view details")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                Image(systemName: "eye.trianglebadge.exclamationmark")
+                  .foregroundStyle(.red)
+              }
+            }
+            .tint(.primary)
+          } else {
+            Label {
+              Text("No unstable eyes detected")
+            } icon: {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            }
+          }
+
+          LabeledContent("Max Risk Score") {
+            Text("\(trip.maxIntoxicationScore)/6")
+              .foregroundStyle(riskScoreColor)
+          }
+        }
+
+        // Speed Violations Section - Now with NavigationLink
         Section("Speed Violations") {
-          Text("No infractions.")
+          if trip.speedingEventCount > 0 {
+            NavigationLink(value: TripEventDestination.speedingEvents(trip: trip)) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text(
+                    "\(trip.speedingEventCount) Speeding Event\(trip.speedingEventCount == 1 ? "" : "s")"
+                  )
+                  Text("Tap to view details")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                  .foregroundStyle(.orange)
+              }
+            }
+            .tint(.primary)
+          } else {
+            Label {
+              Text("No speeding violations")
+            } icon: {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            }
+          }
         }
 
+        // Trip Route Section (placeholder)
         Section("Trip Route") {
           Map(position: $mapCameraPosition) {
-            // Start marker (Apple Park)
-            Marker("Apple Park", coordinate: startLocation)
+            Marker("Start", coordinate: startLocation)
               .tint(.green)
 
-            // End marker (Golden Gate Bridge)
-            Marker("Golden Gate Bridge", coordinate: endLocation)
+            Marker("End", coordinate: endLocation)
               .tint(.red)
 
-            // Route polyline
             if let route {
               MapPolyline(route.polyline)
                 .stroke(.blue, lineWidth: 5)
@@ -90,7 +231,7 @@ struct TripDetailView: View {
           }
           .mapStyle(.standard(elevation: .realistic))
           .frame(height: 250)
-          .clipShape(RoundedRectangle(cornerRadius: 12))
+          .clipShape(.rect(cornerRadius: 12))
           .listRowInsets(EdgeInsets())
         }
       }
@@ -100,6 +241,16 @@ struct TripDetailView: View {
     .navigationTransition(.zoom(sourceID: trip.id, in: namespace))
     .task {
       await calculateRoute()
+    }
+  }
+
+  private var riskScoreColor: Color {
+    if trip.maxIntoxicationScore >= 4 {
+      return .red
+    } else if trip.maxIntoxicationScore >= 2 {
+      return .orange
+    } else {
+      return .green
     }
   }
 
@@ -116,10 +267,8 @@ struct TripDetailView: View {
       await MainActor.run {
         route = response.routes.first
 
-        // Set camera to show the entire route
         if let route {
           let rect = route.polyline.boundingMapRect
-          let padding = UIEdgeInsets(top: 40, left: 40, bottom: 40, right: 40)
           mapCameraPosition = .rect(rect.insetBy(dx: -rect.width * 0.1, dy: -rect.height * 0.1))
         }
       }

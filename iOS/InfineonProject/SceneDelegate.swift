@@ -7,8 +7,6 @@
 
 import UIKit
 
-// TODO: add dynamic quick action to their most recent vehicle
-
 class SceneDelegate: NSObject, UIWindowSceneDelegate {
   func windowScene(
     _ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,

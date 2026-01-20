@@ -79,14 +79,16 @@ struct ContentView: View {
   private func tabView(safeAreaBottomPadding: CGFloat = .zero) -> some View {
     TabView {
       Tab("Home", systemImage: "house.fill") {
-        HomeView()
+        //        HomeView()
+        Text("Home View")
           .safeAreaPadding(.bottom, safeAreaBottomPadding)
       }
 
-      //            Tab("Vehicle", systemImage: "car.fill") {
-      //                VehicleView()
-      //                    .safeAreaPadding(.bottom, safeAreaBottomPadding)
-      //            }
+      Tab("Vehicle", systemImage: "car.fill") {
+        //          VehicleView()
+        Text("Vehicle View")
+          .safeAreaPadding(.bottom, safeAreaBottomPadding)
+      }
 
       Tab("New", systemImage: "square.grid.2x2.fill") {
         NavigationStack {

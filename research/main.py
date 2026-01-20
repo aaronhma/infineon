@@ -55,11 +55,31 @@ class SupabaseUploader:
         self.current_driver_profile_id = None
         self.last_announced_driver = None
 
+        # Trip tracking
+        self.trip_id = None
+        self.trip_max_speed = 0
+        self.trip_max_intox_score = 0
+        self.trip_speeding_events = 0
+        self.trip_drowsy_events = 0
+        self.trip_excessive_blinking_events = 0
+        self.trip_unstable_eyes_events = 0
+        self.trip_face_detections = 0
+        self.trip_speed_samples = []
+        self.last_trip_update = 0
+        self.trip_update_cooldown = 5.0  # Update trip stats every 5 seconds
+        self.was_speeding = False  # Track speeding state changes
+        self.was_drowsy = False  # Track drowsy state changes
+        self.was_excessive_blinking = False  # Track excessive blinking state changes
+        self.was_unstable_eyes = False  # Track unstable eyes state changes
+
         # Register vehicle on startup
         self._register_vehicle()
 
         # Load driver profiles
         self._load_driver_profiles()
+
+        # Create trip record for this session
+        self._create_trip()
 
         print(
             f"Supabase connected. Vehicle ID: {self.vehicle_id}, Session ID: {self.session_id}"
@@ -141,6 +161,154 @@ class SupabaseUploader:
 
         except Exception as e:
             print(f"Error loading driver profiles: {e}")
+
+    def _create_trip(self):
+        """Create a new trip record for this session"""
+        try:
+            record = {
+                "vehicle_id": self.vehicle_id,
+                "session_id": self.session_id,
+                "started_at": datetime.now().isoformat(),
+                "status": "ok",
+            }
+
+            response = self.client.table("vehicle_trips").insert(record).execute()
+
+            if response.data and len(response.data) > 0:
+                self.trip_id = response.data[0]["id"]
+                print(f"Trip created: {self.trip_id}")
+            else:
+                print("Warning: Trip created but no ID returned")
+
+        except Exception as e:
+            print(f"Error creating trip: {e}")
+
+    def _calculate_trip_status(self):
+        """Calculate trip status based on max intoxication score"""
+        if self.trip_max_intox_score >= 4:
+            return "danger"
+        elif self.trip_max_intox_score >= 2:
+            return "warning"
+        return "ok"
+
+    def update_trip_stats(
+        self,
+        speed: int,
+        intox_score: int,
+        is_speeding: bool,
+        is_drowsy: bool,
+        is_excessive_blinking: bool,
+        is_unstable_eyes: bool,
+    ):
+        """Update trip statistics (called frequently during session)"""
+        # Track max values
+        self.trip_max_speed = max(self.trip_max_speed, speed)
+        self.trip_max_intox_score = max(self.trip_max_intox_score, intox_score)
+
+        # Track speed samples for average
+        self.trip_speed_samples.append(speed)
+
+        # Count speeding events (only when transitioning to speeding)
+        if is_speeding and not self.was_speeding:
+            self.trip_speeding_events += 1
+        self.was_speeding = is_speeding
+
+        # Count drowsy events (only when transitioning to drowsy)
+        if is_drowsy and not self.was_drowsy:
+            self.trip_drowsy_events += 1
+        self.was_drowsy = is_drowsy
+
+        # Count excessive blinking events (only when transitioning)
+        if is_excessive_blinking and not self.was_excessive_blinking:
+            self.trip_excessive_blinking_events += 1
+        self.was_excessive_blinking = is_excessive_blinking
+
+        # Count unstable eyes events (only when transitioning)
+        if is_unstable_eyes and not self.was_unstable_eyes:
+            self.trip_unstable_eyes_events += 1
+        self.was_unstable_eyes = is_unstable_eyes
+
+        # Periodically update trip in database
+        current_time = time.time()
+        if current_time - self.last_trip_update >= self.trip_update_cooldown:
+            self._sync_trip_to_db()
+            self.last_trip_update = current_time
+
+    def _sync_trip_to_db(self):
+        """Sync current trip stats to database"""
+        if not self.trip_id:
+            return
+
+        try:
+            avg_speed = (
+                sum(self.trip_speed_samples) / len(self.trip_speed_samples)
+                if self.trip_speed_samples
+                else 0
+            )
+
+            record = {
+                "max_speed_mph": int(self.trip_max_speed),
+                "avg_speed_mph": float(round(avg_speed, 2)),
+                "max_intoxication_score": int(self.trip_max_intox_score),
+                "speeding_event_count": int(self.trip_speeding_events),
+                "drowsy_event_count": int(self.trip_drowsy_events),
+                "excessive_blinking_event_count": int(self.trip_excessive_blinking_events),
+                "unstable_eyes_event_count": int(self.trip_unstable_eyes_events),
+                "face_detection_count": int(self.trip_face_detections),
+                "speed_sample_count": len(self.trip_speed_samples),
+                "speed_sample_sum": int(sum(self.trip_speed_samples)),
+                "status": self._calculate_trip_status(),
+            }
+
+            # Add driver profile if identified
+            if self.current_driver_profile_id:
+                record["driver_profile_id"] = self.current_driver_profile_id
+
+            self.client.table("vehicle_trips").update(record).eq("id", self.trip_id).execute()
+
+        except Exception as e:
+            print(f"Error syncing trip stats: {e}")
+
+    def end_trip(self):
+        """End the current trip (called on session end)"""
+        if not self.trip_id:
+            return
+
+        try:
+            avg_speed = (
+                sum(self.trip_speed_samples) / len(self.trip_speed_samples)
+                if self.trip_speed_samples
+                else 0
+            )
+
+            record = {
+                "ended_at": datetime.now().isoformat(),
+                "max_speed_mph": int(self.trip_max_speed),
+                "avg_speed_mph": float(round(avg_speed, 2)),
+                "max_intoxication_score": int(self.trip_max_intox_score),
+                "speeding_event_count": int(self.trip_speeding_events),
+                "drowsy_event_count": int(self.trip_drowsy_events),
+                "excessive_blinking_event_count": int(self.trip_excessive_blinking_events),
+                "unstable_eyes_event_count": int(self.trip_unstable_eyes_events),
+                "face_detection_count": int(self.trip_face_detections),
+                "speed_sample_count": len(self.trip_speed_samples),
+                "speed_sample_sum": int(sum(self.trip_speed_samples)),
+                "status": self._calculate_trip_status(),
+            }
+
+            # Add driver profile if identified
+            if self.current_driver_profile_id:
+                record["driver_profile_id"] = self.current_driver_profile_id
+
+            self.client.table("vehicle_trips").update(record).eq("id", self.trip_id).execute()
+            print(f"Trip ended: {self.trip_id} (Status: {self._calculate_trip_status()})")
+
+        except Exception as e:
+            print(f"Error ending trip: {e}")
+
+    def increment_face_detection_count(self):
+        """Increment face detection count for current trip"""
+        self.trip_face_detections += 1
 
     def check_current_driver(self):
         """Check the most recently identified driver for this vehicle"""
@@ -273,7 +441,10 @@ class SupabaseUploader:
                 "right_eye_ear": float(round(right_eye_ear, 4)),
                 "avg_ear": float(round(avg_ear, 4)),
                 "is_drowsy": bool(intox_data.get("drowsy", False)),
-                "is_excessive_blinking": bool(intox_data.get("excessive_blinking", False)),
+                "is_excessive_blinking": bool(
+                    intox_data.get("excessive_blinking", False)
+                ),
+                
                 "is_unstable_eyes": bool(intox_data.get("unstable_eyes", False)),
                 "intoxication_score": int(intox_data.get("score", 0)),
                 "image_path": filename,
@@ -298,7 +469,9 @@ class SupabaseUploader:
 
             # Print upload info with driver name if available
             if self.current_driver_name:
-                print(f"Uploaded face detection: {filename} (Driver: {self.current_driver_name})")
+                print(
+                    f"Uploaded face detection: {filename} (Driver: {self.current_driver_name})"
+                )
             else:
                 print(f"Uploaded face detection: {filename} (Unidentified)")
 
@@ -1436,6 +1609,19 @@ def main():
             intoxication_score=intox_score,
         )
 
+        # Update trip statistics
+        is_drowsy = intox_data["drowsy"] if intox_data else False
+        is_excessive_blinking = intox_data["excessive_blinking"] if intox_data else False
+        is_unstable_eyes = intox_data["unstable_eyes"] if intox_data else False
+        supabase_uploader.update_trip_stats(
+            speed=driving_sim.get_speed(),
+            intox_score=intox_score,
+            is_speeding=driving_sim.is_speeding(),
+            is_drowsy=is_drowsy,
+            is_excessive_blinking=is_excessive_blinking,
+            is_unstable_eyes=is_unstable_eyes,
+        )
+
         # Upload face detection to Supabase (every 2s when face detected)
         if detection_data and supabase_uploader.should_upload():
             driving_data = {
@@ -1454,6 +1640,7 @@ def main():
                 intox_data=detection_data["intox_data"],
                 driving_data=driving_data,
             )
+            supabase_uploader.increment_face_detection_count()
 
         # Check for identified driver (every 5s when face detected)
         if detection_data:
@@ -1519,7 +1706,8 @@ def main():
             driving_sim.reset_speed()
             print(f"Speed reset to: {driving_sim.get_speed()} MPH")
 
-    # Release the camera and close windows
+    # End trip and release resources
+    supabase_uploader.end_trip()
     cap.release()
     cv2.destroyAllWindows()
 

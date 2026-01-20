@@ -69,7 +69,7 @@ SOURCES+=
 
 # Like SOURCES, but for include directories. Value should be paths to
 # directories (without a leading -I).
-INCLUDES+=
+INCLUDES+=source
 
 # Add additional defines to the build process (without a leading -D).
 DEFINES+=CY_RETARGET_IO_CONVERT_LF_TO_CRLF
@@ -99,7 +99,7 @@ ASFLAGS+=
 LDFLAGS+=
 
 # Additional / custom libraries to link in to the application.
-LDLIBS+=
+LDLIBS+=-lm
 
 # Path to the linker script to use (if empty, use the default linker script).
 LINKER_SCRIPT=

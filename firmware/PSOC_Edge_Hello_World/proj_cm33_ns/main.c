@@ -100,20 +100,20 @@ int main(void)
     printf("\x1b[2J\x1b[;H");
 
     printf("****************** "
-           "PSOC Edge MCU: Hello world "
+           "PSOC Edge E84 AI Kit "
            "****************** \r\n\n");
 
-    printf("Hello World!\r\n\n");
-    printf("For more projects, "
-           "visit our code examples repositories:\r\n\n");
-
-    printf("https://github.com/Infineon/"
-           "Code-Examples-for-ModusToolbox-Software\r\n\n");
+    printf("CM33 Core: Initializing system...\r\n");
+    printf("Starting CM55 core for face detection...\r\n\n");
 
     /* Enable CM55. */
     /* CM55_APP_BOOT_ADDR must be updated if CM55 memory layout is changed.*/
     Cy_SysEnableCM55(MXCM55, CM55_APP_BOOT_ADDR, CM55_BOOT_WAIT_TIME_USEC);
 
+    printf("CM55 core started. Face detection running.\r\n");
+    printf("LED1 will blink to indicate CM33 is alive.\r\n\n");
+
+    /* Main loop - blink LED to show CM33 is running */
     for(;;)
     {
         Cy_GPIO_Inv(CYBSP_USER_LED1_PORT, CYBSP_USER_LED1_PIN);

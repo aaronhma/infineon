@@ -5,7 +5,7 @@
 //  Created by Aaron Ma on 1/12/26.
 //
 
-import SwiftData
+//import SwiftData
 import SwiftUI
 
 @main
@@ -46,24 +46,25 @@ struct InfineonProjectApp: App {
     }
   }
 
-  var sharedModelContainer: ModelContainer = {
-    let schema = Schema([
-      Trip.self
-    ])
-    let modelConfiguration = ModelConfiguration(
-      schema: schema,
-      isStoredInMemoryOnly: false
-    )
-
-    do {
-      return try ModelContainer(
-        for: schema,
-        configurations: [modelConfiguration]
-      )
-    } catch {
-      fatalError("Could not create ModelContainer: \(error)")
-    }
-  }()
+  // TODO: Eventually add offline support
+  //  var sharedModelContainer: ModelContainer = {
+  //    let schema = Schema([
+  //      Trip.self
+  //    ])
+  //    let modelConfiguration = ModelConfiguration(
+  //      schema: schema,
+  //      isStoredInMemoryOnly: false
+  //    )
+  //
+  //    do {
+  //      return try ModelContainer(
+  //        for: schema,
+  //        configurations: [modelConfiguration]
+  //      )
+  //    } catch {
+  //      fatalError("Could not create ModelContainer: \(error)")
+  //    }
+  //  }()
 
   func updateShortcutItems() {
     guard let vehicleId = lastSelectedVehicleId,
@@ -91,7 +92,7 @@ struct InfineonProjectApp: App {
       RootView()
         .onOpenURL(perform: handleShortcut)
     }
-    .modelContainer(sharedModelContainer)
+    //    .modelContainer(sharedModelContainer)
     .onChange(of: scenePhase) {
       if scenePhase == .background {
         updateShortcutItems()
