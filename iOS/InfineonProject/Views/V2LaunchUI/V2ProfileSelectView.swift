@@ -172,7 +172,12 @@ struct V2ProfileSelectView: View {
       NavigationStack {
         List {
           Section {
-            Text("Add Code")
+            LabeledContent("ID", value: profile.id)
+          }
+
+          Section {
+            LabeledContent("Add Code", value: profile.vehicle.inviteCode)
+              .textSelection(.enabled)
           }
 
           Section {
@@ -199,6 +204,12 @@ struct V2ProfileSelectView: View {
                 role: .destructive
               ) {
                 Haptics.impact()
+                Task {
+                  try? await supabase.leaveVehicle(profile.vehicleId)
+                  await MainActor.run {
+                    selectedEditProfile = nil
+                  }
+                }
               }
               Button("Cancel", role: .cancel) {}
             } message: {

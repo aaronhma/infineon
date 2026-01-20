@@ -24,7 +24,7 @@ struct InfineonProjectApp: App {
     }
     if url.absoluteString.contains("feedback") {
       let email = "hi@aaronhma.com"
-      let subject = "Satyrn App Improvements"
+      let subject = "Infineon Project App Improvements"
       let body = "DEVICE LOGS:\n\nInfineon Project iOS App Beta v0.0.1"
 
       var components = URLComponents()
