@@ -364,8 +364,17 @@ struct ProfileSetupView: View {
     )
 
     do {
+      // Upload avatar if user selected one
+      var avatarPath: String?
+      if let croppedImage,
+        let imageData = croppedImage.jpegData(compressionQuality: 0.8)
+      {
+        avatarPath = try await supabase.uploadUserAvatar(imageData: imageData)
+      }
+
       try await supabase.updateUserProfile(
         displayName: name,
+        avatarPath: avatarPath,
         notificationPreferences: notificationPreferences,
         notificationsEnabled: notificationsEnabled
       )

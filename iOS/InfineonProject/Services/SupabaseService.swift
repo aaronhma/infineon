@@ -421,6 +421,36 @@ class SupabaseService {
     }
   }
 
+  /// Uploads a user avatar image and returns the storage path
+  func uploadUserAvatar(imageData: Data) async throws -> String {
+    guard let userId = currentUser?.id else {
+      throw NSError(
+        domain: "SupabaseService", code: 401,
+        userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+    }
+
+    let fileName = "\(userId.uuidString)/avatar.jpg"
+
+    // Remove existing avatar if it exists (upsert)
+    try? await client.storage
+      .from("user-avatars")
+      .remove(paths: [fileName])
+
+    // Upload new avatar
+    try await client.storage
+      .from("user-avatars")
+      .upload(fileName, data: imageData, options: .init(contentType: "image/jpeg", upsert: true))
+
+    return fileName
+  }
+
+  /// Gets the public URL for a user avatar
+  func getUserAvatarURL(path: String) -> URL? {
+    try? client.storage
+      .from("user-avatars")
+      .getPublicURL(path: path)
+  }
+
   // MARK: - Vehicle Methods
 
   func loadVehicles() async {
