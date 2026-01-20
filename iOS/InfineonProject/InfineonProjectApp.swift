@@ -11,12 +11,10 @@ import SwiftUI
 @main
 struct InfineonProjectApp: App {
   @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-
-  //      init() {
-  //          Task {
-  //              try await supabase.signOut()
-  //          }
-  //      }
+  @Environment(\.scenePhase) private var scenePhase
+  @AppStorage(
+    "lastSelectedVehicleId"
+  ) private var lastSelectedVehicleId: String?
 
   private func handleShortcut(url: URL) {
     if url.scheme == "infineon" {
@@ -67,12 +65,38 @@ struct InfineonProjectApp: App {
     }
   }()
 
+  func updateShortcutItems() {
+    guard let vehicleId = lastSelectedVehicleId,
+      let vehicle = supabase.vehicles.first(
+        where: {
+          $0.id == vehicleId
+        })
+    else {
+      UIApplication.shared.shortcutItems = []
+      return
+    }
+
+    let vehicleAction = UIApplicationShortcutItem(
+      type: "openVehicle",
+      localizedTitle: vehicle.name ?? "Vehicle",
+      localizedSubtitle: "Open recent vehicle",
+      icon: UIApplicationShortcutIcon(systemImageName: "car.fill"),
+      userInfo: ["vehicleId": vehicleId as NSString]
+    )
+    UIApplication.shared.shortcutItems = [vehicleAction]
+  }
+
   var body: some Scene {
     WindowGroup {
       RootView()
         .onOpenURL(perform: handleShortcut)
     }
     .modelContainer(sharedModelContainer)
+    .onChange(of: scenePhase) {
+      if scenePhase == .background {
+        updateShortcutItems()
+      }
+    }
   }
 }
 

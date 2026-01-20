@@ -55,6 +55,7 @@ struct AnimatedPositionModifier: ViewModifier, Animatable {
 
 struct V2ProfileSelectView: View {
   @Environment(V2AppData.self) private var appData
+  @AppStorage("lastSelectedVehicleId") private var lastSelectedVehicleId: String?
   @State private var animateToCenter = false
   @State private var animateToMainView = false
   @State private var progress = CGFloat.zero
@@ -364,11 +365,10 @@ struct V2ProfileSelectView: View {
         if isEditing {
           selectedEditProfile = profile
         } else {
+          lastSelectedVehicleId = profile.vehicleId
           appData.watchingProfile = profile
           appData.animateProfile = true
         }
-
-        print(profile)
       }
 
       Text(profile.name)
