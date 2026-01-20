@@ -7,15 +7,14 @@
 
 import AaronUI
 import ActivityKit
+import RealityKit
 import SwiftUI
 
 struct VehicleView: View {
   var vehicle: V2Profile
 
-  @State private var showingVehiclePicker = false
   @State private var showingUnidentifiedFaces = false
-  @State private var showingFaceDetections = false
-  @State private var unidentifiedCount = 0
+  @State private var showingVehicleAccessSheet = false
 
   @State var currentLiveActivity: Activity<VehicleLiveActivityAttributes>?
 
@@ -25,13 +24,10 @@ struct VehicleView: View {
         List {
           // Vehicle image section
           Section {
-            AnimatedVehicleView(
-              isMoving: vehicle.realtimeData?.isMoving ?? false,
-              speed: vehicle.realtimeData?.speedMph ?? 0
-            )
-            .frame(height: 200)
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
+            AnimatedVehicleView()
+              .frame(height: 200)
+              .listRowBackground(Color.clear)
+              .listRowInsets(EdgeInsets())
           }
 
           // Driver alert
@@ -41,14 +37,14 @@ struct VehicleView: View {
 
           // Face Detection Section
           Section {
-            if unidentifiedCount > 0 {
+            if vehicle.unidentifiedFacesCount > 0 {
               Button {
                 showingUnidentifiedFaces = true
               } label: {
                 Label {
                   VStack(alignment: .leading) {
                     Text(
-                      "\(unidentifiedCount) Unidentified Face\(unidentifiedCount == 1 ? "" : "s")"
+                      "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
                     )
                     Text("Tap to identify drivers")
                       .font(.caption)
@@ -62,8 +58,8 @@ struct VehicleView: View {
               .tint(.primary)
             }
 
-            Button {
-              showingFaceDetections = true
+            NavigationLink {
+              FaceDetectionsView(vehicle: vehicle.vehicle)
             } label: {
               Label {
                 VStack(alignment: .leading) {
@@ -180,7 +176,8 @@ struct VehicleView: View {
                       state: .init(
                         speed: data.speedMph, riskScore: data.intoxicationScore,
                         driverStatus: data.driverStatus),
-                      staleDate: .now.addingTimeInterval(60 * 60)))
+                      staleDate: .now
+                        .addingTimeInterval(60 * 60)))
                 }
               }
             }
@@ -192,7 +189,7 @@ struct VehicleView: View {
               "Name",
               value: vehicle.name
             )
-            //                            LabeledContent("ID", value: vehicle.id)
+            LabeledContent("ID", value: vehicle.vehicle.id)
             LabeledContent(
               "Invite Code",
               value: vehicle.vehicle.inviteCode
@@ -207,40 +204,41 @@ struct VehicleView: View {
         }
       }
       .navigationTitle(vehicle.name)
-      //            .toolbar {
-      //                if supabaseService.vehicles.count > 1 {
-      //                    ToolbarItem(placement: .topBarLeading) {
-      //                        Menu {
-      //                            ForEach(supabaseService.vehicles) { vehicle in
-      //                                Button {
-      //                                    withAnimation {
-      //                                        selectedVehicleId = vehicle.id
-      //                                    }
-      //                                } label: {
-      //                                    if vehicle.id == currentVehicle?.id {
-      //                                        Label(
-      //                                            vehicle.name ?? vehicle.id,
-      //                                            systemImage: "checkmark"
-      //                                        )
-      //                                    } else {
-      //                                        Text(vehicle.name ?? vehicle.id)
-      //                                    }
-      //                                }
-      //                            }
-      //                        } label: {
-      //                            Label("Switch Vehicle", systemImage: "car.2.fill")
-      //                        }
-      //                    }
-      //                }
-      //            }
+      .toolbar {
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            showingVehicleAccessSheet.toggle()
+          } label: {
+            Image(systemName: "person.2.fill")
+          }
+        }
+      }
+    }
+    .sheet(isPresented: $showingVehicleAccessSheet) {
+      NavigationStack {
+        List {
+          Section("Owner") {}
+
+          Section {
+          } header: {
+            Text("Other")
+          } footer: {
+            Text("Remove access from people you don't know.")
+          }
+        }
+        .navigationTitle("Vehicle Access")
+        .toolbar {
+          ToolbarItem(placement: .topBarLeading) {
+            CloseButton {
+              Haptics.impact()
+              showingVehicleAccessSheet.toggle()
+            }
+          }
+        }
+      }
     }
     .sheet(isPresented: $showingUnidentifiedFaces) {
-      //                UnidentifiedFacesView(vehicle: vehicle)
-    }
-    .navigationDestination(isPresented: $showingFaceDetections) {
-      //            if let vehicle = vehi {
-      //                FaceDetectionsView(vehicle: vehicle)
-      //            }
+      UnidentifiedFacesView(vehicle: vehicle.vehicle)
     }
   }
 
@@ -296,86 +294,16 @@ struct VehicleView: View {
 // MARK: - Animated Vehicle View
 
 struct AnimatedVehicleView: View {
-  let isMoving: Bool
-  let speed: Int
-
-  @State private var wheelRotation: Double = 0
-  @State private var vehicleOffset: CGFloat = 0
-
-  private var rotationSpeed: Double {
-    Double(max(speed, 10)) / 10
-  }
+  @State private var rotation: Angle = .zero
+  @State private var scale: CGFloat = 1.0
+  @State private var offset: CGSize = .zero
 
   var body: some View {
     ZStack {
       Image("modelY")
         .resizable()
         .aspectRatio(contentMode: .fit)
-        .overlay {
-          GeometryReader { geometry in
-            let width = geometry.size.width
-            let height = geometry.size.height
-
-            WheelView(rotation: wheelRotation)
-              .frame(width: width * 0.12, height: width * 0.12)
-              .position(x: width * 0.75, y: height * 0.72)
-
-            WheelView(rotation: wheelRotation)
-              .frame(width: width * 0.12, height: width * 0.12)
-              .position(x: width * 0.25, y: height * 0.72)
-          }
-        }
-        .offset(x: vehicleOffset)
     }
-    .onChange(of: isMoving, initial: true) { _, newValue in
-      if newValue {
-        startDrivingAnimation()
-      } else {
-        stopDrivingAnimation()
-      }
-    }
-  }
-
-  private func startDrivingAnimation() {
-    withAnimation(
-      .linear(duration: 1 / rotationSpeed)
-        .repeatForever(autoreverses: false)
-    ) {
-      wheelRotation = 360
-    }
-    withAnimation(
-      .easeInOut(duration: 2).repeatForever(autoreverses: true)
-    ) {
-      vehicleOffset = 3
-    }
-  }
-
-  private func stopDrivingAnimation() {
-    withAnimation(.easeOut(duration: 0.5)) {
-      wheelRotation = 0
-      vehicleOffset = 0
-    }
-  }
-}
-
-// MARK: - Wheel View
-
-struct WheelView: View {
-  let rotation: Double
-
-  var body: some View {
-    Circle()
-      .fill(Color(white: 0.2))
-      .overlay {
-        ForEach(0..<5, id: \.self) { index in
-          Rectangle()
-            .fill(Color(white: 0.4))
-            .frame(width: 2, height: 10)
-            .offset(y: -6)
-            .rotationEffect(.degrees(Double(index) * 72))
-        }
-      }
-      .rotationEffect(.degrees(rotation))
   }
 }
 
@@ -414,5 +342,10 @@ struct DriverStatusBadge: View {
 }
 
 #Preview {
-  VehicleView(vehicle: mockProfiles[0])
+  VehicleView(
+    vehicle: V2Profile(
+      id: "111", name: "AA", icon: "benji", vehicleId: "111",
+      vehicle: Vehicle(
+        id: "", createdAt: .now, updatedAt: .now, name: "", description: "", inviteCode: "",
+        ownerId: UUID())))
 }

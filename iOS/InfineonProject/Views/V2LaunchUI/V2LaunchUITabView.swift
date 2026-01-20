@@ -26,22 +26,19 @@ enum V2Tab: String, CaseIterable {
 }
 
 struct V2Profile: Identifiable {
-  var id = UUID()
+  var id: String
   var name: String
   var icon: String
   var vehicleId: String
+  var vehicle: Vehicle
   var unidentifiedFacesCount = 0
 
   var sourceAnchorID: String {
-    id.uuidString + "SOURCE"
+    id + "SOURCE"
   }
 
   var destinationAnchorID: String {
-    id.uuidString + "DESTINATION"
-  }
-
-  var vehicle: Vehicle {
-    supabase.vehicles.first { $0.id == vehicleId }!
+    id + "DESTINATION"
   }
 
   var realtimeData: VehicleRealtime? {
@@ -49,9 +46,15 @@ struct V2Profile: Identifiable {
   }
 }
 
+var sampleVehicle = Vehicle(
+  id: "BENJI123", createdAt: .now, updatedAt: .now, name: "Benji", description: "Model Y",
+  inviteCode: "111111", ownerId: UUID())
+
 var mockProfiles: [V2Profile] = [
-  .init(name: "Benji", icon: "benji", vehicleId: "BENJI123"),
-  .init(name: "Model Y", icon: "modelY", vehicleId: "BENJI123"),
+  .init(
+    id: "BENJI123", name: "Benji", icon: "benji", vehicleId: "BENJI123", vehicle: sampleVehicle),
+  .init(
+    id: "BENJI124", name: "Model Y", icon: "modelY", vehicleId: "BENJI124", vehicle: sampleVehicle),
 ]
 
 @Observable

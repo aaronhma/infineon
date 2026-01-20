@@ -116,7 +116,11 @@ struct V2ProfileSelectView: View {
           count: 2
         )
       ) {
-        ForEach(mockProfiles) { profile in
+        ForEach(
+          supabase.vehicles.map {
+            V2Profile(id: $0.id, name: $0.name!, icon: "benji", vehicleId: $0.id, vehicle: $0)
+          }
+        ) { profile in
           profileCard(profile)
         }
 
@@ -352,6 +356,8 @@ struct V2ProfileSelectView: View {
           appData.watchingProfile = profile
           appData.animateProfile = true
         }
+
+        print(profile)
       }
 
       Text(profile.name)
