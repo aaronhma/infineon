@@ -6,6 +6,7 @@
 //
 
 import AaronUI
+import PhotosUI
 import SwiftUI
 
 struct OnboardingProgressView: View {
@@ -59,9 +60,16 @@ struct AirBrowserAIFeature: Identifiable {
 }
 
 struct ProfileSetupView: View {
-  @State private var currentTab = TabOptions.name
+  var onComplete: () -> Void
 
-  @State private var name = "d"
+  @State private var currentTab = TabOptions.name
+  @State private var isSaving = false
+
+  @State private var showingCropViewSheet = false
+  @State private var selectedPhotoItem: PhotosPickerItem?
+  @State private var selectedImage: UIImage?
+  @State private var croppedImage: UIImage?
+  @State private var name = ""
 
   @State private var enabledAirAIFeatures = [
     AirBrowserAIFeature(
@@ -174,8 +182,17 @@ struct ProfileSetupView: View {
             .frame(width: 40, height: 40)
             .clipShape(.rect(cornerRadius: 12))
         } onPermissionChange: { isApproved in
+          Task {
+            await saveProfileAndComplete(notificationsEnabled: isApproved)
+          }
         } onPrimaryButtonTap: {
+          Task {
+            await saveProfileAndComplete(notificationsEnabled: true)
+          }
         } onSecondaryButtonTap: {
+          Task {
+            await saveProfileAndComplete(notificationsEnabled: false)
+          }
         }
       }
     }
@@ -186,12 +203,15 @@ struct ProfileSetupView: View {
       if currentTab != .allowNotifications {
         AaronButtonView(
           text: "continue",
+          opacity: currentStepUncompleted ? 0.7 : 1,
           disabled: currentStepUncompleted
         ) {
           if let next = TabOptions(
             rawValue: currentTab.rawValue + 1
           ) {
             withAnimation(.bouncy) {
+              hideKeyboard()
+
               currentTab = next
             }
           }
@@ -213,10 +233,35 @@ struct ProfileSetupView: View {
           .padding(.horizontal)
 
         VStack {
-          Image(.benji)
-            .resizable()
-            .scaledToFit()
-            .frame(width: 50, height: 50)
+          PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+            VStack(spacing: 8) {
+              Group {
+                if let croppedImage {
+                  Image(uiImage: croppedImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 80, height: 80)
+                    .clipShape(.circle)
+                } else {
+                  Circle()
+                    .fill(.gray.gradient)
+                    .frame(width: 60, height: 60)
+                    .overlay {
+                      Image(systemName: "plus")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 45, height: 45)
+                        .foregroundStyle(.white)
+                    }
+                }
+              }
+              .animation(.easeInOut, value: croppedImage != nil)
+
+              Text(croppedImage != nil ? "change photo" : "add photo")
+                .contentTransition(.interpolate)
+            }
+          }
+          .padding(.bottom, 40)
 
           TextField("your name", text: $name)
         }
@@ -224,6 +269,35 @@ struct ProfileSetupView: View {
         .multilineTextAlignment(.center)
 
         Spacer(minLength: 0)
+      }
+    }
+    .scrollDismissesKeyboard(.immediately)
+    .onChange(of: selectedPhotoItem) { _, newItem in
+      guard let newItem else { return }
+      Task {
+        if let data = try? await newItem.loadTransferable(type: Data.self),
+          let uiImage = UIImage(data: data)
+        {
+          selectedImage = uiImage
+        }
+      }
+    }
+    .onChange(of: selectedImage) { _, newImage in
+      if newImage != nil {
+        showingCropViewSheet = true
+      }
+    }
+    .sheet(isPresented: $showingCropViewSheet) {
+      if let selectedImage {
+        CropView(
+          crop: .circle,
+          image: selectedImage
+        ) { resultImage, status in
+          if status {
+            croppedImage = resultImage
+          }
+          showingCropViewSheet = false
+        }
       }
     }
   }
@@ -265,10 +339,52 @@ struct ProfileSetupView: View {
 
         Spacer(minLength: 0)
       }
+      .padding(.bottom, 100)
+    }
+  }
+
+  /// Saves the user profile and completes the setup
+  private func saveProfileAndComplete(notificationsEnabled: Bool) async {
+    guard !isSaving else { return }
+
+    await MainActor.run {
+      isSaving = true
+    }
+
+    // Build notification preferences from the enabled features
+    let notificationPreferences = NotificationPreferences(
+      unidentifiedFace: enabledAirAIFeatures.first { $0.name == "Unidentified Face" }?.isEnabled
+        ?? true,
+      collision: enabledAirAIFeatures.first { $0.name == "Collision" }?.isEnabled ?? true,
+      driverDrowsiness: enabledAirAIFeatures.first { $0.name == "Driver Drowsiness" }?.isEnabled
+        ?? true,
+      speedLimit: enabledAirAIFeatures.first { $0.name == "Follow Speed Limit" }?.isEnabled ?? true,
+      drunkDriving: enabledAirAIFeatures.first { $0.name == "Drunk Driving" }?.isEnabled ?? true,
+      fsd: enabledAirAIFeatures.first { $0.name == "FSD" }?.isEnabled ?? true
+    )
+
+    do {
+      try await supabase.updateUserProfile(
+        displayName: name,
+        notificationPreferences: notificationPreferences,
+        notificationsEnabled: notificationsEnabled
+      )
+
+      await MainActor.run {
+        isSaving = false
+        onComplete()
+      }
+    } catch {
+      print("Error saving profile: \(error)")
+      await MainActor.run {
+        isSaving = false
+        // Still complete even on error - the profile will be set up on next launch
+        onComplete()
+      }
     }
   }
 }
 
 #Preview {
-  ProfileSetupView()
+  ProfileSetupView {}
 }

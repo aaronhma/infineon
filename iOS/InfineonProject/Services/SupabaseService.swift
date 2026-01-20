@@ -171,6 +171,35 @@ struct DriverProfile: Codable, Identifiable {
   }
 }
 
+struct NotificationPreferences: Codable {
+  var unidentifiedFace: Bool
+  var collision: Bool
+  var driverDrowsiness: Bool
+  var speedLimit: Bool
+  var drunkDriving: Bool
+  var fsd: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case unidentifiedFace = "unidentified_face"
+    case collision
+    case driverDrowsiness = "driver_drowsiness"
+    case speedLimit = "speed_limit"
+    case drunkDriving = "drunk_driving"
+    case fsd
+  }
+
+  static var allEnabled: NotificationPreferences {
+    NotificationPreferences(
+      unidentifiedFace: true,
+      collision: true,
+      driverDrowsiness: true,
+      speedLimit: true,
+      drunkDriving: true,
+      fsd: true
+    )
+  }
+}
+
 struct UserProfile: Codable, Identifiable {
   var id: UUID { userId }
   let userId: UUID
@@ -178,6 +207,9 @@ struct UserProfile: Codable, Identifiable {
   let updatedAt: Date
   let displayName: String?
   let avatarPath: String?
+  let notificationPreferences: NotificationPreferences?
+  let notificationsEnabled: Bool?
+  let pushToken: String?
 
   enum CodingKeys: String, CodingKey {
     case userId = "user_id"
@@ -185,6 +217,14 @@ struct UserProfile: Codable, Identifiable {
     case updatedAt = "updated_at"
     case displayName = "display_name"
     case avatarPath = "avatar_path"
+    case notificationPreferences = "notification_preferences"
+    case notificationsEnabled = "notifications_enabled"
+    case pushToken = "push_token"
+  }
+
+  /// Returns true if the profile needs setup (no display name set)
+  var needsSetup: Bool {
+    displayName == nil || displayName?.isEmpty == true
   }
 }
 
@@ -220,6 +260,14 @@ class SupabaseService {
   var isLoading = true
   var currentUser: User?
 
+  // User profile state
+  var userProfile: UserProfile?
+
+  /// Returns true if the user needs to set up their profile (first-time user or no display name)
+  var needsProfileSetup: Bool {
+    userProfile?.needsSetup ?? true
+  }
+
   // Vehicle state
   var vehicles: [Vehicle] = []
   var vehicleRealtimeData: [String: VehicleRealtime] = [:]
@@ -250,9 +298,10 @@ class SupabaseService {
           self.isLoggedIn = state.session != nil
           self.isLoading = false
 
-          // Load vehicles when signed in
+          // Load user profile and vehicles when signed in
           if self.isLoggedIn {
             Task {
+              await self.loadUserProfile()
               await self.loadVehicles()
             }
           }
@@ -260,6 +309,7 @@ class SupabaseService {
           self.currentUser = nil
           self.isLoggedIn = false
           self.isLoading = false
+          self.userProfile = nil
           self.vehicles = []
           self.vehicleRealtimeData = [:]
           self.unsubscribeFromRealtime()
@@ -271,10 +321,10 @@ class SupabaseService {
   }
 
   func loadOrCreateUser(userId: UUID, email: String) async {
-    // This can be extended to create a user profile in a custom table if needed
     await MainActor.run {
       self.isLoggedIn = true
     }
+    await loadUserProfile()
     await loadVehicles()
   }
 
@@ -283,8 +333,91 @@ class SupabaseService {
     await MainActor.run {
       self.isLoggedIn = false
       self.currentUser = nil
+      self.userProfile = nil
       self.vehicles = []
       self.vehicleRealtimeData = [:]
+    }
+  }
+
+  // MARK: - User Profile Methods
+
+  /// Loads the user's profile, creating one if it doesn't exist
+  func loadUserProfile() async {
+    guard let userId = currentUser?.id else { return }
+
+    do {
+      // Try to fetch existing profile
+      let profiles: [UserProfile] =
+        try await client
+        .from("user_profiles")
+        .select()
+        .eq("user_id", value: userId)
+        .execute()
+        .value
+
+      if let existingProfile = profiles.first {
+        await MainActor.run {
+          self.userProfile = existingProfile
+        }
+      } else {
+        // Create a new profile if one doesn't exist
+        let newProfile: UserProfile =
+          try await client
+          .from("user_profiles")
+          .insert(["user_id": userId.uuidString])
+          .select()
+          .single()
+          .execute()
+          .value
+
+        await MainActor.run {
+          self.userProfile = newProfile
+        }
+      }
+    } catch {
+      print("Error loading user profile: \(error)")
+    }
+  }
+
+  /// Updates the user's profile with the provided values
+  func updateUserProfile(
+    displayName: String? = nil,
+    avatarPath: String? = nil,
+    notificationPreferences: NotificationPreferences? = nil,
+    notificationsEnabled: Bool? = nil
+  ) async throws {
+    guard let userId = currentUser?.id else { return }
+
+    // Build the update dictionary with only non-nil values
+    var updateData: [String: AnyJSON] = [:]
+
+    if let displayName {
+      updateData["display_name"] = .string(displayName)
+    }
+    if let avatarPath {
+      updateData["avatar_path"] = .string(avatarPath)
+    }
+    if let notificationsEnabled {
+      updateData["notifications_enabled"] = .bool(notificationsEnabled)
+    }
+    if let notificationPreferences {
+      let prefsData = try JSONEncoder().encode(notificationPreferences)
+      let prefsJSON = try JSONDecoder().decode(AnyJSON.self, from: prefsData)
+      updateData["notification_preferences"] = prefsJSON
+    }
+
+    let profile: UserProfile =
+      try await client
+      .from("user_profiles")
+      .update(updateData)
+      .eq("user_id", value: userId)
+      .select()
+      .single()
+      .execute()
+      .value
+
+    await MainActor.run {
+      self.userProfile = profile
     }
   }
 

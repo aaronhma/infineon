@@ -77,6 +77,8 @@ struct InfineonProjectApp: App {
 }
 
 struct RootView: View {
+  @State private var showProfileSetup = false
+
   var body: some View {
     Group {
       if supabase.isLoading {
@@ -85,8 +87,8 @@ struct RootView: View {
       } else if supabase.isLoggedIn {
         // TODO: ask group to choose between these 3 designs
         V2MainView()
-        //        MainView()
-        //                        ContentView()
+        //          MainView()
+        //          ContentView()
       } else {
         OnboardingView()
       }
@@ -94,5 +96,22 @@ struct RootView: View {
     .transition(.blurReplace)
     .animation(.easeInOut(duration: 0.3), value: supabase.isLoggedIn)
     .animation(.easeInOut(duration: 0.3), value: supabase.isLoading)
+    .fullScreenCover(isPresented: $showProfileSetup) {
+      ProfileSetupView {
+        showProfileSetup = false
+      }
+    }
+    .onChange(of: supabase.isLoggedIn, initial: true) { _, isLoggedIn in
+      // Show profile setup if user is logged in and needs to set up their profile
+      if isLoggedIn && supabase.needsProfileSetup {
+        showProfileSetup = true
+      }
+    }
+    .onChange(of: supabase.userProfile?.displayName) { _, displayName in
+      // Dismiss profile setup when profile is completed
+      if displayName != nil && !displayName!.isEmpty {
+        showProfileSetup = false
+      }
+    }
   }
 }
