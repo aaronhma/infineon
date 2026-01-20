@@ -60,6 +60,17 @@ struct GetStartedView: View {
           return
         }
 
+        // Extract full name from Apple credential (only provided on first sign-in)
+        var fullName: String?
+        if let nameComponents = credential.fullName {
+          let formatter = PersonNameComponentsFormatter()
+          formatter.style = .default
+          let formattedName = formatter.string(from: nameComponents)
+          if !formattedName.isEmpty {
+            fullName = formattedName
+          }
+        }
+
         await MainActor.run {
           isSigningIn = true
           errorMessage = nil
@@ -76,8 +87,11 @@ struct GetStartedView: View {
         // Wait for user to be loaded
         await supabase.loadOrCreateUser(
           userId: response.user.id,
-          email: response.user.email ?? ""
+          email: response.user.email ?? "",
+          fullName: fullName
         )
+
+        print("full name: \(fullName)")
 
         await MainActor.run {
           isSigningIn = false

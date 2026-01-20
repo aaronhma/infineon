@@ -263,6 +263,9 @@ class SupabaseService {
   // User profile state
   var userProfile: UserProfile?
 
+  // Push notification token
+  var deviceToken: String?
+
   /// Returns true if the user needs to set up their profile (first-time user or no display name)
   var needsProfileSetup: Bool {
     userProfile?.needsSetup ?? true
@@ -320,11 +323,11 @@ class SupabaseService {
     }
   }
 
-  func loadOrCreateUser(userId: UUID, email: String) async {
+  func loadOrCreateUser(userId: UUID, email: String, fullName: String? = nil) async {
     await MainActor.run {
       self.isLoggedIn = true
     }
-    await loadUserProfile()
+    await loadUserProfile(initialDisplayName: fullName)
     await loadVehicles()
   }
 
@@ -342,7 +345,8 @@ class SupabaseService {
   // MARK: - User Profile Methods
 
   /// Loads the user's profile, creating one if it doesn't exist
-  func loadUserProfile() async {
+  /// - Parameter initialDisplayName: Optional display name to set when creating a new profile (e.g., from Apple Sign In)
+  func loadUserProfile(initialDisplayName: String? = nil) async {
     guard let userId = currentUser?.id else { return }
 
     do {
@@ -356,22 +360,52 @@ class SupabaseService {
         .value
 
       if let existingProfile = profiles.first {
-        await MainActor.run {
-          self.userProfile = existingProfile
+        // If profile exists but has no display name, and we have one to set, update it
+        if existingProfile.displayName == nil || existingProfile.displayName?.isEmpty == true,
+          let initialDisplayName, !initialDisplayName.isEmpty
+        {
+          try? await updateUserProfile(displayName: initialDisplayName)
+        } else {
+          await MainActor.run {
+            self.userProfile = existingProfile
+          }
         }
       } else {
         // Create a new profile if one doesn't exist
-        let newProfile: UserProfile =
-          try await client
-          .from("user_profiles")
-          .insert(["user_id": userId.uuidString])
-          .select()
-          .single()
-          .execute()
-          .value
+        var insertData: [String: String] = ["user_id": userId.uuidString]
+        if let initialDisplayName, !initialDisplayName.isEmpty {
+          insertData["display_name"] = initialDisplayName
+        }
 
-        await MainActor.run {
-          self.userProfile = newProfile
+        do {
+          let newProfile: UserProfile =
+            try await client
+            .from("user_profiles")
+            .insert(insertData)
+            .select()
+            .single()
+            .execute()
+            .value
+
+          await MainActor.run {
+            self.userProfile = newProfile
+          }
+        } catch {
+          // Handle race condition: profile may have been created by another call
+          // Re-fetch the profile instead
+          let existingProfiles: [UserProfile] =
+            try await client
+            .from("user_profiles")
+            .select()
+            .eq("user_id", value: userId)
+            .execute()
+            .value
+
+          if let profile = existingProfiles.first {
+            await MainActor.run {
+              self.userProfile = profile
+            }
+          }
         }
       }
     } catch {
@@ -384,7 +418,8 @@ class SupabaseService {
     displayName: String? = nil,
     avatarPath: String? = nil,
     notificationPreferences: NotificationPreferences? = nil,
-    notificationsEnabled: Bool? = nil
+    notificationsEnabled: Bool? = nil,
+    pushToken: String? = nil
   ) async throws {
     guard let userId = currentUser?.id else { return }
 
@@ -399,6 +434,9 @@ class SupabaseService {
     }
     if let notificationsEnabled {
       updateData["notifications_enabled"] = .bool(notificationsEnabled)
+    }
+    if let pushToken {
+      updateData["push_token"] = .string(pushToken)
     }
     if let notificationPreferences {
       let prefsData = try JSONEncoder().encode(notificationPreferences)

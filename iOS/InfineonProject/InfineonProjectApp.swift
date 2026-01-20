@@ -12,11 +12,11 @@ import SwiftUI
 struct InfineonProjectApp: App {
   @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-  //    init() {
-  //        Task {
-  //            try await supabase.signOut()
-  //        }
-  //    }
+  //      init() {
+  //          Task {
+  //              try await supabase.signOut()
+  //          }
+  //      }
 
   private func handleShortcut(url: URL) {
     if url.scheme == "infineon" {
@@ -25,7 +25,7 @@ struct InfineonProjectApp: App {
     if url.absoluteString.contains("feedback") {
       let email = "hi@aaronhma.com"
       let subject = "Satyrn App Improvements"
-      let body = "DEVICE LOGS:\n\nSatyrn iOS App Beta v0.0.1"
+      let body = "DEVICE LOGS:\n\nInfineon Project iOS App Beta v0.0.1"
 
       var components = URLComponents()
       components.scheme = "mailto"

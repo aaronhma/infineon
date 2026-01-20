@@ -300,6 +300,12 @@ struct ProfileSetupView: View {
         }
       }
     }
+    .onAppear {
+      // Pre-populate name from user profile if available (from Apple Sign In)
+      if let displayName = supabase.userProfile?.displayName, !displayName.isEmpty {
+        name = displayName
+      }
+    }
   }
 
   @ViewBuilder
@@ -363,6 +369,15 @@ struct ProfileSetupView: View {
       fsd: enabledAirAIFeatures.first { $0.name == "FSD" }?.isEnabled ?? true
     )
 
+    // Register for remote notifications if enabled
+    var pushToken: String?
+    if notificationsEnabled {
+      await UIApplication.shared.registerForRemoteNotifications()
+      // Wait briefly for the token to be received
+      try? await Task.sleep(for: .milliseconds(500))
+      pushToken = supabase.deviceToken
+    }
+
     do {
       // Upload avatar if user selected one
       var avatarPath: String?
@@ -376,7 +391,8 @@ struct ProfileSetupView: View {
         displayName: name,
         avatarPath: avatarPath,
         notificationPreferences: notificationPreferences,
-        notificationsEnabled: notificationsEnabled
+        notificationsEnabled: notificationsEnabled,
+        pushToken: pushToken
       )
 
       await MainActor.run {
