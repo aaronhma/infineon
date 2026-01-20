@@ -171,6 +171,44 @@ struct DriverProfile: Codable, Identifiable {
   }
 }
 
+struct UserProfile: Codable, Identifiable {
+  var id: UUID { userId }
+  let userId: UUID
+  let createdAt: Date
+  let updatedAt: Date
+  let displayName: String?
+  let avatarPath: String?
+
+  enum CodingKeys: String, CodingKey {
+    case userId = "user_id"
+    case createdAt = "created_at"
+    case updatedAt = "updated_at"
+    case displayName = "display_name"
+    case avatarPath = "avatar_path"
+  }
+}
+
+struct VehicleAccessUser: Codable, Identifiable {
+  var id: UUID { accessId ?? userId }
+  let accessId: UUID?
+  let userId: UUID
+  let displayName: String?
+  let email: String?
+  let avatarPath: String?
+  let accessLevel: String?
+  let isOwner: Bool
+
+  enum CodingKeys: String, CodingKey {
+    case accessId = "access_id"
+    case userId = "user_id"
+    case displayName = "display_name"
+    case email
+    case avatarPath = "avatar_path"
+    case accessLevel = "access_level"
+    case isOwner = "is_owner"
+  }
+}
+
 // MARK: - SupabaseService
 
 @Observable
@@ -337,6 +375,25 @@ class SupabaseService {
       self.vehicles.removeAll { $0.id == vehicleId }
       self.vehicleRealtimeData.removeValue(forKey: vehicleId)
     }
+  }
+
+  func fetchVehicleAccessUsers(vehicleId: String) async throws -> [VehicleAccessUser] {
+    let users: [VehicleAccessUser] =
+      try await client
+      .rpc("get_vehicle_access_users", params: ["p_vehicle_id": vehicleId])
+      .execute()
+      .value
+
+    return users
+  }
+
+  func removeUserAccess(vehicleId: String, userId: UUID) async throws {
+    try await client
+      .rpc(
+        "remove_vehicle_access",
+        params: ["p_vehicle_id": vehicleId, "p_user_id": userId.uuidString]
+      )
+      .execute()
   }
 
   // MARK: - Face Detection Methods

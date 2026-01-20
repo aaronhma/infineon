@@ -32,8 +32,6 @@ struct GradientView: View {
 struct GetStartedView: View {
   @Environment(\.colorScheme) private var colorScheme
 
-  @AppStorage("showOnboarding") private var showOnboarding = true
-
   var height = CGFloat(300)
 
   @State private var isSigningIn = false
@@ -84,7 +82,6 @@ struct GetStartedView: View {
         await MainActor.run {
           isSigningIn = false
           supabase.isLoading = false
-          showOnboarding = false
         }
       } catch {
         await MainActor.run {
@@ -216,8 +213,6 @@ private let videos: [DataModel] = [
 ]
 
 struct OnboardingView: View {
-  @AppStorage("showOnboarding") private var showOnboarding = true
-
   //    @State private var showingAuthSheet = false
 
   @State private var finalOffset = CGFloat.zero

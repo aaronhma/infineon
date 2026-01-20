@@ -10,15 +10,43 @@ import SwiftUI
 
 @main
 struct InfineonProjectApp: App {
-  @AppStorage("showOnboarding") private var showOnboarding = true
+  @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
   //    init() {
   //        Task {
   //            try await supabase.signOut()
   //        }
-  //
-  //        showOnboarding = true
   //    }
+
+  private func handleShortcut(url: URL) {
+    if url.scheme == "infineon" {
+      print(url.absoluteString)
+    }
+    if url.absoluteString.contains("feedback") {
+      let email = "hi@aaronhma.com"
+      let subject = "Satyrn App Improvements"
+      let body = "DEVICE LOGS:\n\nSatyrn iOS App Beta v0.0.1"
+
+      var components = URLComponents()
+      components.scheme = "mailto"
+      components.path = email
+      components.queryItems = [
+        URLQueryItem(name: "subject", value: subject),
+        URLQueryItem(name: "body", value: body),
+      ]
+
+      print("EMAIL: ", components.url!.absoluteString)
+
+      if let mailURL = components.url,
+        UIApplication.shared
+          .canOpenURL(mailURL)
+      {
+        UIApplication.shared.open(mailURL)
+      }
+    } else {
+      print("ERROR")
+    }
+  }
 
   var sharedModelContainer: ModelContainer = {
     let schema = Schema([
@@ -41,11 +69,8 @@ struct InfineonProjectApp: App {
 
   var body: some Scene {
     WindowGroup {
-      V2MainView()
-        .fullScreenCover(isPresented: $showOnboarding) {
-          OnboardingView()
-        }
-      //      RootView()
+      RootView()
+        .onOpenURL(perform: handleShortcut)
     }
     .modelContainer(sharedModelContainer)
   }
@@ -58,10 +83,12 @@ struct RootView: View {
         ProgressView("Loading...")
           .controlSize(.extraLarge)
       } else if supabase.isLoggedIn {
-        MainView()
-        //                ContentView()
+        // TODO: ask group to choose between these 3 designs
+        V2MainView()
+        //        MainView()
+        //                        ContentView()
       } else {
-        AuthView()
+        OnboardingView()
       }
     }
     .transition(.blurReplace)

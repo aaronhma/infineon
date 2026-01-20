@@ -207,6 +207,7 @@ struct VehicleView: View {
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
           Button {
+            Haptics.impact()
             showingVehicleAccessSheet.toggle()
           } label: {
             Image(systemName: "person.2.fill")
@@ -215,27 +216,7 @@ struct VehicleView: View {
       }
     }
     .sheet(isPresented: $showingVehicleAccessSheet) {
-      NavigationStack {
-        List {
-          Section("Owner") {}
-
-          Section {
-          } header: {
-            Text("Other")
-          } footer: {
-            Text("Remove access from people you don't know.")
-          }
-        }
-        .navigationTitle("Vehicle Access")
-        .toolbar {
-          ToolbarItem(placement: .topBarLeading) {
-            CloseButton {
-              Haptics.impact()
-              showingVehicleAccessSheet.toggle()
-            }
-          }
-        }
-      }
+      VehicleAccessSheet(vehicle: vehicle.vehicle)
     }
     .sheet(isPresented: $showingUnidentifiedFaces) {
       UnidentifiedFacesView(vehicle: vehicle.vehicle)

@@ -9,8 +9,6 @@ import AaronUI
 import SwiftUI
 
 struct V2MainView: View {
-  @AppStorage("showOnboarding") private var showOnboarding = true
-
   @State var appData = V2AppData()
 
   @State private var showingSignOutConfirmation = false
@@ -109,7 +107,6 @@ struct V2MainView: View {
                         Task {
                           try? await supabase
                             .signOut()
-                          showOnboarding = true
                         }
                       }
                       Button("Cancel", role: .cancel) {}
