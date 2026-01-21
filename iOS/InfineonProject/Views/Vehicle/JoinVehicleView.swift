@@ -112,10 +112,12 @@ struct JoinVehicleView: View {
       .navigationTitle("Join Vehicle")
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          CloseButton {
-            Haptics.impact()
-            dismiss()
+        if !supabase.vehicles.isEmpty {
+          ToolbarItem(placement: .cancellationAction) {
+            CloseButton {
+              Haptics.impact()
+              dismiss()
+            }
           }
         }
       }

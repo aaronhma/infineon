@@ -55,7 +55,9 @@ struct AnimatedPositionModifier: ViewModifier, Animatable {
 
 struct V2ProfileSelectView: View {
   @Environment(V2AppData.self) private var appData
-  @AppStorage("lastSelectedVehicleId") private var lastSelectedVehicleId: String?
+  @AppStorage(
+    "lastSelectedVehicleId"
+  ) private var lastSelectedVehicleId: String?
   @State private var animateToCenter = false
   @State private var animateToMainView = false
   @State private var progress = CGFloat.zero
@@ -71,13 +73,21 @@ struct V2ProfileSelectView: View {
         for: appData.watchingProfile!.vehicleId
       )
 
-      await supabase.subscribeToVehicleRealtime(vehicleId: appData.watchingProfile!.vehicleId)
-      await supabase.loadVehicleRealtimeData(vehicleId: appData.watchingProfile!.vehicleId)
+      await supabase
+        .subscribeToVehicleRealtime(
+          vehicleId: appData.watchingProfile!.vehicleId
+        )
+      await supabase
+        .loadVehicleRealtimeData(
+          vehicleId: appData.watchingProfile!.vehicleId
+        )
 
       await MainActor.run {
         withAnimation {
           appData.watchingProfile!.unidentifiedFacesCount = count
-          print("unidentified face count: \(appData.watchingProfile!.unidentifiedFacesCount)")
+          print(
+            "unidentified face count: \(appData.watchingProfile!.unidentifiedFacesCount)"
+          )
         }
       }
     } catch {
@@ -111,60 +121,82 @@ struct V2ProfileSelectView: View {
 
   var body: some View {
     NavigationStack {
-      LazyVGrid(
-        columns: Array(
-          repeating: GridItem(.fixed(100), spacing: 25),
-          count: 2
-        )
-      ) {
-        ForEach(
-          supabase.vehicles.map {
-            V2Profile(id: $0.id, name: $0.name!, icon: "benji", vehicleId: $0.id, vehicle: $0)
-          }
-        ) { profile in
-          profileCard(profile)
-        }
+      Group {
+        if supabase.vehicles.isEmpty {
+          JoinVehicleView()
+        } else {
+          LazyVGrid(
+            columns: Array(
+              repeating: GridItem(.fixed(100), spacing: 25),
+              count: 2
+            )
+          ) {
+            ForEach(
+              supabase.vehicles.map {
+                V2Profile(
+                  id: $0.id,
+                  name: $0.name!,
+                  icon: "benji",
+                  vehicleId: $0.id,
+                  vehicle: $0
+                )
+              }
+            ) { profile in
+              profileCard(profile)
+            }
 
-        Button {
-          Haptics.impact()
-          showingJoinVehicleSheet.toggle()
-        } label: {
-          ZStack {
-            RoundedRectangle(cornerRadius: 10)
-              .stroke(.white.opacity(0.8), lineWidth: 0.8)
+            Button {
+              Haptics.impact()
+              showingJoinVehicleSheet.toggle()
+            } label: {
+              VStack(spacing: 8) {
+                ZStack {
+                  RoundedRectangle(cornerRadius: 10)
+                    .stroke(
+                      .white.opacity(0.8),
+                      lineWidth: 0.8
+                    )
 
-            Image(systemName: "plus")
-              .font(.largeTitle)
-              .foregroundStyle(.white)
-          }
-          .frame(width: 100, height: 100)
-          .contentShape(.rect)
-        }
-      }
-      .padding(15)
-      .frame(maxHeight: .infinity)
-      .navigationTitle("Select Vehicle")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        if appData.fromTabBar {
-          ToolbarItem(placement: .topBarLeading) {
-            CloseButton {
-              withAnimation(
-                .snappy(duration: 0.3, extraBounce: 0)
-              ) {
-                appData.showProfileView = false
-                appData.hideMainView = false
-                appData.fromTabBar = false
+                  Image(systemName: "plus")
+                    .font(.largeTitle)
+                    .foregroundStyle(.white)
+                }
+                .frame(width: 100, height: 100)
+                .contentShape(.rect)
+
+                Text("Join")
+                  .foregroundStyle(Color.primary)
+                  .fontWeight(.semibold)
               }
             }
           }
-        }
+          .padding(15)
+          .frame(maxHeight: .infinity)
+          .navigationTitle("Select Vehicle")
+          .navigationBarTitleDisplayMode(.inline)
+          .toolbar {
+            if appData.fromTabBar {
+              ToolbarItem(placement: .topBarLeading) {
+                CloseButton {
+                  withAnimation(
+                    .snappy(duration: 0.3, extraBounce: 0)
+                  ) {
+                    appData.showProfileView = false
+                    appData.hideMainView = false
+                    appData.fromTabBar = false
+                  }
+                }
+              }
+            }
 
-        ToolbarItem(placement: .topBarTrailing) {
-          EditButton()
+            ToolbarItem(placement: .topBarTrailing) {
+              EditButton()
+            }
+          }
+          .environment(\.editMode, $editMode)
         }
       }
-      .environment(\.editMode, $editMode)
+      .transition(.blurReplace)
     }
     .sheet(isPresented: $showingJoinVehicleSheet) {
       JoinVehicleView()
@@ -177,8 +209,11 @@ struct V2ProfileSelectView: View {
           }
 
           Section {
-            LabeledContent("Add Code", value: profile.vehicle.inviteCode)
-              .textSelection(.enabled)
+            LabeledContent(
+              "Add Code",
+              value: profile.vehicle.inviteCode
+            )
+            .textSelection(.enabled)
           }
 
           Section {
@@ -205,10 +240,14 @@ struct V2ProfileSelectView: View {
                 role: .destructive
               ) {
                 Haptics.impact()
-                Task {
-                  try? await supabase.leaveVehicle(profile.vehicleId)
-                  await MainActor.run {
-                    selectedEditProfile = nil
+
+                withAnimation(.bouncy) {
+                  Task {
+                    try? await supabase
+                      .leaveVehicle(profile.vehicleId)
+                    await MainActor.run {
+                      selectedEditProfile = nil
+                    }
                   }
                 }
               }

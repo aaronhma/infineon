@@ -104,10 +104,15 @@ struct InfineonProjectApp: App {
 struct RootView: View {
   @State private var showProfileSetup = false
 
+  /// Whether we're still checking if the user has set up their profile
+  private var isCheckingProfileStatus: Bool {
+    supabase.isLoggedIn && supabase.userProfile == nil
+  }
+
   var body: some View {
     Group {
-      if supabase.isLoading {
-        ProgressView("Loading...")
+      if supabase.isLoading || isCheckingProfileStatus {
+        ProgressView()
           .controlSize(.extraLarge)
       } else if supabase.isLoggedIn {
         // TODO: ask group to choose between these 3 designs
@@ -121,14 +126,15 @@ struct RootView: View {
     .transition(.blurReplace)
     .animation(.easeInOut(duration: 0.3), value: supabase.isLoggedIn)
     .animation(.easeInOut(duration: 0.3), value: supabase.isLoading)
+    .animation(.easeInOut(duration: 0.3), value: isCheckingProfileStatus)
     .fullScreenCover(isPresented: $showProfileSetup) {
       ProfileSetupView {
         showProfileSetup = false
       }
     }
-    .onChange(of: supabase.isLoggedIn, initial: true) { _, isLoggedIn in
-      // Show profile setup if user is logged in and needs to set up their profile
-      if isLoggedIn && supabase.needsProfileSetup {
+    .onChange(of: supabase.userProfile) { _, userProfile in
+      // Show profile setup only after profile is loaded and needs setup
+      if supabase.isLoggedIn, let profile = userProfile, profile.needsSetup {
         showProfileSetup = true
       }
     }

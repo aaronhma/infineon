@@ -248,7 +248,7 @@ struct VehicleTrip: Codable, Identifiable {
   }
 }
 
-struct NotificationPreferences: Codable {
+struct NotificationPreferences: Codable, Equatable {
   var unidentifiedFace: Bool
   var collision: Bool
   var driverDrowsiness: Bool
@@ -277,7 +277,7 @@ struct NotificationPreferences: Codable {
   }
 }
 
-struct UserProfile: Codable, Identifiable {
+struct UserProfile: Codable, Identifiable, Equatable {
   var id: UUID { userId }
   let userId: UUID
   let createdAt: Date
@@ -313,7 +313,11 @@ struct VehicleAccessUser: Codable, Identifiable {
   let email: String?
   let avatarPath: String?
   let accessLevel: String?
-  let isOwner: Bool
+  private let _isOwner: Bool?
+
+  var isOwner: Bool {
+    _isOwner ?? false
+  }
 
   enum CodingKeys: String, CodingKey {
     case accessId = "access_id"
@@ -322,7 +326,7 @@ struct VehicleAccessUser: Codable, Identifiable {
     case email
     case avatarPath = "avatar_path"
     case accessLevel = "access_level"
-    case isOwner = "is_owner"
+    case _isOwner = "is_owner"
   }
 }
 
