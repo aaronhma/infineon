@@ -12,12 +12,8 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
     _ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
     completionHandler: @escaping (Bool) -> Void
   ) {
-    guard let url = URL(string: shortcutItem.type) else {
-      completionHandler(false)
-      return
-    }
-
-    windowScene.open(url, options: nil, completionHandler: completionHandler)
+    handleShortcutItem(shortcutItem)
+    completionHandler(true)
   }
 
   func scene(
@@ -25,9 +21,13 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
     options connectionOptions: UIScene.ConnectionOptions
   ) {
     if let shortcutItem = connectionOptions.shortcutItem {
-      if let url = URL(string: shortcutItem.type) {
-        scene.open(url, options: nil)
-      }
+      handleShortcutItem(shortcutItem)
+    }
+  }
+
+  private func handleShortcutItem(_ shortcutItem: UIApplicationShortcutItem) {
+    Task { @MainActor in
+      deepLinkManager.handleShortcutItem(shortcutItem.type, userInfo: shortcutItem.userInfo)
     }
   }
 }

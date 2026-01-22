@@ -55,12 +55,52 @@ struct V2MainView: View {
           .task {
             await supabase.loadVehicles()
             appData.isSplashFinished = true
-            appData.showProfileView = appData.isSplashFinished
-            appData.hideMainView = appData.showProfileView
+
+            // Check if there's a pending vehicle from quick action
+            if let pendingId = deepLinkManager.pendingVehicleId,
+              let vehicle = supabase.vehicles.first(where: { $0.id == pendingId })
+            {
+              let profile = V2Profile(
+                id: vehicle.id,
+                name: vehicle.name ?? "Vehicle",
+                icon: "benji",
+                vehicleId: vehicle.id,
+                vehicle: vehicle
+              )
+              appData.watchingProfile = profile
+              appData.animateProfile = true
+              appData.showProfileView = true
+              appData.hideMainView = true
+              deepLinkManager.clearPendingVehicle()
+            } else {
+              appData.showProfileView = appData.isSplashFinished
+              appData.hideMainView = appData.showProfileView
+            }
           }
       }
     }
     .environment(appData)
+    .onChange(of: deepLinkManager.pendingVehicleId) { _, pendingId in
+      guard appData.isSplashFinished,
+        let pendingId,
+        let vehicle = supabase.vehicles.first(where: { $0.id == pendingId })
+      else {
+        return
+      }
+
+      let profile = V2Profile(
+        id: vehicle.id,
+        name: vehicle.name ?? "Vehicle",
+        icon: "benji",
+        vehicleId: vehicle.id,
+        vehicle: vehicle
+      )
+      appData.watchingProfile = profile
+      appData.animateProfile = true
+      appData.showProfileView = true
+      appData.hideMainView = true
+      deepLinkManager.clearPendingVehicle()
+    }
     .preferredColorScheme(.dark)
   }
 }

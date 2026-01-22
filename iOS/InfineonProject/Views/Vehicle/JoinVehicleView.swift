@@ -11,9 +11,17 @@ import SwiftUI
 struct JoinVehicleView: View {
   @Environment(\.dismiss) private var dismiss
 
-  @State private var inviteCode = ""
+  @State private var inviteCode: String
   @State private var isJoining = false
   @State private var errorMessage: String?
+
+  /// Optional initial invite code to prefill (e.g., from deep link)
+  private let initialCode: String?
+
+  init(initialCode: String? = nil) {
+    self.initialCode = initialCode
+    _inviteCode = State(initialValue: initialCode ?? "")
+  }
 
   private func joinVehicle() {
     guard inviteCode.count == 6 else { return }

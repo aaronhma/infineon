@@ -17,33 +17,7 @@ struct InfineonProjectApp: App {
   ) private var lastSelectedVehicleId: String?
 
   private func handleShortcut(url: URL) {
-    if url.scheme == "infineon" {
-      print(url.absoluteString)
-    }
-    if url.absoluteString.contains("feedback") {
-      let email = "hi@aaronhma.com"
-      let subject = "Infineon Project App Improvements"
-      let body = "DEVICE LOGS:\n\nInfineon Project iOS App Beta v0.0.1"
-
-      var components = URLComponents()
-      components.scheme = "mailto"
-      components.path = email
-      components.queryItems = [
-        URLQueryItem(name: "subject", value: subject),
-        URLQueryItem(name: "body", value: body),
-      ]
-
-      print("EMAIL: ", components.url!.absoluteString)
-
-      if let mailURL = components.url,
-        UIApplication.shared
-          .canOpenURL(mailURL)
-      {
-        UIApplication.shared.open(mailURL)
-      }
-    } else {
-      print("ERROR")
-    }
+    deepLinkManager.handleURL(url)
   }
 
   // TODO: Eventually add offline support
@@ -131,6 +105,18 @@ struct RootView: View {
       ProfileSetupView {
         showProfileSetup = false
       }
+    }
+    .sheet(
+      isPresented: .init(
+        get: { deepLinkManager.showJoinVehicle },
+        set: { newValue in
+          if !newValue {
+            deepLinkManager.resetJoinVehicleState()
+          }
+        }
+      )
+    ) {
+      JoinVehicleView(initialCode: deepLinkManager.prefillInviteCode)
     }
     .onChange(of: supabase.userProfile) { _, userProfile in
       // Show profile setup only after profile is loaded and needs setup

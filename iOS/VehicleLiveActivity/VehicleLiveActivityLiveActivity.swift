@@ -63,8 +63,11 @@ struct VehicleLiveActivityLiveActivity: Widget {
         // Expanded UI goes here.  Compose the expanded UI through
         // various regions, like leading/trailing/center/bottom
         DynamicIslandExpandedRegion(.leading) {
-          HStack {
+          VStack(alignment: .leading) {
             Image(systemName: "car.side.fill")
+
+            Text(context.attributes.name)
+              .bold()
           }
         }
         DynamicIslandExpandedRegion(.trailing) {
@@ -88,8 +91,14 @@ struct VehicleLiveActivityLiveActivity: Widget {
       } compactLeading: {
         Image(systemName: "car.side.fill")
       } compactTrailing: {
-        Image(systemName: isSpeeding ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-          .foregroundStyle(isSpeedingColor)
+        HStack(spacing: 1) {
+          Text("\(context.state.speed)")
+            .contentTransition(.numericText(value: 0))
+            .foregroundStyle(isSpeedingColor)
+
+          Text("mph")
+        }
+        .bold()
       } minimal: {
         Image(systemName: isSpeeding ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
           .foregroundStyle(isSpeedingColor)
