@@ -20,186 +20,184 @@ struct VehicleView: View {
 
   var body: some View {
     NavigationStack {
-      Group {
-        List {
-          // Vehicle image section
-          Section {
-            AnimatedVehicleView()
-              .frame(height: 200)
-              .listRowBackground(Color.clear)
-              .listRowInsets(EdgeInsets())
-          }
+      List {
+        // Vehicle image section
+        Section {
+          AnimatedVehicleView()
+            .frame(height: 200)
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets())
+        }
 
-          // Driver alert
-          if let data = vehicle.realtimeData {
-            driverAlertSection(data: data)
-          }
+        // Driver alert
+        if let data = vehicle.realtimeData {
+          driverAlertSection(data: data)
+        }
 
-          // Face Detection Section
-          Section {
-            if vehicle.unidentifiedFacesCount > 0 {
-              Button {
-                showingUnidentifiedFaces = true
-              } label: {
-                Label {
-                  VStack(alignment: .leading) {
-                    Text(
-                      "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
-                    )
-                    Text("Tap to identify drivers")
-                      .font(.caption)
-                      .foregroundStyle(.secondary)
-                  }
-                } icon: {
-                  Image(systemName: "face.smiling")
-                    .foregroundStyle(.orange)
-                }
-              }
-              .tint(.primary)
-            }
-
-            NavigationLink {
-              FaceDetectionsView(vehicle: vehicle.vehicle)
+        // Face Detection Section
+        Section {
+          if vehicle.unidentifiedFacesCount > 0 {
+            Button {
+              showingUnidentifiedFaces = true
             } label: {
               Label {
                 VStack(alignment: .leading) {
-                  Text("Face Detections")
-                  Text("View all driver snapshots")
+                  Text(
+                    "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
+                  )
+                  Text("Tap to identify drivers")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 }
               } icon: {
-                Image(
-                  systemName: "person.crop.rectangle.stack.fill"
-                )
-                .foregroundStyle(.blue)
+                Image(systemName: "face.smiling")
+                  .foregroundStyle(.orange)
               }
             }
             .tint(.primary)
-          } header: {
-            Text("Driver Monitoring")
           }
 
-          // Live Data Section
-          if let data = vehicle.realtimeData {
-            Section("Live Data") {
-              LabeledContent("Speed") {
-                HStack {
-                  Text("\(data.speedMph) mph")
-                    .foregroundStyle(
-                      data.isSpeeding ? .red : .primary
-                    )
-                  if data.isSpeeding {
-                    Image(
-                      systemName: "exclamationmark.triangle.fill"
-                    )
-                    .foregroundStyle(.red)
-                  }
-                }
-              }
-
-              LabeledContent(
-                "Speed Limit",
-                value: "\(data.speedLimitMph) mph"
-              )
-
-              LabeledContent("Heading") {
-                HStack {
-                  Image(systemName: "location.north.fill")
-                    .rotationEffect(
-                      .degrees(
-                        Double(data.headingDegrees)
-                      )
-                    )
-                    .foregroundStyle(.blue)
-                  Text(
-                    "\(data.headingDegrees)° \(data.compassDirection)"
-                  )
-                }
-              }
-
-              LabeledContent("Status") {
-                HStack {
-                  Circle()
-                    .fill(data.isMoving ? .green : .gray)
-                    .frame(width: 8, height: 8)
-                  Text(data.isMoving ? "Moving" : "Parked")
-                }
-              }
-
-              LabeledContent("Driver Status") {
-                DriverStatusBadge(status: data.driverStatus)
-              }
-
-              LabeledContent("Risk Score") {
-                Text("\(data.intoxicationScore)/6")
-                  .foregroundStyle(
-                    intoxicationColor(
-                      for: data.intoxicationScore
-                    )
-                  )
-              }
-
-              LabeledContent("Last Updated") {
-                Text(data.updatedAt, style: .relative)
+          NavigationLink {
+            FaceDetectionsView(vehicle: vehicle.vehicle)
+          } label: {
+            Label {
+              VStack(alignment: .leading) {
+                Text("Face Detections")
+                Text("View all driver snapshots")
+                  .font(.caption)
                   .foregroundStyle(.secondary)
               }
+            } icon: {
+              Image(
+                systemName: "person.crop.rectangle.stack.fill"
+              )
+              .foregroundStyle(.blue)
             }
-            .onAppear {
-              Task {
-                do {
-                  currentLiveActivity = try Activity<VehicleLiveActivityAttributes>
-                    .request(
-                      attributes: VehicleLiveActivityAttributes(
-                        name: vehicle.name,
-                        speedLimit: 65
-                      ),
-                      content: .init(
-                        state: .init(
-                          speed: data.speedMph, riskScore: data.intoxicationScore,
-                          driverStatus: data.driverStatus),
-                        staleDate: .now
-                          .addingTimeInterval(
-                            60 * 60
-                          ))
-                    )
-                } catch {
-                  print(error.localizedDescription)
+          }
+          .tint(.primary)
+        } header: {
+          Text("Driver Monitoring")
+        }
+
+        // Live Data Section
+        if let data = vehicle.realtimeData {
+          Section("Live Data") {
+            LabeledContent("Speed") {
+              HStack {
+                Text("\(data.speedMph) mph")
+                  .foregroundStyle(
+                    data.isSpeeding ? .red : .primary
+                  )
+                if data.isSpeeding {
+                  Image(
+                    systemName: "exclamationmark.triangle.fill"
+                  )
+                  .foregroundStyle(.red)
                 }
               }
             }
-            .onChange(of: data.speedMph) {
-              Task {
-                if let currentLiveActivity {
-                  await currentLiveActivity.update(
-                    ActivityContent(
+
+            LabeledContent(
+              "Speed Limit",
+              value: "\(data.speedLimitMph) mph"
+            )
+
+            LabeledContent("Heading") {
+              HStack {
+                Image(systemName: "location.north.fill")
+                  .rotationEffect(
+                    .degrees(
+                      Double(data.headingDegrees)
+                    )
+                  )
+                  .foregroundStyle(.blue)
+                Text(
+                  "\(data.headingDegrees)° \(data.compassDirection)"
+                )
+              }
+            }
+
+            LabeledContent("Status") {
+              HStack {
+                Circle()
+                  .fill(data.isMoving ? .green : .gray)
+                  .frame(width: 8, height: 8)
+                Text(data.isMoving ? "Moving" : "Parked")
+              }
+            }
+
+            LabeledContent("Driver Status") {
+              DriverStatusBadge(status: data.driverStatus)
+            }
+
+            LabeledContent("Risk Score") {
+              Text("\(data.intoxicationScore)/6")
+                .foregroundStyle(
+                  intoxicationColor(
+                    for: data.intoxicationScore
+                  )
+                )
+            }
+
+            LabeledContent("Last Updated") {
+              Text(data.updatedAt, style: .relative)
+                .foregroundStyle(.secondary)
+            }
+          }
+          .onAppear {
+            Task {
+              do {
+                currentLiveActivity = try Activity<VehicleLiveActivityAttributes>
+                  .request(
+                    attributes: VehicleLiveActivityAttributes(
+                      name: vehicle.name,
+                      speedLimit: 65
+                    ),
+                    content: .init(
                       state: .init(
                         speed: data.speedMph, riskScore: data.intoxicationScore,
                         driverStatus: data.driverStatus),
                       staleDate: .now
-                        .addingTimeInterval(60 * 60)))
-                }
+                        .addingTimeInterval(
+                          60 * 60
+                        ))
+                  )
+              } catch {
+                print(error.localizedDescription)
               }
             }
           }
-
-          // Vehicle Info Section
-          Section("Vehicle Info") {
-            LabeledContent(
-              "Name",
-              value: vehicle.name
-            )
-            LabeledContent("ID", value: vehicle.vehicle.id)
-            LabeledContent(
-              "Invite Code",
-              value: vehicle.vehicle.inviteCode
-            )
-            if let description = vehicle.vehicle.description {
-              LabeledContent(
-                "Description",
-                value: description
-              )
+          .onChange(of: data.speedMph) {
+            Task {
+              if let currentLiveActivity {
+                await currentLiveActivity.update(
+                  ActivityContent(
+                    state: .init(
+                      speed: data.speedMph, riskScore: data.intoxicationScore,
+                      driverStatus: data.driverStatus),
+                    staleDate: .now
+                      .addingTimeInterval(60 * 60)))
+              }
             }
+          }
+        }
+
+        // Vehicle Info Section
+        Section("Vehicle Info") {
+          LabeledContent(
+            "Name",
+            value: vehicle.name
+          )
+          LabeledContent("ID", value: vehicle.vehicle.id)
+          LabeledContent(
+            "Invite Code",
+            value: vehicle.vehicle.inviteCode
+          )
+          if let description = vehicle.vehicle.description {
+            LabeledContent(
+              "Description",
+              value: description
+            )
           }
         }
       }

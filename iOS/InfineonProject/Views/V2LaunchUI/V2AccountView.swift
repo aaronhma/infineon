@@ -11,6 +11,8 @@ import Supabase
 import SwiftUI
 
 struct V2AccountView: View {
+  @Environment(V2AppData.self) private var appData
+
   @State private var showingSignOutConfirmation = false
 
   // Profile editing state
@@ -29,6 +31,32 @@ struct V2AccountView: View {
   var body: some View {
     NavigationStack {
       List {
+        Section {
+          VStack {
+            Image("benji")
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+              .frame(width: 100, height: 100)
+              .clipShape(.rect(cornerRadius: 10))
+
+            HStack {
+              Text(appData.watchingProfile!.name)
+                .lineLimit(1)
+
+              Image(systemName: "chevron.down")
+            }
+            .fontWeight(.semibold)
+          }
+          .frame(maxWidth: .infinity, alignment: .center)
+          .onTapGesture {
+            appData.showProfileView = true
+            appData.hideMainView = true
+            appData.fromTabBar = true
+          }
+        }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+
         // Profile Section
         Section {
           HStack(spacing: 16) {
@@ -1378,6 +1406,7 @@ struct V2AccountView: View {
         }
       }
       .navigationTitle("Account")
+      .navigationBarTitleDisplayMode(.inline)
     }
   }
 
@@ -1794,5 +1823,8 @@ struct NotificationSettingsView: View {
 }
 
 #Preview {
+  @Previewable @State var appData = V2AppData()
+
   V2AccountView()
+    .environment(appData)
 }

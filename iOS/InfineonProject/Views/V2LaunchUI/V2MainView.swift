@@ -79,6 +79,12 @@ struct V2MainView: View {
           }
       }
     }
+    .preventScreenshot()
+    .background {
+      ContentUnavailableView(
+        "Screenshot Not Allowed", systemImage: "iphone.slash", description: Text("© 2026 Aaron Ma.")
+      )
+    }
     .environment(appData)
     .onChange(of: deepLinkManager.pendingVehicleId) { _, pendingId in
       guard appData.isSplashFinished,
