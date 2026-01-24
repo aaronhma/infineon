@@ -137,7 +137,6 @@ struct V2LaunchUITabView: View {
               .font(.caption2)
           }
           .frame(maxWidth: .infinity)
-          .foregroundStyle(.white)
           .animation(.snappy) { content in
             content
               .opacity(appData.activeTab == tab ? 1 : 0.6)
@@ -149,7 +148,7 @@ struct V2LaunchUITabView: View {
           LongPressGesture().onEnded { _ in
             guard tab == .account else { return }
 
-            withAnimation(.snappy(duration: 0.3)) {
+            withAnimation(.snappy(duration: 0.1)) {
               appData.showProfileView = true
               appData.hideMainView = true
               appData.fromTabBar = true

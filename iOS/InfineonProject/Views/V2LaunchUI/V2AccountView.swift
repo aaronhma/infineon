@@ -44,87 +44,82 @@ struct V2AccountView: View {
                 .lineLimit(1)
 
               Image(systemName: "chevron.down")
+                .foregroundStyle(.secondary)
             }
             .fontWeight(.semibold)
           }
           .frame(maxWidth: .infinity, alignment: .center)
-          .onTapGesture {
+        }
+        .listRowBackground(Color.clear)
+        .onTapGesture {
+          withAnimation(.snappy(duration: 0.1)) {
             appData.showProfileView = true
             appData.hideMainView = true
             appData.fromTabBar = true
           }
         }
-        .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
 
         // Profile Section
         Section {
-          HStack(spacing: 16) {
-            profileImageView
-              .frame(width: 60, height: 60)
-
-            VStack(alignment: .leading, spacing: 4) {
-              Text(supabase.userProfile?.displayName ?? "No Name")
-                .font(.headline)
-
-              if let email = supabase.currentUser?.email {
-                Text(email)
-                  .font(.subheadline)
-                  .foregroundStyle(.secondary)
-              }
-            }
-
-            Spacer()
-          }
-          .padding(.vertical, 4)
-        }
-
-        // Settings Section
-        Section("Settings") {
           NavigationLink {
             EditProfileView()
           } label: {
-            Label {
-              Text("Edit Profile")
-            } icon: {
-              SettingsBoxView(icon: "person.fill", color: .blue)
-            }
-          }
+            HStack(spacing: 16) {
+              profileImageView
+                .frame(width: 60, height: 60)
 
+              VStack(alignment: .leading, spacing: 4) {
+                Text(supabase.userProfile?.displayName ?? "No Name")
+                  .font(.headline)
+
+                if let email = supabase.currentUser?.email {
+                  Text(email)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                }
+              }
+
+              Spacer()
+            }
+            .padding(.vertical, 4)
+          }
+        }
+
+        // Settings Section
+        Section {
           NavigationLink {
             NotificationSettingsView()
           } label: {
             Label {
               Text("Notifications")
             } icon: {
-              SettingsBoxView(icon: "bell.fill", color: .red)
+              SettingsBoxView(
+                icon: supabase.userProfile?.notificationsEnabled ?? true
+                  ? "bell.fill" : "bell.slash.fill", color: .red)
             }
           }
         }
 
         // About Section
         Section {
-          VStack(alignment: .leading, spacing: 8) {
-            Text("InfineonProject")
-              .font(.headline)
+          Link(destination: URL(string: "https://github.com/aaronhma")!) {
+            VStack(alignment: .leading, spacing: 8) {
+              Text("InfineonProject")
+                .font(.headline)
 
-            Text("© 2026 Aaron Ma.")
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
+              Text("© 2026 Aaron Ma.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
 
-            Text("Made with 💖 from Cupertino, CA.")
-              .font(.subheadline)
-              .foregroundStyle(.secondary)
-
-            Link(destination: URL(string: "https://github.com/aaronhma")!) {
-              Text("@aaronhma")
+              Text("Made with 💖 from Cupertino, CA.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             }
-            .foregroundStyle(.primary)
+            .padding(.vertical, 4)
           }
-          .padding(.vertical, 4)
-        }
+          .foregroundStyle(.primary)
 
-        Section {
           NavigationLink {
             List {
               Section("License") {
@@ -1373,10 +1368,6 @@ struct V2AccountView: View {
               SettingsBoxView(icon: "graduationcap.fill", color: .indigo)
             }
           }
-        } header: {
-          Text("Licensing")
-        } footer: {
-          Text("Made with AaronUI and other open source components.")
         }
 
         Section {
@@ -1385,7 +1376,7 @@ struct V2AccountView: View {
             showingSignOutConfirmation = true
           } label: {
             Label {
-              Text("Sign out")
+              Text("Sign Out")
             } icon: {
               SettingsBoxView(icon: "rectangle.portrait.and.arrow.right", color: .red)
             }
@@ -1395,7 +1386,7 @@ struct V2AccountView: View {
             isPresented: $showingSignOutConfirmation,
             titleVisibility: .visible
           ) {
-            Button("Sign out", role: .destructive) {
+            Button("Sign Out", role: .destructive) {
               Haptics.impact()
               Task {
                 try? await supabase.signOut()

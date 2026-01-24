@@ -89,9 +89,8 @@ struct RootView: View {
         ProgressView()
           .controlSize(.extraLarge)
       } else if supabase.isLoggedIn {
-        // TODO: ask group to choose between these 3 designs
+        // TODO: ask group to choose between these 2 designs
         V2MainView()
-        //          MainView()
         //          ContentView()
       } else {
         OnboardingView()

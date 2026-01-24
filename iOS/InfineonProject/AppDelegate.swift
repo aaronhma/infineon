@@ -14,7 +14,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
   ) -> UISceneConfiguration {
     let sceneConfiguration = UISceneConfiguration(
       name: "Infineon Project - App Delegate", sessionRole: connectingSceneSession.role)
-    sceneConfiguration.delegateClass = SceneDelegate.self
+
+    if connectingSceneSession.role == .windowApplication {
+      sceneConfiguration.delegateClass = SceneDelegate.self
+    }
+
     return sceneConfiguration
   }
 

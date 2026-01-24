@@ -54,7 +54,9 @@ struct AnimatedPositionModifier: ViewModifier, Animatable {
 }
 
 struct V2ProfileSelectView: View {
+  @Environment(\.colorScheme) private var colorScheme
   @Environment(V2AppData.self) private var appData
+
   @AppStorage(
     "lastSelectedVehicleId"
   ) private var lastSelectedVehicleId: String?
@@ -159,7 +161,7 @@ struct V2ProfileSelectView: View {
 
                   Image(systemName: "plus")
                     .font(.largeTitle)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(colorScheme == .dark ? .white : .black)
                 }
                 .frame(width: 100, height: 100)
                 .contentShape(.rect)
@@ -179,7 +181,7 @@ struct V2ProfileSelectView: View {
               ToolbarItem(placement: .topBarLeading) {
                 CloseButton {
                   withAnimation(
-                    .snappy(duration: 0.3, extraBounce: 0)
+                    .snappy(duration: 0.1, extraBounce: 0)
                   ) {
                     appData.showProfileView = false
                     appData.hideMainView = false
@@ -272,7 +274,7 @@ struct V2ProfileSelectView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .opacity(animateToCenter ? 0 : 1)
-    .background(.black)
+    .background(colorScheme == .dark ? .black : .white)
     .opacity(animateToMainView ? 0 : 1)
     .overlayPreferenceValue(RectAnchorKey.self) { value in
       animationLayerView(value)

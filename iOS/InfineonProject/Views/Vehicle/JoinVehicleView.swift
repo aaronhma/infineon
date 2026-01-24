@@ -101,17 +101,23 @@ struct JoinVehicleView: View {
           } label: {
             HStack {
               Spacer()
+
               if isJoining {
                 ProgressView()
-                  .progressViewStyle(.circular)
+                  .controlSize(.extraLarge)
               } else {
                 Text("Join Vehicle")
                   .bold()
               }
+
               Spacer()
             }
             .padding(.vertical, 8)
+            .padding(.horizontal, 15)
           }
+          .foregroundStyle(.white)
+          .bold()
+          .possibleGlassEffect(.accentColor, in: .capsule)
           .buttonStyle(.borderedProminent)
           .disabled(inviteCode.count != 6 || isJoining)
           .listRowInsets(EdgeInsets())

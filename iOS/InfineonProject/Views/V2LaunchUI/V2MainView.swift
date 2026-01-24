@@ -38,7 +38,7 @@ struct V2MainView: View {
 
       if appData.hideMainView {
         Rectangle()
-          .fill(.black)
+          .fill(Color.primary)
           .ignoresSafeArea()
       }
 
@@ -107,7 +107,6 @@ struct V2MainView: View {
       appData.hideMainView = true
       deepLinkManager.clearPendingVehicle()
     }
-    .preferredColorScheme(.dark)
   }
 }
 
