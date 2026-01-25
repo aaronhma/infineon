@@ -339,6 +339,7 @@ class SupabaseService {
   // Auth state
   var isLoggedIn = false
   var isLoading = true
+  var isRefreshingSession = false
   var currentUser: User?
 
   // User profile state
@@ -362,7 +363,8 @@ class SupabaseService {
   init() {
     self.client = SupabaseClient(
       supabaseURL: URL(string: Constants.Supabase.supabaseURL)!,
-      supabaseKey: Constants.Supabase.supabasePublishableKey
+      supabaseKey: Constants.Supabase.supabasePublishableKey,
+      options: SupabaseClientOptions(auth: .init(emitLocalSessionAsInitialSession: true))  // see https://github.com/supabase/supabase-swift/pull/822
     )
 
     // Listen for auth state changes
@@ -377,26 +379,72 @@ class SupabaseService {
     for await state in client.auth.authStateChanges {
       await MainActor.run {
         switch state.event {
-        case .initialSession, .signedIn:
+        case .initialSession:
+          // see https://github.com/supabase/supabase-swift/pull/822
+          if let session = state.session {
+            if session.isExpired {
+              // Session exists but has expired. Supabase will try to refresh it
+              // in the background and emit a `tokenRefreshed` or `signedOut` event.
+              // Show loading state until we receive the result.
+              self.isRefreshingSession = true
+              self.isLoading = true
+            } else {
+              // Session exists and is valid, let user in
+              self.currentUser = session.user
+              self.isLoggedIn = true
+              self.isLoading = false
+              self.isRefreshingSession = false
+
+              Task {
+                await self.loadUserProfile()
+                await self.loadVehicles()
+              }
+            }
+          } else {
+            // No session exists, user needs to sign in
+            self.currentUser = nil
+            self.isLoggedIn = false
+            self.isLoading = false
+            self.isRefreshingSession = false
+          }
+
+        case .signedIn:
           self.currentUser = state.session?.user
           self.isLoggedIn = state.session != nil
           self.isLoading = false
+          self.isRefreshingSession = false
 
-          // Load user profile and vehicles when signed in
           if self.isLoggedIn {
             Task {
               await self.loadUserProfile()
               await self.loadVehicles()
             }
           }
+
+        case .tokenRefreshed:
+          // Token was successfully refreshed after expiration
+          self.currentUser = state.session?.user
+          self.isLoggedIn = state.session != nil
+          self.isLoading = false
+          self.isRefreshingSession = false
+
+          if self.isLoggedIn {
+            Task {
+              await self.loadUserProfile()
+              await self.loadVehicles()
+            }
+          }
+
         case .signedOut:
           self.currentUser = nil
           self.isLoggedIn = false
           self.isLoading = false
+          self.isRefreshingSession = false
           self.userProfile = nil
           self.vehicles = []
           self.vehicleRealtimeData = [:]
           self.unsubscribeFromRealtime()
+
         default:
           break
         }

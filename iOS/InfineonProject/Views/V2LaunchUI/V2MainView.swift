@@ -9,6 +9,7 @@ import AaronUI
 import SwiftUI
 
 struct V2MainView: View {
+  @Environment(\.colorScheme) private var colorScheme
   @State var appData = V2AppData()
 
   var body: some View {
@@ -38,7 +39,7 @@ struct V2MainView: View {
 
       if appData.hideMainView {
         Rectangle()
-          .fill(Color.primary)
+          .fill(colorScheme == .dark ? .black : .white)
           .ignoresSafeArea()
       }
 

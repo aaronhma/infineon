@@ -156,8 +156,7 @@ struct V2LaunchUITabView: View {
           })
       }
     }
-    .padding(.bottom, 10)
-    .padding(.top, 5)
+    .padding(.vertical, 5)
     .background {
       Rectangle()
         .fill(.ultraThinMaterial)

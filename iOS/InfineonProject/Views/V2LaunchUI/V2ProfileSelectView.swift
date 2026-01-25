@@ -155,7 +155,7 @@ struct V2ProfileSelectView: View {
                 ZStack {
                   RoundedRectangle(cornerRadius: 10)
                     .stroke(
-                      .white.opacity(0.8),
+                      colorScheme == .dark ? .white.opacity(0.8) : .black.opacity(0.8),
                       lineWidth: 0.8
                     )
 
@@ -181,7 +181,7 @@ struct V2ProfileSelectView: View {
               ToolbarItem(placement: .topBarLeading) {
                 CloseButton {
                   withAnimation(
-                    .snappy(duration: 0.1, extraBounce: 0)
+                    .snappy(duration: 0.1)
                   ) {
                     appData.showProfileView = false
                     appData.hideMainView = false
