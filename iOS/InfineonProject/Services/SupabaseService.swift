@@ -94,6 +94,7 @@ struct FaceDetection: Codable, Identifiable {
   let createdAt: Date
   let vehicleId: String?
   let driverProfileId: UUID?
+  let faceClusterId: UUID?  // Groups similar faces together
   let faceBbox: FaceBbox?
   let leftEyeState: String?
   let leftEyeEar: Double?
@@ -116,6 +117,7 @@ struct FaceDetection: Codable, Identifiable {
     case createdAt = "created_at"
     case vehicleId = "vehicle_id"
     case driverProfileId = "driver_profile_id"
+    case faceClusterId = "face_cluster_id"
     case faceBbox = "face_bbox"
     case leftEyeState = "left_eye_state"
     case leftEyeEar = "left_eye_ear"
@@ -132,6 +134,39 @@ struct FaceDetection: Codable, Identifiable {
     case isSpeeding = "is_speeding"
     case imagePath = "image_path"
     case sessionId = "session_id"
+  }
+}
+
+/// Represents a cluster of similar unidentified faces
+struct FaceCluster: Codable, Identifiable {
+  var id: UUID { clusterId }
+  let clusterId: UUID
+  let faceCount: Int
+  let firstSeen: Date
+  let lastSeen: Date
+  let representativeImagePath: String?
+
+  enum CodingKeys: String, CodingKey {
+    case clusterId = "cluster_id"
+    case faceCount = "face_count"
+    case firstSeen = "first_seen"
+    case lastSeen = "last_seen"
+    case representativeImagePath = "representative_image_path"
+  }
+}
+
+/// Response from assign_profile_to_cluster function
+struct AssignClusterResponse: Codable {
+  let success: Bool
+  let updatedCount: Int
+  let clusterId: UUID
+  let profileId: UUID
+
+  enum CodingKeys: String, CodingKey {
+    case success
+    case updatedCount = "updated_count"
+    case clusterId = "cluster_id"
+    case profileId = "profile_id"
   }
 }
 
@@ -845,6 +880,64 @@ class SupabaseService {
       .execute()
 
     return response.count ?? 0
+  }
+
+  // MARK: - Face Clustering Methods
+
+  /// Fetch all unidentified face clusters for a vehicle
+  /// Each cluster groups similar-looking faces together
+  func fetchUnidentifiedFaceClusters(for vehicleId: String) async throws -> [FaceCluster] {
+    let clusters: [FaceCluster] =
+      try await client
+      .rpc("get_unidentified_face_clusters", params: ["p_vehicle_id": vehicleId])
+      .execute()
+      .value
+
+    return clusters
+  }
+
+  /// Assign a driver profile to an entire cluster of faces
+  /// This will update all faces in the cluster with the given profile ID
+  func assignProfileToCluster(clusterId: UUID, profileId: UUID) async throws
+    -> AssignClusterResponse
+  {
+    let response: AssignClusterResponse =
+      try await client
+      .rpc(
+        "assign_profile_to_cluster",
+        params: [
+          "p_cluster_id": clusterId.uuidString,
+          "p_profile_id": profileId.uuidString,
+        ]
+      )
+      .execute()
+      .value
+
+    return response
+  }
+
+  /// Fetch all face detections belonging to a specific cluster
+  func fetchDetectionsForCluster(clusterId: UUID, vehicleId: String, limit: Int = 50) async throws
+    -> [FaceDetection]
+  {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("face_cluster_id", value: clusterId)
+      .order("created_at", ascending: false)
+      .limit(limit)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  /// Get count of unidentified face clusters for a vehicle
+  func getUnidentifiedClustersCount(for vehicleId: String) async throws -> Int {
+    let clusters = try await fetchUnidentifiedFaceClusters(for: vehicleId)
+    return clusters.count
   }
 
   func fetchDetectionsForDriver(profileId: UUID, vehicleId: String, limit: Int = 50) async throws

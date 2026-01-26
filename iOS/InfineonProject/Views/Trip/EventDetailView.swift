@@ -256,6 +256,7 @@ extension FaceDetection: Hashable {
         createdAt: .now,
         vehicleId: "test",
         driverProfileId: nil,
+        faceClusterId: UUID(),
         faceBbox: nil,
         leftEyeState: "CLOSED",
         leftEyeEar: 0.15,
