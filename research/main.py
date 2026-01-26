@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime
 
 import cv2
+import face_recognition
 import mediapipe as mp
 import numpy as np
 import pygame
@@ -161,6 +162,83 @@ class SupabaseUploader:
 
         except Exception as e:
             print(f"Error loading driver profiles: {e}")
+
+    def generate_face_embedding(self, face_image: np.ndarray) -> list | None:
+        """Generate a 128-dimensional face embedding from a face image.
+
+        Args:
+            face_image: BGR image containing a face (from OpenCV)
+
+        Returns:
+            List of 128 floats representing the face embedding, or None if no face found
+        """
+        try:
+            # Convert BGR to RGB (face_recognition expects RGB)
+            rgb_image = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
+
+            # Get face encodings (128-dimensional embedding)
+            # We use the 'large' model for better accuracy
+            encodings = face_recognition.face_encodings(
+                rgb_image,
+                known_face_locations=None,  # Let it detect the face
+                num_jitters=1,  # Slightly re-sample face for better accuracy
+                model="large"
+            )
+
+            if encodings:
+                # Return the first face encoding as a list
+                return encodings[0].tolist()
+            else:
+                # No face detected by face_recognition
+                # Try with the full image assuming it's already cropped to a face
+                # Use a face location covering the whole image
+                h, w = rgb_image.shape[:2]
+                face_location = [(0, w, h, 0)]  # top, right, bottom, left
+                encodings = face_recognition.face_encodings(
+                    rgb_image,
+                    known_face_locations=face_location,
+                    num_jitters=1,
+                    model="large"
+                )
+                if encodings:
+                    return encodings[0].tolist()
+
+            return None
+        except Exception as e:
+            print(f"Error generating face embedding: {e}")
+            return None
+
+    def find_or_create_cluster(self, embedding: list) -> str | None:
+        """Find a matching face cluster or create a new one.
+
+        Uses the Supabase function to find similar faces and return a cluster_id.
+
+        Args:
+            embedding: 128-dimensional face embedding
+
+        Returns:
+            UUID string of the cluster, or None on error
+        """
+        try:
+            # Format embedding as PostgreSQL vector string
+            embedding_str = "[" + ",".join(str(x) for x in embedding) + "]"
+
+            # Call the Supabase function to find or create cluster
+            response = self.client.rpc(
+                "find_or_create_face_cluster",
+                {
+                    "p_vehicle_id": self.vehicle_id,
+                    "p_embedding": embedding_str,
+                    "p_similarity_threshold": 0.6  # Faces with >60% similarity are clustered
+                }
+            ).execute()
+
+            if response.data:
+                return response.data
+            return None
+        except Exception as e:
+            print(f"Error finding/creating cluster: {e}")
+            return None
 
     def _create_trip(self):
         """Create a new trip record for this session"""
@@ -410,7 +488,7 @@ class SupabaseUploader:
         intox_data: dict,
         driving_data: dict = None,
     ):
-        """Upload face snapshot and metadata to Supabase"""
+        """Upload face snapshot and metadata to Supabase with face clustering"""
         if not self.should_upload():
             return None
 
@@ -430,6 +508,14 @@ class SupabaseUploader:
                 file_options={"content-type": "image/jpeg"},
             )
 
+            # Generate face embedding for clustering similar faces
+            face_embedding = self.generate_face_embedding(face_image)
+            face_cluster_id = None
+
+            if face_embedding:
+                # Find existing cluster or create new one
+                face_cluster_id = self.find_or_create_cluster(face_embedding)
+
             # Prepare metadata record (convert numpy types to Python native types)
             avg_ear = float((left_eye_ear + right_eye_ear) / 2)
             record = {
@@ -444,12 +530,18 @@ class SupabaseUploader:
                 "is_excessive_blinking": bool(
                     intox_data.get("excessive_blinking", False)
                 ),
-                
                 "is_unstable_eyes": bool(intox_data.get("unstable_eyes", False)),
                 "intoxication_score": int(intox_data.get("score", 0)),
                 "image_path": filename,
                 "session_id": self.session_id,
             }
+
+            # Add face embedding and cluster for similarity matching
+            if face_embedding:
+                # Format as PostgreSQL vector string
+                record["face_embedding"] = "[" + ",".join(str(x) for x in face_embedding) + "]"
+            if face_cluster_id:
+                record["face_cluster_id"] = face_cluster_id
 
             # Add current driver profile if identified
             if self.current_driver_profile_id:
@@ -467,13 +559,14 @@ class SupabaseUploader:
 
             self.last_upload_time = time.time()
 
-            # Print upload info with driver name if available
+            # Print upload info with driver name and cluster info
+            cluster_info = f", Cluster: {face_cluster_id[:8]}..." if face_cluster_id else ""
             if self.current_driver_name:
                 print(
-                    f"Uploaded face detection: {filename} (Driver: {self.current_driver_name})"
+                    f"Uploaded face detection: {filename} (Driver: {self.current_driver_name}{cluster_info})"
                 )
             else:
-                print(f"Uploaded face detection: {filename} (Unidentified)")
+                print(f"Uploaded face detection: {filename} (Unidentified{cluster_info})")
 
             return db_response
 

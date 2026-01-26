@@ -5,4 +5,5 @@ scipy
 pygame
 supabase
 python-dotenv
-# TODO: add grok?
+face_recognition  # For face embeddings and clustering similar faces
+dlib  # Required by face_recognition
