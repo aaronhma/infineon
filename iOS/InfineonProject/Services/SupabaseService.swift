@@ -451,7 +451,10 @@ class SupabaseService {
     self.client = SupabaseClient(
       supabaseURL: URL(string: Constants.Supabase.supabaseURL)!,
       supabaseKey: Constants.Supabase.supabasePublishableKey,
-      options: SupabaseClientOptions(auth: .init(emitLocalSessionAsInitialSession: true))  // see https://github.com/supabase/supabase-swift/pull/822
+      options: SupabaseClientOptions(
+        db: .init(decoder: JSONDecoder.supabaseDecoder),
+        auth: .init(emitLocalSessionAsInitialSession: true)  // see https://github.com/supabase/supabase-swift/pull/822
+      )
     )
 
     // Listen for auth state changes

@@ -3,7 +3,10 @@ import random
 import time
 import uuid
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# PST timezone (UTC-8)
+PST = timezone(timedelta(hours=-8))
 
 import cv2
 import face_recognition
@@ -110,7 +113,7 @@ class SupabaseUploader:
                 self.client.table("vehicles").update(
                     {
                         "name": self.vehicle_name,
-                        "updated_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now(PST).isoformat(),
                     }
                 ).eq("id", self.vehicle_id).execute()
                 invite_code = existing.data[0]["invite_code"]
@@ -131,7 +134,7 @@ class SupabaseUploader:
             self.client.table("vehicle_realtime").upsert(
                 {
                     "vehicle_id": self.vehicle_id,
-                    "updated_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now(PST).isoformat(),
                 }
             ).execute()
 
@@ -249,7 +252,7 @@ class SupabaseUploader:
             record = {
                 "vehicle_id": self.vehicle_id,
                 "session_id": self.session_id,
-                "started_at": datetime.now().isoformat(),
+                "started_at": datetime.now(PST).isoformat(),
                 "status": "ok",
             }
 
@@ -367,7 +370,7 @@ class SupabaseUploader:
             )
 
             record = {
-                "ended_at": datetime.now().isoformat(),
+                "ended_at": datetime.now(PST).isoformat(),
                 "max_speed_mph": int(self.trip_max_speed),
                 "avg_speed_mph": float(round(avg_speed, 2)),
                 "max_intoxication_score": int(self.trip_max_intox_score),
@@ -474,7 +477,7 @@ class SupabaseUploader:
             # Convert to native Python types to ensure JSON serialization
             record = {
                 "vehicle_id": self.vehicle_id,
-                "updated_at": datetime.now().isoformat(),
+                "updated_at": datetime.now(PST).isoformat(),
                 "speed_mph": int(speed_mph),
                 "heading_degrees": int(heading_degrees),
                 "compass_direction": str(compass_direction),
