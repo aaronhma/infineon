@@ -620,6 +620,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "Use your camera to scan QR codes to join a vehicle.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Send messages to trusted contacts when a vehicle is in an emergency.";
 				INFOPLIST_KEY_NSCriticalMessagingUsageDescription = "Get emergency alerts when a car crash is detected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "See how far away a vehicle is from you.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -662,6 +663,7 @@
 				INFOPLIST_KEY_NSCameraUsageDescription = "Use your camera to scan QR codes to join a vehicle.";
 				INFOPLIST_KEY_NSContactsUsageDescription = "Send messages to trusted contacts when a vehicle is in an emergency.";
 				INFOPLIST_KEY_NSCriticalMessagingUsageDescription = "Get emergency alerts when a car crash is detected.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "See how far away a vehicle is from you.";
 				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_NSSupportsLiveActivitiesFrequentUpdates = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

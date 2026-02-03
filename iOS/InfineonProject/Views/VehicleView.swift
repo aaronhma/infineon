@@ -7,6 +7,7 @@
 
 import AaronUI
 import ActivityKit
+internal import Combine
 import CoreLocation
 import MapKit
 import SwiftUI
@@ -18,6 +19,14 @@ struct VehicleView: View {
   @State private var showingVehicleAccessSheet = false
 
   @State var currentLiveActivity: Activity<VehicleLiveActivityAttributes>?
+
+  // Location preview data
+  @StateObject private var previewLocationManager = UserLocationManager()
+  @State private var vehicleStreetName: String?
+  @State private var vehicleTravelTime: String?
+  @State private var cachedRoute: MKRoute?
+  @State private var cachedVehicleCoordinate: CLLocationCoordinate2D?
+  @State private var cachedUserCoordinate: CLLocationCoordinate2D?
 
   var body: some View {
     NavigationStack {
@@ -84,12 +93,30 @@ struct VehicleView: View {
         if let data = vehicle.realtimeData {
           Section("Live Data") {
             NavigationLink {
-              VehicleLiveLocationView(vehicleData: data, vehicleName: vehicle.name)
+              VehicleLiveLocationView(
+                vehicleData: data,
+                vehicleName: vehicle.name,
+                cachedRoute: cachedRoute,
+                cachedStreetName: vehicleStreetName,
+                cachedUserLocation: cachedUserCoordinate
+              )
             } label: {
               Label {
-                Text("Live Location")
+                // Primary: Street name, fallback: "Live Location"
+                if let streetName = vehicleStreetName {
+                  Text(streetName)
+                } else if data.latitude != nil && data.longitude != nil {
+                  Text("Live Location")
+                } else {
+                  Text("Location Unavailable")
+                }
 
-                if let lat = data.latitude, let lon = data.longitude {
+                // Secondary: Travel time, fallback: coordinates, fallback: "No GPS data"
+                if let travelTime = vehicleTravelTime {
+                  Text(travelTime)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                } else if let lat = data.latitude, let lon = data.longitude {
                   Text("\(lat, specifier: "%.4f"), \(lon, specifier: "%.4f")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -103,6 +130,22 @@ struct VehicleView: View {
                   icon: "location.fill",
                   color: .blue
                 )
+              }
+            }
+            .task {
+              await fetchVehicleLocationPreview(data: data)
+            }
+            .onChange(of: previewLocationManager.userLocation) { _, newLocation in
+              if let userCoord = newLocation,
+                let lat = data.latitude,
+                let lon = data.longitude
+              {
+                Task {
+                  await calculatePreviewTravelTime(
+                    from: userCoord,
+                    to: CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                  )
+                }
               }
             }
 
@@ -244,23 +287,22 @@ struct VehicleView: View {
           }
         }
 
-        // Vehicle Info Section
-        Section("Vehicle Info") {
+        Section {
           LabeledContent(
             "Name",
             value: vehicle.name
           )
           LabeledContent("ID", value: vehicle.vehicle.id)
-          LabeledContent(
-            "Invite Code",
-            value: vehicle.vehicle.inviteCode
-          )
           if let description = vehicle.vehicle.description {
             LabeledContent(
               "Description",
               value: description
             )
           }
+        } header: {
+          Text("Debug")
+        } footer: {
+          Text("Currently chosen vehicle info. Connected to server.")
         }
       }
       .navigationTitle(vehicle.name)
@@ -370,6 +412,97 @@ struct VehicleView: View {
     if score >= 2 { return .orange }
     return .green
   }
+
+  private func fetchVehicleLocationPreview(data: VehicleRealtime) async {
+    guard let lat = data.latitude, let lon = data.longitude else { return }
+
+    // Reverse geocode to get street name
+    let geocoder = CLGeocoder()
+    let location = CLLocation(latitude: lat, longitude: lon)
+
+    do {
+      let placemarks = try await geocoder.reverseGeocodeLocation(location)
+      if let placemark = placemarks.first {
+        var components: [String] = []
+        if let street = placemark.thoroughfare {
+          components.append(street)
+        }
+        if let city = placemark.locality {
+          components.append(city)
+        }
+        if !components.isEmpty {
+          vehicleStreetName = components.joined(separator: ", ")
+        }
+      }
+    } catch {
+      // Keep vehicleStreetName as nil, will show fallback
+    }
+
+    // Request user location to calculate travel time
+    previewLocationManager.requestLocation()
+  }
+
+  private func calculatePreviewTravelTime(
+    from source: CLLocationCoordinate2D,
+    to destination: CLLocationCoordinate2D
+  ) async {
+    // Check if we can use cached route (coordinates haven't changed significantly)
+    if let cachedRoute = cachedRoute,
+      let cachedUser = cachedUserCoordinate,
+      let cachedVehicle = cachedVehicleCoordinate,
+      isCoordinateNearby(source, cachedUser, thresholdMeters: 100),
+      isCoordinateNearby(destination, cachedVehicle, thresholdMeters: 100)
+    {
+      // Use cached data, no need to recalculate
+      let formatter = DateComponentsFormatter()
+      formatter.allowedUnits = [.hour, .minute]
+      formatter.unitsStyle = .short
+      formatter.maximumUnitCount = 2
+
+      if let formatted = formatter.string(from: cachedRoute.expectedTravelTime) {
+        vehicleTravelTime = "\(formatted) away"
+      }
+      return
+    }
+
+    let request = MKDirections.Request()
+    request.source = MKMapItem(placemark: MKPlacemark(coordinate: source))
+    request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination))
+    request.transportType = .automobile
+
+    let directions = MKDirections(request: request)
+
+    do {
+      let response = try await directions.calculate()
+      if let route = response.routes.first {
+        // Cache the route and coordinates
+        cachedRoute = route
+        cachedUserCoordinate = source
+        cachedVehicleCoordinate = destination
+
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute]
+        formatter.unitsStyle = .short
+        formatter.maximumUnitCount = 2
+
+        if let formatted = formatter.string(from: route.expectedTravelTime) {
+          vehicleTravelTime = "\(formatted) away"
+        }
+      }
+    } catch {
+      // Keep vehicleTravelTime as nil, will show coordinates as fallback
+    }
+  }
+
+  private func isCoordinateNearby(
+    _ coord1: CLLocationCoordinate2D,
+    _ coord2: CLLocationCoordinate2D,
+    thresholdMeters: Double
+  ) -> Bool {
+    let location1 = CLLocation(latitude: coord1.latitude, longitude: coord1.longitude)
+    let location2 = CLLocation(latitude: coord2.latitude, longitude: coord2.longitude)
+    return location1.distance(from: location2) < thresholdMeters
+  }
 }
 
 // MARK: - Animated Vehicle View
@@ -434,17 +567,90 @@ struct DriverStatusBadge: View {
   }
 }
 
+// MARK: - CLLocationCoordinate2D Equatable
+
+extension CLLocationCoordinate2D: @retroactive Equatable {
+  public static func == (lhs: CLLocationCoordinate2D, rhs: CLLocationCoordinate2D) -> Bool {
+    lhs.latitude == rhs.latitude && lhs.longitude == rhs.longitude
+  }
+}
+
+// MARK: - Location Manager
+
+@MainActor
+class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+  private let locationManager = CLLocationManager()
+
+  @Published var userLocation: CLLocationCoordinate2D?
+  @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
+  @Published var locationError: String?
+
+  override init() {
+    super.init()
+    locationManager.delegate = self
+    locationManager.desiredAccuracy = kCLLocationAccuracyBest
+    authorizationStatus = locationManager.authorizationStatus
+  }
+
+  func requestLocation() {
+    locationError = nil
+
+    switch authorizationStatus {
+    case .notDetermined:
+      locationManager.requestWhenInUseAuthorization()
+    case .authorizedWhenInUse, .authorizedAlways:
+      locationManager.requestLocation()
+    case .denied, .restricted:
+      locationError = "Location access denied. Please enable in Settings."
+    @unknown default:
+      locationError = "Unknown authorization status"
+    }
+  }
+
+  nonisolated func locationManager(
+    _ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus
+  ) {
+    Task { @MainActor in
+      authorizationStatus = status
+      if status == .authorizedWhenInUse || status == .authorizedAlways {
+        locationManager.requestLocation()
+      }
+    }
+  }
+
+  nonisolated func locationManager(
+    _ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]
+  ) {
+    Task { @MainActor in
+      if let location = locations.last {
+        userLocation = location.coordinate
+      }
+    }
+  }
+
+  nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    Task { @MainActor in
+      locationError = error.localizedDescription
+    }
+  }
+}
+
 // MARK: - Vehicle Live Location View
 
 struct VehicleLiveLocationView: View {
   let vehicleData: VehicleRealtime
   let vehicleName: String
+  let cachedRoute: MKRoute?
+  let cachedStreetName: String?
+  let cachedUserLocation: CLLocationCoordinate2D?
 
+  @StateObject private var locationManager = UserLocationManager()
   @State private var mapCameraPosition: MapCameraPosition = .automatic
   @State private var route: MKRoute?
   @State private var streetName: String = "Loading..."
-  @State private var travelTime: String = "Calculating..."
-  @State private var userLocation: CLLocationCoordinate2D?
+  @State private var travelTime: String = "Locating you..."
+  @State private var hasCalculatedRoute = false
+  @State private var hasInitializedFromCache = false
 
   private var vehicleCoordinate: CLLocationCoordinate2D? {
     guard let lat = vehicleData.latitude, let lon = vehicleData.longitude else {
@@ -469,7 +675,7 @@ struct VehicleLiveLocationView: View {
             }
           }
 
-          // User location marker (if available)
+          // User location
           UserAnnotation()
 
           // Route polyline
@@ -485,11 +691,46 @@ struct VehicleLiveLocationView: View {
         }
         .mapStyle(.standard(elevation: .realistic))
         .safeAreaInset(edge: .bottom) {
-          locationInfoCard
+          if #available(iOS 26, macOS 26, watchOS 26, tvOS 26, visionOS 26, *) {
+            locationInfoCard
+              .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+          } else {
+            locationInfoCard
+              .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+              .padding()
+          }
+        }
+        .onAppear {
+          initializeFromCache(vehicleCoord: vehicleCoord)
+          if cachedRoute == nil {
+            locationManager.requestLocation()
+          }
         }
         .task {
-          await reverseGeocode(coordinate: vehicleCoord)
-          await getUserLocationAndCalculateRoute(to: vehicleCoord)
+          if cachedStreetName == nil {
+            await reverseGeocode(coordinate: vehicleCoord)
+          }
+        }
+        .onChange(of: locationManager.userLocation) { _, newLocation in
+          if let userCoord = newLocation, let vehicleCoord = vehicleCoordinate, !hasCalculatedRoute
+          {
+            hasCalculatedRoute = true
+            Task {
+              await calculateRoute(from: userCoord, to: vehicleCoord)
+            }
+          }
+        }
+        .onChange(of: locationManager.locationError) { _, error in
+          if let error {
+            travelTime = error
+            if let vehicleCoord = vehicleCoordinate {
+              mapCameraPosition = .region(
+                MKCoordinateRegion(
+                  center: vehicleCoord,
+                  span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                ))
+            }
+          }
         }
       } else {
         ContentUnavailableView {
@@ -530,8 +771,35 @@ struct VehicleLiveLocationView: View {
     }
     .padding()
     .frame(maxWidth: .infinity)
-    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-    .padding()
+  }
+
+  private func initializeFromCache(vehicleCoord: CLLocationCoordinate2D) {
+    guard !hasInitializedFromCache else { return }
+    hasInitializedFromCache = true
+
+    // Use cached street name if available
+    if let cachedStreetName {
+      streetName = cachedStreetName
+    }
+
+    // Use cached route if available
+    if let cachedRoute {
+      route = cachedRoute
+      hasCalculatedRoute = true
+
+      let formatter = DateComponentsFormatter()
+      formatter.allowedUnits = [.hour, .minute]
+      formatter.unitsStyle = .full
+      formatter.maximumUnitCount = 2
+
+      if let formatted = formatter.string(from: cachedRoute.expectedTravelTime) {
+        travelTime = "\(formatted) away"
+      }
+
+      // Set map position to show the cached route
+      let rect = cachedRoute.polyline.boundingMapRect
+      mapCameraPosition = .rect(rect.insetBy(dx: -rect.width * 0.2, dy: -rect.height * 0.2))
+    }
   }
 
   private func reverseGeocode(coordinate: CLLocationCoordinate2D) async {
@@ -541,64 +809,25 @@ struct VehicleLiveLocationView: View {
     do {
       let placemarks = try await geocoder.reverseGeocodeLocation(location)
       if let placemark = placemarks.first {
-        await MainActor.run {
-          var components: [String] = []
-          if let street = placemark.thoroughfare {
-            components.append(street)
-          }
-          if let city = placemark.locality {
-            components.append(city)
-          }
-          streetName = components.isEmpty ? "Unknown Location" : components.joined(separator: ", ")
+        var components: [String] = []
+        if let street = placemark.thoroughfare {
+          components.append(street)
         }
+        if let city = placemark.locality {
+          components.append(city)
+        }
+        streetName = components.isEmpty ? "Unknown Location" : components.joined(separator: ", ")
       }
     } catch {
-      await MainActor.run {
-        streetName = "Unknown Location"
-      }
+      streetName = "Unknown Location"
     }
   }
 
-  private func getUserLocationAndCalculateRoute(to destination: CLLocationCoordinate2D) async {
-    let locationManager = CLLocationManager()
-
-    // Check authorization
-    switch locationManager.authorizationStatus {
-    case .authorizedWhenInUse, .authorizedAlways:
-      break
-    case .notDetermined:
-      locationManager.requestWhenInUseAuthorization()
-      // Wait briefly for authorization
-      try? await Task.sleep(for: .seconds(1))
-    default:
-      await MainActor.run {
-        travelTime = "Location access required"
-      }
-      return
-    }
-
-    // Get current location
-    guard let currentLocation = locationManager.location else {
-      await MainActor.run {
-        travelTime = "Unable to get your location"
-        // Center on vehicle only
-        mapCameraPosition = .region(
-          MKCoordinateRegion(
-            center: destination,
-            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-          ))
-      }
-      return
-    }
-
-    let userCoord = currentLocation.coordinate
-    await MainActor.run {
-      userLocation = userCoord
-    }
-
-    // Calculate route
+  private func calculateRoute(
+    from source: CLLocationCoordinate2D, to destination: CLLocationCoordinate2D
+  ) async {
     let request = MKDirections.Request()
-    request.source = MKMapItem(placemark: MKPlacemark(coordinate: userCoord))
+    request.source = MKMapItem(placemark: MKPlacemark(coordinate: source))
     request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destination))
     request.transportType = .automobile
 
@@ -607,25 +836,20 @@ struct VehicleLiveLocationView: View {
     do {
       let response = try await directions.calculate()
       if let calculatedRoute = response.routes.first {
-        await MainActor.run {
-          route = calculatedRoute
-          travelTime = formatTravelTime(calculatedRoute.expectedTravelTime)
+        route = calculatedRoute
+        travelTime = formatTravelTime(calculatedRoute.expectedTravelTime)
 
-          // Adjust map to show entire route
-          let rect = calculatedRoute.polyline.boundingMapRect
-          mapCameraPosition = .rect(rect.insetBy(dx: -rect.width * 0.2, dy: -rect.height * 0.2))
-        }
+        // Adjust map to show entire route
+        let rect = calculatedRoute.polyline.boundingMapRect
+        mapCameraPosition = .rect(rect.insetBy(dx: -rect.width * 0.2, dy: -rect.height * 0.2))
       }
     } catch {
-      await MainActor.run {
-        travelTime = "Route unavailable"
-        // Center on vehicle
-        mapCameraPosition = .region(
-          MKCoordinateRegion(
-            center: destination,
-            span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-          ))
-      }
+      travelTime = "Route unavailable"
+      mapCameraPosition = .region(
+        MKCoordinateRegion(
+          center: destination,
+          span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+        ))
     }
   }
 
@@ -671,7 +895,10 @@ struct VehicleLiveLocationView: View {
         isPhoneDetected: false,
         isDrinkingDetected: false
       ),
-      vehicleName: "Test Vehicle"
+      vehicleName: "Test Vehicle",
+      cachedRoute: nil,
+      cachedStreetName: nil,
+      cachedUserLocation: nil
     )
   }
 }
