@@ -15,6 +15,9 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from scipy.spatial import distance
 from supabase import Client, create_client
+from ultralytics import YOLO
+
+from gps import GPSReader
 
 # Load environment variables from .env file
 load_dotenv()
@@ -182,7 +185,7 @@ class SupabaseUploader:
                 rgb_image,
                 known_face_locations=None,  # Let it detect the face
                 num_jitters=1,  # Slightly re-sample face for better accuracy
-                model="large"
+                model="large",
             )
 
             if encodings:
@@ -198,7 +201,7 @@ class SupabaseUploader:
                     rgb_image,
                     known_face_locations=face_location,
                     num_jitters=1,
-                    model="large"
+                    model="large",
                 )
                 if encodings:
                     return encodings[0].tolist()
@@ -229,8 +232,8 @@ class SupabaseUploader:
                 {
                     "p_vehicle_id": self.vehicle_id,
                     "p_embedding": embedding_str,
-                    "p_similarity_threshold": 0.6  # Faces with >60% similarity are clustered
-                }
+                    "p_similarity_threshold": 0.6,  # Faces with >60% similarity are clustered
+                },
             ).execute()
 
             if response.data:
@@ -330,7 +333,9 @@ class SupabaseUploader:
                 "max_intoxication_score": int(self.trip_max_intox_score),
                 "speeding_event_count": int(self.trip_speeding_events),
                 "drowsy_event_count": int(self.trip_drowsy_events),
-                "excessive_blinking_event_count": int(self.trip_excessive_blinking_events),
+                "excessive_blinking_event_count": int(
+                    self.trip_excessive_blinking_events
+                ),
                 "unstable_eyes_event_count": int(self.trip_unstable_eyes_events),
                 "face_detection_count": int(self.trip_face_detections),
                 "speed_sample_count": len(self.trip_speed_samples),
@@ -342,7 +347,9 @@ class SupabaseUploader:
             if self.current_driver_profile_id:
                 record["driver_profile_id"] = self.current_driver_profile_id
 
-            self.client.table("vehicle_trips").update(record).eq("id", self.trip_id).execute()
+            self.client.table("vehicle_trips").update(record).eq(
+                "id", self.trip_id
+            ).execute()
 
         except Exception as e:
             print(f"Error syncing trip stats: {e}")
@@ -366,7 +373,9 @@ class SupabaseUploader:
                 "max_intoxication_score": int(self.trip_max_intox_score),
                 "speeding_event_count": int(self.trip_speeding_events),
                 "drowsy_event_count": int(self.trip_drowsy_events),
-                "excessive_blinking_event_count": int(self.trip_excessive_blinking_events),
+                "excessive_blinking_event_count": int(
+                    self.trip_excessive_blinking_events
+                ),
                 "unstable_eyes_event_count": int(self.trip_unstable_eyes_events),
                 "face_detection_count": int(self.trip_face_detections),
                 "speed_sample_count": len(self.trip_speed_samples),
@@ -378,8 +387,12 @@ class SupabaseUploader:
             if self.current_driver_profile_id:
                 record["driver_profile_id"] = self.current_driver_profile_id
 
-            self.client.table("vehicle_trips").update(record).eq("id", self.trip_id).execute()
-            print(f"Trip ended: {self.trip_id} (Status: {self._calculate_trip_status()})")
+            self.client.table("vehicle_trips").update(record).eq(
+                "id", self.trip_id
+            ).execute()
+            print(
+                f"Trip ended: {self.trip_id} (Status: {self._calculate_trip_status()})"
+            )
 
         except Exception as e:
             print(f"Error ending trip: {e}")
@@ -446,6 +459,11 @@ class SupabaseUploader:
         is_speeding: bool,
         driver_status: str = "unknown",
         intoxication_score: int = 0,
+        latitude: float = None,
+        longitude: float = None,
+        satellites: int = 0,
+        is_phone_detected: bool = False,
+        is_drinking_detected: bool = False,
     ):
         """Update vehicle real-time location/status (called frequently)"""
         current_time = time.time()
@@ -464,7 +482,15 @@ class SupabaseUploader:
                 "is_moving": bool(speed_mph > 0),
                 "driver_status": str(driver_status),
                 "intoxication_score": int(intoxication_score),
+                "is_phone_detected": bool(is_phone_detected),
+                "is_drinking_detected": bool(is_drinking_detected),
             }
+
+            # Add GPS coordinates if available
+            if latitude is not None and longitude is not None:
+                record["latitude"] = float(latitude)
+                record["longitude"] = float(longitude)
+                record["satellites"] = int(satellites)
 
             self.client.table("vehicle_realtime").upsert(record).execute()
             self.last_realtime_update = current_time
@@ -487,6 +513,7 @@ class SupabaseUploader:
         right_eye_ear: float,
         intox_data: dict,
         driving_data: dict = None,
+        distraction_data: dict = None,
     ):
         """Upload face snapshot and metadata to Supabase with face clustering"""
         if not self.should_upload():
@@ -539,7 +566,9 @@ class SupabaseUploader:
             # Add face embedding and cluster for similarity matching
             if face_embedding:
                 # Format as PostgreSQL vector string
-                record["face_embedding"] = "[" + ",".join(str(x) for x in face_embedding) + "]"
+                record["face_embedding"] = (
+                    "[" + ",".join(str(x) for x in face_embedding) + "]"
+                )
             if face_cluster_id:
                 record["face_cluster_id"] = face_cluster_id
 
@@ -554,19 +583,28 @@ class SupabaseUploader:
                 record["compass_direction"] = str(driving_data.get("direction", "N"))
                 record["is_speeding"] = bool(driving_data.get("is_speeding", False))
 
+            # Add distraction data if available
+            if distraction_data:
+                record["is_phone_detected"] = bool(distraction_data.get("phone_detected", False))
+                record["is_drinking_detected"] = bool(distraction_data.get("drinking_detected", False))
+
             # Insert record into database
             db_response = self.client.table("face_detections").insert(record).execute()
 
             self.last_upload_time = time.time()
 
             # Print upload info with driver name and cluster info
-            cluster_info = f", Cluster: {face_cluster_id[:8]}..." if face_cluster_id else ""
+            cluster_info = (
+                f", Cluster: {face_cluster_id[:8]}..." if face_cluster_id else ""
+            )
             if self.current_driver_name:
                 print(
                     f"Uploaded face detection: {filename} (Driver: {self.current_driver_name}{cluster_info})"
                 )
             else:
-                print(f"Uploaded face detection: {filename} (Unidentified{cluster_info})")
+                print(
+                    f"Uploaded face detection: {filename} (Unidentified{cluster_info})"
+                )
 
             return db_response
 
@@ -626,6 +664,196 @@ class WarningSound:
             sound2.play()
             self.last_drowsy_alert = current_time
 
+    def play_distraction_alert(self):
+        """Play distraction warning sound (phone/drinking detected)"""
+        current_time = time.time()
+        if current_time - self.last_drowsy_alert > self.alert_cooldown:
+            # Play warning tone
+            sound = self.generate_beep(frequency=600, duration=0.5)
+            sound.play()
+            self.last_drowsy_alert = current_time
+
+
+class DistractionDetector:
+    """YOLO-based detector for phone usage and drinking detection"""
+
+    # COCO class IDs for objects we care about
+    CELL_PHONE = 67
+    BOTTLE = 39
+    CUP = 41
+
+    def __init__(self, model_path="yolov8m.pt"):
+        """Initialize YOLO model for object detection
+
+        Args:
+            model_path: Path to YOLO model weights. Use 'yolov8n.pt' for nano (fast),
+                       'yolov8s.pt' for small, 'yolov8m.pt' for medium accuracy.
+        """
+        print(f"Loading YOLO model: {model_path}")
+        self.model = YOLO(model_path)
+        self.confidence_threshold = 0.25  # Lower threshold for better detection
+
+        # Detection state
+        self.phone_detected = False
+        self.drinking_detected = False
+        self.phone_bbox = None
+        self.bottle_bbox = None
+
+        # Smoothing - require multiple consecutive frames
+        self.phone_frames = 0
+        self.drinking_frames = 0
+        self.detection_threshold = 2  # Frames needed to confirm detection
+
+        print("YOLO model loaded successfully")
+
+    def _boxes_overlap(self, box1, box2, overlap_threshold=0.1):
+        """Check if two bounding boxes overlap significantly"""
+        if box1 is None or box2 is None:
+            return False
+
+        x1_1, y1_1, x2_1, y2_1 = box1
+        x1_2, y1_2, x2_2, y2_2 = box2
+
+        # Calculate intersection
+        x1_i = max(x1_1, x1_2)
+        y1_i = max(y1_1, y1_2)
+        x2_i = min(x2_1, x2_2)
+        y2_i = min(y2_1, y2_2)
+
+        if x2_i <= x1_i or y2_i <= y1_i:
+            return False
+
+        intersection = (x2_i - x1_i) * (y2_i - y1_i)
+        area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+        area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+        min_area = min(area1, area2)
+
+        return (intersection / min_area) > overlap_threshold if min_area > 0 else False
+
+    def _is_near_face(self, object_bbox, face_bbox, proximity_ratio=0.5):
+        """Check if object is near the face region (likely being held/used)"""
+        if object_bbox is None or face_bbox is None:
+            return False
+
+        # Get face center and dimensions
+        face_x1 = face_bbox.get("x_min", 0)
+        face_y1 = face_bbox.get("y_min", 0)
+        face_x2 = face_bbox.get("x_max", 0)
+        face_y2 = face_bbox.get("y_max", 0)
+
+        face_center_x = (face_x1 + face_x2) / 2
+        face_center_y = (face_y1 + face_y2) / 2
+        face_width = face_x2 - face_x1
+        face_height = face_y2 - face_y1
+
+        # Get object center
+        obj_x1, obj_y1, obj_x2, obj_y2 = object_bbox
+        obj_center_x = (obj_x1 + obj_x2) / 2
+        obj_center_y = (obj_y1 + obj_y2) / 2
+
+        # Check if object center is within extended face region
+        extended_width = face_width * (1 + proximity_ratio)
+        extended_height = face_height * (1 + proximity_ratio)
+
+        dx = abs(obj_center_x - face_center_x)
+        dy = abs(obj_center_y - face_center_y)
+
+        return dx < extended_width and dy < extended_height
+
+    def detect(self, frame, face_bbox=None):
+        """Run YOLO detection on frame
+
+        Args:
+            frame: BGR image from OpenCV
+            face_bbox: Optional face bounding box dict with x_min, y_min, x_max, y_max
+
+        Returns:
+            dict with detection results
+        """
+        # Run YOLO inference
+        results = self.model(frame, verbose=False, conf=self.confidence_threshold)
+
+        current_phone = None
+        current_bottle = None
+
+        # Process detections
+        for result in results:
+            boxes = result.boxes
+            if boxes is None:
+                continue
+
+            for box in boxes:
+                cls = int(box.cls[0])
+                conf = float(box.conf[0])
+                xyxy = box.xyxy[0].cpu().numpy()
+                bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
+
+                # Get class name for debugging
+                class_name = self.model.names[cls]
+
+                if cls == self.CELL_PHONE:
+                    current_phone = bbox
+                    print(f"YOLO: PHONE (class {cls}: {class_name}) conf={conf:.2f}")
+                elif cls in (self.BOTTLE, self.CUP):
+                    current_bottle = bbox
+                    print(f"YOLO: BOTTLE/CUP (class {cls}: {class_name}) conf={conf:.2f}")
+                # Debug: show other common objects being detected
+                elif conf > 0.4:
+                    print(f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}")
+
+        # Update phone detection with smoothing
+        if current_phone is not None:
+            self.phone_bbox = current_phone
+            self.phone_frames += 1
+        else:
+            self.phone_frames = max(0, self.phone_frames - 1)
+            if self.phone_frames == 0:
+                self.phone_bbox = None
+
+        # Update drinking detection with smoothing
+        if current_bottle is not None:
+            self.bottle_bbox = current_bottle
+            self.drinking_frames += 1
+        else:
+            self.drinking_frames = max(0, self.drinking_frames - 1)
+            if self.drinking_frames == 0:
+                self.bottle_bbox = None
+
+        # Confirm detections based on frame threshold
+        self.phone_detected = self.phone_frames >= self.detection_threshold
+        self.drinking_detected = self.drinking_frames >= self.detection_threshold
+
+        return {
+            "phone_detected": self.phone_detected,
+            "drinking_detected": self.drinking_detected,
+            "phone_bbox": self.phone_bbox,
+            "bottle_bbox": self.bottle_bbox,
+            "phone_frames": self.phone_frames,
+            "drinking_frames": self.drinking_frames,
+        }
+
+    def draw_detections(self, frame):
+        """Draw detection boxes on frame"""
+        if self.phone_bbox:
+            x1, y1, x2, y2 = self.phone_bbox
+            color = (0, 0, 255) if self.phone_detected else (0, 165, 255)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            label = "PHONE - DISTRACTED!" if self.phone_detected else "Phone"
+            cv2.putText(
+                frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
+            )
+
+        if self.bottle_bbox:
+            x1, y1, x2, y2 = self.bottle_bbox
+            color = (0, 165, 255) if self.drinking_detected else (255, 165, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            label = "DRINKING!" if self.drinking_detected else "Bottle/Cup"
+            cv2.putText(
+                frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
+            )
+
+        return frame
+
 
 class Settings:
     def __init__(self):
@@ -675,8 +903,9 @@ class Settings:
 
 
 class DrivingSimulator:
-    def __init__(self):
-        self.speed = 45.0  # Start at 45 MPH
+    def __init__(self, gps_reader: GPSReader = None):
+        self.gps = gps_reader
+        self.speed = 45.0  # Start at 45 MPH (used for simulation mode)
         self.speed_limit = 65  # Speed limit
         self.min_speed = 0
         self.max_speed = 100
@@ -685,54 +914,84 @@ class DrivingSimulator:
         self.update_frequency = 5  # Update every 5 frames for smoother changes
 
         # Compass direction (0-360 degrees, 0=North, 90=East, 180=South, 270=West)
-        self.heading = 45.0  # Start heading Northeast
+        self.heading = 45.0  # Start heading Northeast (used for simulation mode)
         self.compass_directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
+        # GPS data cache
+        self._last_speed = 0.0
+        self._satellites = 0
+        self._latitude = GPSReader.APPLE_PARK_LAT if gps_reader else 37.3349
+        self._longitude = GPSReader.APPLE_PARK_LON if gps_reader else -122.0090
+
     def update_speed(self):
-        """Update speed with random realistic changes"""
+        """Update speed - from GPS if available, otherwise simulate"""
         self.update_counter += 1
 
-        if self.update_counter >= self.update_frequency:
-            self.update_counter = 0
-
-            # Random speed change between -3 and +3 MPH
-            change = random.uniform(-3.0, 3.0)
-            new_speed = self.speed + change
-
-            # Keep within bounds
-            self.speed = max(self.min_speed, min(self.max_speed, new_speed))
+        if self.gps and not self.gps.is_fake:
+            # Use real GPS data
+            new_speed = self.gps.speed_mph
+            self.heading = self.gps.heading
+            self._satellites = self.gps.satellites
+            self._latitude = self.gps.latitude
+            self._longitude = self.gps.longitude
 
             # Determine direction based on speed change
-            if change > 0.5:
+            if new_speed > self._last_speed + 0.5:
                 self.direction = "accelerating"
-            elif change < -0.5:
+            elif new_speed < self._last_speed - 0.5:
                 self.direction = "decelerating"
             else:
                 self.direction = "steady"
 
-            # Update heading with slight random drift (realistic driving)
-            heading_change = random.uniform(-5.0, 5.0)
-            self.heading = (self.heading + heading_change) % 360
+            self._last_speed = new_speed
+            self.speed = new_speed
+        else:
+            # Simulation mode (fallback or no GPS)
+            if self.update_counter >= self.update_frequency:
+                self.update_counter = 0
+
+                # Random speed change between -3 and +3 MPH
+                change = random.uniform(-3.0, 3.0)
+                new_speed = self.speed + change
+
+                # Keep within bounds
+                self.speed = max(self.min_speed, min(self.max_speed, new_speed))
+
+                # Determine direction based on speed change
+                if change > 0.5:
+                    self.direction = "accelerating"
+                elif change < -0.5:
+                    self.direction = "decelerating"
+                else:
+                    self.direction = "steady"
+
+                # Update heading with slight random drift (realistic driving)
+                heading_change = random.uniform(-5.0, 5.0)
+                self.heading = (self.heading + heading_change) % 360
 
     def manual_speed_increase(self, amount=10):
-        """Manually increase speed (for testing)"""
-        self.speed = min(self.max_speed, self.speed + amount)
-        self.direction = "accelerating"
+        """Manually increase speed (for testing - only works in simulation mode)"""
+        if not self.gps or self.gps.is_fake:
+            self.speed = min(self.max_speed, self.speed + amount)
+            self.direction = "accelerating"
 
     def manual_speed_decrease(self, amount=10):
-        """Manually decrease speed (for testing)"""
-        self.speed = max(self.min_speed, self.speed - amount)
-        self.direction = "decelerating"
+        """Manually decrease speed (for testing - only works in simulation mode)"""
+        if not self.gps or self.gps.is_fake:
+            self.speed = max(self.min_speed, self.speed - amount)
+            self.direction = "decelerating"
 
     def set_speeding_mode(self):
-        """Set speed to 75 MPH for testing speeding alerts"""
-        self.speed = 75.0
-        self.direction = "speeding"
+        """Set speed to 75 MPH for testing speeding alerts (simulation only)"""
+        if not self.gps or self.gps.is_fake:
+            self.speed = 75.0
+            self.direction = "speeding"
 
     def reset_speed(self):
-        """Reset speed to safe default"""
-        self.speed = 45.0
-        self.direction = "steady"
+        """Reset speed to safe default (simulation only)"""
+        if not self.gps or self.gps.is_fake:
+            self.speed = 45.0
+            self.direction = "steady"
 
     def get_speed(self):
         """Get current speed as integer"""
@@ -753,16 +1012,44 @@ class DrivingSimulator:
 
     def get_compass_direction(self):
         """Get compass direction (N, NE, E, SE, S, SW, W, NW)"""
-        # Each direction covers 45 degrees
-        # 0-22.5 and 337.5-360 = N
-        # 22.5-67.5 = NE
-        # etc.
         index = int((self.heading + 22.5) / 45.0) % 8
         return self.compass_directions[index]
+
+    def get_direction_string(self):
+        """Get direction string with degrees (e.g., '342NW')"""
+        return f"{int(self.heading)}{self.get_compass_direction()}"
 
     def get_heading(self):
         """Get current heading in degrees"""
         return int(self.heading)
+
+    def get_satellites(self):
+        """Get number of GPS satellites"""
+        if self.gps:
+            return self.gps.satellites
+        return self._satellites
+
+    def get_latitude(self):
+        """Get current latitude"""
+        if self.gps:
+            return self.gps.latitude
+        return self._latitude
+
+    def get_longitude(self):
+        """Get current longitude"""
+        if self.gps:
+            return self.gps.longitude
+        return self._longitude
+
+    def has_gps_fix(self):
+        """Check if GPS has a valid fix"""
+        if self.gps:
+            return self.gps.has_fix
+        return False
+
+    def is_using_gps(self):
+        """Check if using real GPS data"""
+        return self.gps is not None and not self.gps.is_fake
 
 
 class FaceAnalyzer:
@@ -838,8 +1125,9 @@ class FaceAnalyzer:
         excessive_blinking = recent_blinks > self.BLINK_THRESHOLD
 
         # EAR variance (high variance suggests instability)
+        # Threshold increased - 0.005 was way too sensitive, normal blinking causes that
         ear_variance = np.var(self.ear_history) if len(self.ear_history) > 10 else 0
-        unstable_eyes = ear_variance > 0.005
+        unstable_eyes = ear_variance > 0.02  # Much higher threshold
 
         # Overall intoxication score
         intoxication_score = 0
@@ -1016,6 +1304,57 @@ class FaceAnalyzer:
                     )
 
         return frame, detection_data
+
+
+def draw_distraction_warning(frame, distraction_data):
+    """Draw prominent distraction warning banner on frame"""
+    if not distraction_data:
+        return frame
+
+    h, w = frame.shape[:2]
+
+    if distraction_data["phone_detected"]:
+        # Red banner for phone usage
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, h - 80), (w, h), (0, 0, 180), -1)
+        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+
+        cv2.putText(
+            frame,
+            "WARNING: PHONE DETECTED - EYES ON ROAD!",
+            (w // 2 - 280, h - 45),
+            cv2.FONT_HERSHEY_DUPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
+        cv2.putText(
+            frame,
+            "Put down your phone immediately",
+            (w // 2 - 180, h - 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (200, 200, 200),
+            1,
+        )
+
+    elif distraction_data["drinking_detected"]:
+        # Orange banner for drinking
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, h - 60), (w, h), (0, 100, 180), -1)
+        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+
+        cv2.putText(
+            frame,
+            "CAUTION: Drinking Detected",
+            (w // 2 - 180, h - 25),
+            cv2.FONT_HERSHEY_DUPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+        )
+
+    return frame
 
 
 def apply_zoom(frame, zoom_level):
@@ -1289,11 +1628,11 @@ def draw_driving_info(frame, driving_sim, warning_sound=None):
     x_pos = 20
     y_pos = 20
 
-    # Draw semi-transparent background for driving info (expanded for compass)
+    # Draw semi-transparent background for driving info (expanded for GPS info)
     overlay = frame.copy()
-    cv2.rectangle(overlay, (x_pos, y_pos), (x_pos + 400, y_pos + 190), (30, 30, 30), -1)
+    cv2.rectangle(overlay, (x_pos, y_pos), (x_pos + 400, y_pos + 250), (30, 30, 30), -1)
     cv2.rectangle(
-        overlay, (x_pos, y_pos), (x_pos + 400, y_pos + 190), (255, 255, 255), 2
+        overlay, (x_pos, y_pos), (x_pos + 400, y_pos + 250), (255, 255, 255), 2
     )
     frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
 
@@ -1608,15 +1947,67 @@ def draw_driving_info(frame, driving_sim, warning_sound=None):
         if warning_sound:
             warning_sound.play_speeding_alert()
 
+    # GPS info display
+    gps_y = y_pos + 215
+    satellites = driving_sim.get_satellites()
+    latitude = driving_sim.get_latitude()
+    longitude = driving_sim.get_longitude()
+
+    # GPS status indicator
+    if driving_sim.is_using_gps():
+        gps_status = f"GPS: {satellites} sats"
+        gps_color = (0, 255, 0) if driving_sim.has_gps_fix() else (0, 165, 255)
+    else:
+        gps_status = "GPS: SIMULATED"
+        gps_color = (128, 128, 128)
+
+    cv2.putText(
+        frame,
+        gps_status,
+        (x_pos + 10, gps_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        gps_color,
+        1,
+    )
+
+    # Direction string (e.g., "342NW")
+    cv2.putText(
+        frame,
+        f"Dir: {driving_sim.get_direction_string()}",
+        (x_pos + 150, gps_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+    )
+
+    # Coordinates
+    gps_y += 20
+    cv2.putText(
+        frame,
+        f"Lat: {latitude:.6f}  Lon: {longitude:.6f}",
+        (x_pos + 10, gps_y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (200, 200, 200),
+        1,
+    )
+
     return frame
 
 
 def main():
+    # Initialize GPS reader (will fallback to Apple Park coordinates if unavailable)
+    gps_reader = GPSReader()
+    gps_reader.start()
+
     # Open the default camera (index 0)
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
         print("Error: Could not open camera")
+        gps_reader.stop()
         return
 
     print("Camera opened successfully!")
@@ -1625,10 +2016,19 @@ def main():
     print("- Face detection with bounding boxes")
     print("- Real-time eye state detection (Open/Closed)")
     print("- Intoxication risk assessment")
+    print("- Phone usage detection (YOLO)")
+    print("- Drinking detection (YOLO)")
     print("- Camera zoom control (0.5x - 10x)")
-    print("- Driving speed simulation (0-100 MPH)")
+    print("- GPS tracking (real or simulated)")
     print("- Warning sound alerts for speeding and drowsiness")
     print("- Supabase cloud sync with real-time vehicle tracking")
+    print("\nGPS Data:")
+    print("- Satellites, Speed (mph), Direction (e.g., 342NW)")
+    print("- Latitude, Longitude")
+    print("- Falls back to Apple Park coordinates if GPS unavailable")
+    print("\nDistraction Detection:")
+    print("- Phone usage near face")
+    print("- Drinking from bottle/cup")
     print("\nIntoxication Indicators:")
     print("- Drowsiness (prolonged eye closure)")
     print("- Excessive blinking patterns")
@@ -1637,14 +2037,15 @@ def main():
     print("- Press 's' to open Settings Menu")
     print("- Press '+/-' to zoom in/out")
     print("- Press '1-5' or '0' for quick zoom levels")
-    print("\nSpeed Test Controls:")
+    print("\nSpeed Test Controls (simulation mode only):")
     print("- Press 'X' to simulate speeding (75 MPH)")
     print("- Press 'C' to reset speed to normal (45 MPH)")
     print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
 
     analyzer = FaceAnalyzer()
+    distraction_detector = DistractionDetector()  # YOLO-based phone/drinking detection
     settings = Settings()
-    driving_sim = DrivingSimulator()
+    driving_sim = DrivingSimulator(gps_reader=gps_reader)
     warning_sound = WarningSound()
     supabase_uploader = SupabaseUploader()
     frame_count = 0
@@ -1675,12 +2076,29 @@ def main():
         # Extract intox_data for alerts
         intox_data = detection_data["intox_data"] if detection_data else None
 
+        # Run YOLO distraction detection (phone/drinking)
+        face_bbox = detection_data["face_bbox"] if detection_data else None
+        distraction_data = distraction_detector.detect(processed_frame, face_bbox)
+
+        # Draw distraction detection boxes
+        processed_frame = distraction_detector.draw_detections(processed_frame)
+
         # Check for drowsy/intoxicated driver and play alert
         if intox_data and intox_data["score"] >= 4:
             warning_sound.play_drowsy_alert()
 
+        # Check for distraction (phone/drinking) and play alert
+        if distraction_data["phone_detected"]:
+            warning_sound.play_distraction_alert()
+
         # Determine driver status for realtime update
-        if intox_data:
+        if distraction_data["phone_detected"]:
+            driver_status = "distracted_phone"
+            intox_score = intox_data["score"] if intox_data else 0
+        elif distraction_data["drinking_detected"]:
+            driver_status = "distracted_drinking"
+            intox_score = intox_data["score"] if intox_data else 0
+        elif intox_data:
             if intox_data["score"] >= 4:
                 driver_status = "impaired"
             elif intox_data["score"] >= 2:
@@ -1700,11 +2118,18 @@ def main():
             is_speeding=driving_sim.is_speeding(),
             driver_status=driver_status,
             intoxication_score=intox_score,
+            latitude=driving_sim.get_latitude(),
+            longitude=driving_sim.get_longitude(),
+            satellites=driving_sim.get_satellites(),
+            is_phone_detected=distraction_data["phone_detected"],
+            is_drinking_detected=distraction_data["drinking_detected"],
         )
 
         # Update trip statistics
         is_drowsy = intox_data["drowsy"] if intox_data else False
-        is_excessive_blinking = intox_data["excessive_blinking"] if intox_data else False
+        is_excessive_blinking = (
+            intox_data["excessive_blinking"] if intox_data else False
+        )
         is_unstable_eyes = intox_data["unstable_eyes"] if intox_data else False
         supabase_uploader.update_trip_stats(
             speed=driving_sim.get_speed(),
@@ -1732,6 +2157,7 @@ def main():
                 right_eye_ear=detection_data["right_eye_ear"],
                 intox_data=detection_data["intox_data"],
                 driving_data=driving_data,
+                distraction_data=distraction_data,
             )
             supabase_uploader.increment_face_detection_count()
 
@@ -1741,6 +2167,9 @@ def main():
 
         # Draw driving info with warning sound
         processed_frame = draw_driving_info(processed_frame, driving_sim, warning_sound)
+
+        # Draw distraction warning banner if detected
+        processed_frame = draw_distraction_warning(processed_frame, distraction_data)
 
         # Draw settings overlay
         final_frame = draw_settings_overlay(processed_frame, settings)
@@ -1801,6 +2230,7 @@ def main():
 
     # End trip and release resources
     supabase_uploader.end_trip()
+    gps_reader.stop()
     cap.release()
     cv2.destroyAllWindows()
 

@@ -7,3 +7,5 @@ supabase
 python-dotenv
 face_recognition  # For face embeddings and clustering similar faces
 dlib  # Required by face_recognition
+ultralytics # yolo model
+pynmea2 # gps

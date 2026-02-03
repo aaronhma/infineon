@@ -96,6 +96,16 @@ struct EventsListView: View {
           for: trip.sessionId,
           vehicleId: trip.vehicleTrip.vehicleId
         )
+      case .phoneDistraction:
+        fetchedEvents = try await supabase.fetchPhoneDistractionEvents(
+          for: trip.sessionId,
+          vehicleId: trip.vehicleTrip.vehicleId
+        )
+      case .drinking:
+        fetchedEvents = try await supabase.fetchDrinkingEvents(
+          for: trip.sessionId,
+          vehicleId: trip.vehicleTrip.vehicleId
+        )
       }
 
       await MainActor.run {

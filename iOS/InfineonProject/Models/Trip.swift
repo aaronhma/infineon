@@ -26,6 +26,9 @@ struct Trip: Identifiable {
   var unstableEyesEventCount: Int { vehicleTrip.unstableEyesEventCount }
   var faceDetectionCount: Int { vehicleTrip.faceDetectionCount }
   var sessionId: UUID { vehicleTrip.sessionId }
+  // Distraction events
+  var phoneDistractionEventCount: Int { vehicleTrip.phoneDistractionEventCount ?? 0 }
+  var drinkingEventCount: Int { vehicleTrip.drinkingEventCount ?? 0 }
 
   init(vehicleTrip: VehicleTrip) {
     self.vehicleTrip = vehicleTrip
@@ -70,6 +73,8 @@ enum TripEventDestination: Hashable {
   case excessiveBlinkingEvents(trip: Trip)
   case unstableEyesEvents(trip: Trip)
   case speedingEvents(trip: Trip)
+  case phoneDistractionEvents(trip: Trip)
+  case drinkingEvents(trip: Trip)
 }
 
 struct TripEventDetail: Hashable {
@@ -81,6 +86,8 @@ struct TripEventDetail: Hashable {
     case excessiveBlinking
     case unstableEyes
     case speeding
+    case phoneDistraction
+    case drinking
 
     var displayName: String {
       switch self {
@@ -88,6 +95,8 @@ struct TripEventDetail: Hashable {
       case .excessiveBlinking: "Excessive Blinking"
       case .unstableEyes: "Unstable Eyes"
       case .speeding: "Speeding"
+      case .phoneDistraction: "Phone Distraction"
+      case .drinking: "Drinking"
       }
     }
 
@@ -97,6 +106,8 @@ struct TripEventDetail: Hashable {
       case .excessiveBlinking: "eye"
       case .unstableEyes: "eye.trianglebadge.exclamationmark"
       case .speeding: "exclamationmark.triangle.fill"
+      case .phoneDistraction: "iphone.gen3"
+      case .drinking: "cup.and.saucer.fill"
       }
     }
 
@@ -106,6 +117,8 @@ struct TripEventDetail: Hashable {
       case .excessiveBlinking: .orange
       case .unstableEyes: .red
       case .speeding: .orange
+      case .phoneDistraction: .red
+      case .drinking: .orange
       }
     }
   }
@@ -132,7 +145,9 @@ extension Trip {
       unstableEyesEventCount: 0,
       faceDetectionCount: 10,
       speedSampleCount: 100,
-      speedSampleSum: 4550
+      speedSampleSum: 4550,
+      phoneDistractionEventCount: 0,
+      drinkingEventCount: 0
     )
   )
 
@@ -155,7 +170,9 @@ extension Trip {
       unstableEyesEventCount: 1,
       faceDetectionCount: 15,
       speedSampleCount: 50,
-      speedSampleSum: 2750
+      speedSampleSum: 2750,
+      phoneDistractionEventCount: 2,
+      drinkingEventCount: 1
     )
   )
 
@@ -178,7 +195,9 @@ extension Trip {
       unstableEyesEventCount: 4,
       faceDetectionCount: 20,
       speedSampleCount: 30,
-      speedSampleSum: 2100
+      speedSampleSum: 2100,
+      phoneDistractionEventCount: 5,
+      drinkingEventCount: 3
     )
   )
 }

@@ -272,7 +272,9 @@ extension FaceDetection: Hashable {
         compassDirection: "NE",
         isSpeeding: true,
         imagePath: "test/path.jpg",
-        sessionId: UUID()
+        sessionId: UUID(),
+        isPhoneDetected: false,
+        isDrinkingDetected: false
       ),
       eventType: .drowsiness
     )

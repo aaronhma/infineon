@@ -95,6 +95,10 @@ struct HomeView: View {
           EventsListView(trip: trip, eventType: .unstableEyes)
         case .speedingEvents(let trip):
           EventsListView(trip: trip, eventType: .speeding)
+        case .phoneDistractionEvents(let trip):
+          EventsListView(trip: trip, eventType: .phoneDistraction)
+        case .drinkingEvents(let trip):
+          EventsListView(trip: trip, eventType: .drinking)
         }
       }
       .navigationDestination(for: TripEventDetail.self) { detail in

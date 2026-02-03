@@ -186,6 +186,63 @@ struct TripDetailView: View {
           }
         }
 
+        // Distraction Events Section
+        Section("Distraction Events") {
+          // Phone distraction events
+          if trip.phoneDistractionEventCount > 0 {
+            NavigationLink(value: TripEventDestination.phoneDistractionEvents(trip: trip)) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text(
+                    "\(trip.phoneDistractionEventCount) Phone Distraction\(trip.phoneDistractionEventCount == 1 ? "" : "s")"
+                  )
+                  Text("Tap to view details")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                Image(systemName: "iphone.gen3")
+                  .foregroundStyle(.red)
+              }
+            }
+            .tint(.primary)
+          } else {
+            Label {
+              Text("No phone distractions")
+            } icon: {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            }
+          }
+
+          // Drinking events
+          if trip.drinkingEventCount > 0 {
+            NavigationLink(value: TripEventDestination.drinkingEvents(trip: trip)) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text(
+                    "\(trip.drinkingEventCount) Drinking Event\(trip.drinkingEventCount == 1 ? "" : "s")"
+                  )
+                  Text("Tap to view details")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                Image(systemName: "cup.and.saucer.fill")
+                  .foregroundStyle(.orange)
+              }
+            }
+            .tint(.primary)
+          } else {
+            Label {
+              Text("No drinking detected")
+            } icon: {
+              Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            }
+          }
+        }
+
         // Speed Violations Section - Now with NavigationLink
         Section("Speed Violations") {
           if trip.speedingEventCount > 0 {

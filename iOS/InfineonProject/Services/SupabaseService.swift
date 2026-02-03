@@ -59,6 +59,11 @@ struct VehicleRealtime: Codable, Identifiable {
   let isMoving: Bool
   let driverStatus: String
   let intoxicationScore: Int
+  // GPS data
+  let satellites: Int?
+  // Distraction detection
+  let isPhoneDetected: Bool?
+  let isDrinkingDetected: Bool?
 
   enum CodingKeys: String, CodingKey {
     case vehicleId = "vehicle_id"
@@ -72,6 +77,43 @@ struct VehicleRealtime: Codable, Identifiable {
     case isMoving = "is_moving"
     case driverStatus = "driver_status"
     case intoxicationScore = "intoxication_score"
+    case satellites
+    case isPhoneDetected = "is_phone_detected"
+    case isDrinkingDetected = "is_drinking_detected"
+  }
+
+  init(
+    vehicleId: String,
+    updatedAt: Date,
+    latitude: Double?,
+    longitude: Double?,
+    speedMph: Int,
+    speedLimitMph: Int,
+    headingDegrees: Int,
+    compassDirection: String,
+    isSpeeding: Bool,
+    isMoving: Bool,
+    driverStatus: String,
+    intoxicationScore: Int,
+    satellites: Int?,
+    isPhoneDetected: Bool?,
+    isDrinkingDetected: Bool?
+  ) {
+    self.vehicleId = vehicleId
+    self.updatedAt = updatedAt
+    self.latitude = latitude
+    self.longitude = longitude
+    self.speedMph = speedMph
+    self.speedLimitMph = speedLimitMph
+    self.headingDegrees = headingDegrees
+    self.compassDirection = compassDirection
+    self.isSpeeding = isSpeeding
+    self.isMoving = isMoving
+    self.driverStatus = driverStatus
+    self.intoxicationScore = intoxicationScore
+    self.satellites = satellites
+    self.isPhoneDetected = isPhoneDetected
+    self.isDrinkingDetected = isDrinkingDetected
   }
 }
 
@@ -111,6 +153,9 @@ struct FaceDetection: Codable, Identifiable {
   let isSpeeding: Bool?
   let imagePath: String?
   let sessionId: UUID?
+  // Distraction detection
+  let isPhoneDetected: Bool?
+  let isDrinkingDetected: Bool?
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -134,6 +179,8 @@ struct FaceDetection: Codable, Identifiable {
     case isSpeeding = "is_speeding"
     case imagePath = "image_path"
     case sessionId = "session_id"
+    case isPhoneDetected = "is_phone_detected"
+    case isDrinkingDetected = "is_drinking_detected"
   }
 }
 
@@ -225,6 +272,9 @@ struct VehicleTrip: Codable, Identifiable {
   let faceDetectionCount: Int
   let speedSampleCount: Int
   let speedSampleSum: Int
+  // Distraction event counts
+  let phoneDistractionEventCount: Int?
+  let drinkingEventCount: Int?
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -245,6 +295,8 @@ struct VehicleTrip: Codable, Identifiable {
     case faceDetectionCount = "face_detection_count"
     case speedSampleCount = "speed_sample_count"
     case speedSampleSum = "speed_sample_sum"
+    case phoneDistractionEventCount = "phone_distraction_event_count"
+    case drinkingEventCount = "drinking_event_count"
   }
 
   /// Returns the trip status as an enum for easier handling
@@ -1061,6 +1113,40 @@ class SupabaseService {
       .eq("vehicle_id", value: vehicleId)
       .eq("session_id", value: sessionId)
       .eq("is_unstable_eyes", value: true)
+      .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  func fetchPhoneDistractionEvents(for sessionId: UUID, vehicleId: String) async throws
+    -> [FaceDetection]
+  {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .eq("is_phone_detected", value: true)
+      .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  func fetchDrinkingEvents(for sessionId: UUID, vehicleId: String) async throws
+    -> [FaceDetection]
+  {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .eq("is_drinking_detected", value: true)
       .order("created_at", ascending: false)
       .execute()
       .value
