@@ -118,17 +118,21 @@ struct ShareAccessView: View {
 
           Spacer()
 
-          Button(
-            "\(showCode ? "Hide" : "Show") code",
-            systemImage: showCode ? "eye.slash.fill" : "eye.fill"
-          ) {
+          Button {
             Haptics.impact()
 
             withAnimation(.bouncy) {
               showCode.toggle()
             }
+          } label: {
+            HStack {
+              Image(systemName: showCode ? "eye.slash.fill" : "eye.fill")
+                .contentTransition(.symbolEffect(.automatic))
+
+              Text("\(showCode ? "Hide" : "Show") code")
+                .contentTransition(.numericText(value: 0))
+            }
           }
-          .contentTransition(.numericText(value: 0))
           .padding(.bottom)
 
           Text(showCode ? vehicle.inviteCode : "XXXXXX")

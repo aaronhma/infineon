@@ -45,7 +45,9 @@ struct JoinVehicleView: View {
           if response.success {
             dismiss()
           } else {
-            print(response.error ?? "Unknown error, please try again.")
+            print(
+              response.error ?? "Unknown error, please try again."
+            )
             errorMessage = "Invalid or expired code."
           }
         }
@@ -63,7 +65,10 @@ struct JoinVehicleView: View {
     NavigationStack {
       Form {
         Section("Scan QR code") {
-          Button("Scan QR code", systemImage: "camera.fill") {}
+          Button("Scan QR code", systemImage: "camera.fill") {
+            Haptics.impact()
+            showScanner.toggle()
+          }
         }
 
         Section {
@@ -128,6 +133,10 @@ struct JoinVehicleView: View {
           .disabled(inviteCode.count != 6 || isJoining)
           .listRowInsets(EdgeInsets())
         }
+      }
+      .dynamicIslandQRCodeScanner(isScanning: $showScanner) { code in
+        print(code)
+        //                  joinVehicle()
       }
       .navigationTitle("Join Vehicle")
       .navigationBarTitleDisplayMode(.inline)

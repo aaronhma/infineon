@@ -7,7 +7,7 @@
 
 import AaronUI
 import ActivityKit
-import RealityKit
+import MapKit
 import SwiftUI
 
 struct VehicleView: View {
@@ -82,6 +82,55 @@ struct VehicleView: View {
         // Live Data Section
         if let data = vehicle.realtimeData {
           Section("Live Data") {
+            NavigationLink {
+              Map()
+                .mapControls {
+                  MapUserLocationButton()
+                }
+                .safeAreaInset(edge: .bottom) {
+                  if #available(iOS 26,
+                  macOS 26,
+                  watchOS 26,
+                  tvOS 26,
+                  visionOS 26,
+                  *) {
+                    VStack {
+                      Text("123 Street Way")
+                        .bold()
+
+                      Text("1 hour, 7 minutes away")
+                    }
+                    .padding()
+                    .glassEffect(
+                      .regular.interactive(),
+                      in: .capsule
+                    )
+                  } else {
+                    VStack {
+                      Text("123 Street Way")
+                        .bold()
+
+                      Text("1 hour, 7 minutes away")
+                    }
+                    .frame(maxWidth: .infinity)
+                    .background(.regularMaterial)
+                  }
+                }
+                .navigationTitle("Vehicle Location")
+                .navigationBarTitleDisplayMode(.inline)
+            } label: {
+              Label {
+                Text("Live Location")
+
+                Text("123 Street Way")
+              } icon: {
+                SettingsBoxView(
+                  icon: "location.fill",
+                  color: .blue
+                )
+              }
+            }
+
             LabeledContent("Speed") {
               HStack {
                 Text("\(data.speedMph) mph")

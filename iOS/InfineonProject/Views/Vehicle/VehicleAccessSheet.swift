@@ -109,6 +109,7 @@ struct VehicleAccessSheet: View {
 
         ToolbarItem(placement: .topBarTrailing) {
           Button("Share", systemImage: "square.and.arrow.up") {
+            Haptics.impact()
             showShareAccessViewSheet.toggle()
           }
         }
