@@ -3,7 +3,7 @@ import random
 import time
 import uuid
 from collections import deque
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 # PST timezone (UTC-8)
 PST = timezone(timedelta(hours=-8))
@@ -20,6 +20,7 @@ from scipy.spatial import distance
 from supabase import Client, create_client
 from ultralytics import YOLO
 
+from buzzer import BuzzerController
 from gps import GPSReader
 
 # Load environment variables from .env file
@@ -588,8 +589,12 @@ class SupabaseUploader:
 
             # Add distraction data if available
             if distraction_data:
-                record["is_phone_detected"] = bool(distraction_data.get("phone_detected", False))
-                record["is_drinking_detected"] = bool(distraction_data.get("drinking_detected", False))
+                record["is_phone_detected"] = bool(
+                    distraction_data.get("phone_detected", False)
+                )
+                record["is_drinking_detected"] = bool(
+                    distraction_data.get("drinking_detected", False)
+                )
 
             # Insert record into database
             db_response = self.client.table("face_detections").insert(record).execute()
@@ -614,67 +619,6 @@ class SupabaseUploader:
         except Exception as e:
             print(f"Error uploading to Supabase: {e}")
             return None
-
-
-class WarningSound:
-    def __init__(self):
-        pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
-        self.last_speeding_alert = 0
-        self.last_drowsy_alert = 0
-        self.alert_cooldown = 3.0  # 3 seconds between alerts
-
-    def generate_beep(self, frequency=800, duration=0.3):
-        """Generate a warning beep sound"""
-        sample_rate = 22050
-        n_samples = int(duration * sample_rate)
-
-        # Generate sine wave
-        t = np.linspace(0, duration, n_samples)
-        wave = np.sin(2 * np.pi * frequency * t)
-
-        # Add envelope to prevent clicking
-        envelope = np.ones(n_samples)
-        fade_samples = int(0.01 * sample_rate)  # 10ms fade
-        envelope[:fade_samples] = np.linspace(0, 1, fade_samples)
-        envelope[-fade_samples:] = np.linspace(1, 0, fade_samples)
-        wave = wave * envelope
-
-        # Convert to 16-bit audio
-        wave = (wave * 32767).astype(np.int16)
-
-        # Create stereo sound
-        stereo_wave = np.column_stack((wave, wave))
-
-        return pygame.sndarray.make_sound(stereo_wave)
-
-    def play_speeding_alert(self):
-        """Play speeding warning sound (single beep)"""
-        current_time = time.time()
-        if current_time - self.last_speeding_alert > self.alert_cooldown:
-            sound = self.generate_beep(frequency=900, duration=0.4)
-            sound.play()
-            self.last_speeding_alert = current_time
-
-    def play_drowsy_alert(self):
-        """Play drowsy/intoxicated warning sound (urgent double beep)"""
-        current_time = time.time()
-        if current_time - self.last_drowsy_alert > self.alert_cooldown:
-            # Play urgent double beep
-            sound1 = self.generate_beep(frequency=1200, duration=0.2)
-            sound1.play()
-            pygame.time.wait(250)
-            sound2 = self.generate_beep(frequency=1200, duration=0.2)
-            sound2.play()
-            self.last_drowsy_alert = current_time
-
-    def play_distraction_alert(self):
-        """Play distraction warning sound (phone/drinking detected)"""
-        current_time = time.time()
-        if current_time - self.last_drowsy_alert > self.alert_cooldown:
-            # Play warning tone
-            sound = self.generate_beep(frequency=600, duration=0.5)
-            sound.play()
-            self.last_drowsy_alert = current_time
 
 
 class DistractionDetector:
@@ -799,10 +743,14 @@ class DistractionDetector:
                     print(f"YOLO: PHONE (class {cls}: {class_name}) conf={conf:.2f}")
                 elif cls in (self.BOTTLE, self.CUP):
                     current_bottle = bbox
-                    print(f"YOLO: BOTTLE/CUP (class {cls}: {class_name}) conf={conf:.2f}")
+                    print(
+                        f"YOLO: BOTTLE/CUP (class {cls}: {class_name}) conf={conf:.2f}"
+                    )
                 # Debug: show other common objects being detected
                 elif conf > 0.4:
-                    print(f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}")
+                    print(
+                        f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
+                    )
 
         # Update phone detection with smoothing
         if current_phone is not None:
@@ -1623,7 +1571,7 @@ def draw_settings_overlay(frame, settings):
     return frame
 
 
-def draw_driving_info(frame, driving_sim, warning_sound=None):
+def draw_driving_info(frame, driving_sim, buzzer=None):
     """Draw driving speed and speed limit information"""
     h, w = frame.shape[:2]
 
@@ -1947,8 +1895,8 @@ def draw_driving_info(frame, driving_sim, warning_sound=None):
         )
 
         # Play speeding alert sound
-        if warning_sound:
-            warning_sound.play_speeding_alert()
+        if buzzer:
+            buzzer.play_speeding_alert()
 
     # GPS info display
     gps_y = y_pos + 215
@@ -2049,7 +1997,8 @@ def main():
     distraction_detector = DistractionDetector()  # YOLO-based phone/drinking detection
     settings = Settings()
     driving_sim = DrivingSimulator(gps_reader=gps_reader)
-    warning_sound = WarningSound()
+    buzzer = BuzzerController()
+    buzzer.start()
     supabase_uploader = SupabaseUploader()
     frame_count = 0
 
@@ -2088,11 +2037,11 @@ def main():
 
         # Check for drowsy/intoxicated driver and play alert
         if intox_data and intox_data["score"] >= 4:
-            warning_sound.play_drowsy_alert()
+            buzzer.play_drowsy_alert()
 
         # Check for distraction (phone/drinking) and play alert
         if distraction_data["phone_detected"]:
-            warning_sound.play_distraction_alert()
+            buzzer.play_distraction_alert()
 
         # Determine driver status for realtime update
         if distraction_data["phone_detected"]:
@@ -2168,8 +2117,8 @@ def main():
         if detection_data:
             supabase_uploader.check_current_driver()
 
-        # Draw driving info with warning sound
-        processed_frame = draw_driving_info(processed_frame, driving_sim, warning_sound)
+        # Draw driving info with buzzer
+        processed_frame = draw_driving_info(processed_frame, driving_sim, buzzer)
 
         # Draw distraction warning banner if detected
         processed_frame = draw_distraction_warning(processed_frame, distraction_data)
@@ -2233,6 +2182,7 @@ def main():
 
     # End trip and release resources
     supabase_uploader.end_trip()
+    buzzer.stop()
     gps_reader.stop()
     cap.release()
     cv2.destroyAllWindows()
