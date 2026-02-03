@@ -19,6 +19,7 @@ struct VehicleAccessSheet: View {
   @State private var errorMessage: String?
   @State private var userToRemove: VehicleAccessUser?
   @State private var isRemovingAccess = false
+  @State private var showShareAccessViewSheet = false
 
   private var currentUserId: UUID? {
     supabase.currentUser?.id
@@ -58,7 +59,11 @@ struct VehicleAccessSheet: View {
           List {
             if let owner = ownerUser {
               Section("Owner") {
-                AccessUserRow(user: owner, canRemove: false, onRemove: {})
+                AccessUserRow(
+                  user: owner,
+                  canRemove: false,
+                  onRemove: {
+                  })
               }
             }
 
@@ -69,7 +74,10 @@ struct VehicleAccessSheet: View {
               } else {
                 ForEach(otherUsers) { user in
                   let canRemove = isOwner || user.userId == currentUserId
-                  AccessUserRow(user: user, canRemove: canRemove) {
+                  AccessUserRow(
+                    user: user,
+                    canRemove: canRemove
+                  ) {
                     userToRemove = user
                   }
                 }
@@ -78,7 +86,9 @@ struct VehicleAccessSheet: View {
               Text("Other")
             } footer: {
               if isOwner {
-                Text("As the owner, you can remove access from anyone.")
+                Text(
+                  "As the owner, you can remove access from anyone."
+                )
               } else {
                 Text("You can only remove your own access.")
               }
@@ -87,10 +97,19 @@ struct VehicleAccessSheet: View {
         }
       }
       .navigationTitle("Vehicle Access")
+      .sheet(isPresented: $showShareAccessViewSheet) {
+        ShareAccessView(vehicle: vehicle)
+      }
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           CloseButton {
             dismiss()
+          }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+          Button("Share", systemImage: "square.and.arrow.up") {
+            showShareAccessViewSheet.toggle()
           }
         }
       }
@@ -134,7 +153,9 @@ struct VehicleAccessSheet: View {
     errorMessage = nil
 
     do {
-      let users = try await supabase.fetchVehicleAccessUsers(vehicleId: vehicle.id)
+      let users = try await supabase.fetchVehicleAccessUsers(
+        vehicleId: vehicle.id
+      )
       await MainActor.run {
         accessUsers = users
         isLoading = false
@@ -157,7 +178,11 @@ struct VehicleAccessSheet: View {
           dismiss()
         }
       } else {
-        try await supabase.removeUserAccess(vehicleId: vehicle.id, userId: user.userId)
+        try await supabase
+          .removeUserAccess(
+            vehicleId: vehicle.id,
+            userId: user.userId
+          )
         await loadAccessUsers()
       }
     } catch {
@@ -241,7 +266,9 @@ struct AccessUserRow: View {
     guard let avatarPath = user.avatarPath else { return }
 
     do {
-      let url = try supabase.client.storage.from("user-avatars").getPublicURL(path: avatarPath)
+      let url = try supabase.client.storage.from("user-avatars").getPublicURL(
+        path: avatarPath
+      )
       let (data, _) = try await URLSession.shared.data(from: url)
       await MainActor.run {
         avatarImage = UIImage(data: data)

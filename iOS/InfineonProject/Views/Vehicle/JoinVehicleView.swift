@@ -11,6 +11,8 @@ import SwiftUI
 struct JoinVehicleView: View {
   @Environment(\.dismiss) private var dismiss
 
+  @State private var showScanner = false
+
   @State private var inviteCode: String
   @State private var isJoining = false
   @State private var errorMessage: String?
@@ -60,6 +62,10 @@ struct JoinVehicleView: View {
   var body: some View {
     NavigationStack {
       Form {
+        Section("Scan QR code") {
+          Button("Scan QR code", systemImage: "camera.fill") {}
+        }
+
         Section {
           TextField("Invite Code", text: $inviteCode)
             .textInputAutocapitalization(.characters)

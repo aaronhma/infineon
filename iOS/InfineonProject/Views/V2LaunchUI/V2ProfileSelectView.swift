@@ -144,7 +144,20 @@ struct V2ProfileSelectView: View {
                 )
               }
             ) { profile in
-              profileCard(profile)
+              Button {
+                Haptics.impact()
+
+                if isEditing {
+                  selectedEditProfile = profile
+                } else {
+                  lastSelectedVehicleId = profile.vehicleId
+                  appData.watchingProfile = profile
+                  appData.animateProfile = true
+                }
+              } label: {
+                profileCard(profile)
+              }
+              .buttonStyle(.plain)
             }
 
             Button {
@@ -155,13 +168,19 @@ struct V2ProfileSelectView: View {
                 ZStack {
                   RoundedRectangle(cornerRadius: 10)
                     .stroke(
-                      colorScheme == .dark ? .white.opacity(0.8) : .black.opacity(0.8),
+                      colorScheme == .dark
+                        ? .white
+                          .opacity(0.8)
+                        : .black
+                          .opacity(0.8),
                       lineWidth: 0.8
                     )
 
                   Image(systemName: "plus")
                     .font(.largeTitle)
-                    .foregroundStyle(colorScheme == .dark ? .white : .black)
+                    .foregroundStyle(
+                      colorScheme == .dark ? .white : .black
+                    )
                 }
                 .frame(width: 100, height: 100)
                 .contentShape(.rect)
@@ -400,17 +419,6 @@ struct V2ProfileSelectView: View {
           return [profile.sourceAnchorID: anchor]
         }
       )
-      .onTapGesture {
-        Haptics.impact()
-
-        if isEditing {
-          selectedEditProfile = profile
-        } else {
-          lastSelectedVehicleId = profile.vehicleId
-          appData.watchingProfile = profile
-          appData.animateProfile = true
-        }
-      }
 
       Text(profile.name)
         .fontWeight(.semibold)
