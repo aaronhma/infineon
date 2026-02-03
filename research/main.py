@@ -30,12 +30,13 @@ load_dotenv()
 class SupabaseUploader:
     """Handles uploading face detection data and vehicle telemetry to Supabase"""
 
-    def __init__(self):
+    def __init__(self, buzzer_controller=None):
         # Load from environment variables
         supabase_url = os.environ.get("SUPABASE_URL")
         supabase_key = os.environ.get("SUPABASE_SECRET_KEY")
         self.vehicle_id = os.environ.get("VEHICLE_ID")
         self.vehicle_name = os.environ.get("VEHICLE_NAME", "Unknown Vehicle")
+        self.buzzer = buzzer_controller
 
         if not supabase_url:
             raise RuntimeError(
@@ -88,6 +89,9 @@ class SupabaseUploader:
 
         # Create trip record for this session
         self._create_trip()
+
+        # Subscribe to realtime buzzer commands
+        self._subscribe_to_buzzer_commands()
 
         print(
             f"Supabase connected. Vehicle ID: {self.vehicle_id}, Session ID: {self.session_id}"
@@ -454,6 +458,60 @@ class SupabaseUploader:
     def get_current_driver(self):
         """Get the current driver name (cached)"""
         return self.current_driver_name
+
+    def _subscribe_to_buzzer_commands(self):
+        """Subscribe to realtime changes in vehicle_realtime for buzzer control
+
+        Note: This uses polling instead of realtime subscriptions due to
+        Python Supabase client limitations. Checks for buzzer state every 2 seconds.
+        """
+        if not self.buzzer:
+            print("No buzzer controller available, skipping buzzer polling")
+            return
+
+        self.last_buzzer_check = 0
+        self.buzzer_check_interval = 2.0  # Check every 2 seconds
+        self.last_buzzer_state = False
+
+        print("Remote buzzer control enabled (polling mode)")
+
+    def check_buzzer_commands(self):
+        """Poll for buzzer command changes (called from main loop)"""
+        if not self.buzzer:
+            return
+
+        current_time = time.time()
+        if current_time - self.last_buzzer_check < self.buzzer_check_interval:
+            return
+
+        self.last_buzzer_check = current_time
+
+        try:
+            # Query current buzzer state
+            response = (
+                self.client.table("vehicle_realtime")
+                .select("buzzer_active, buzzer_type")
+                .eq("vehicle_id", self.vehicle_id)
+                .execute()
+            )
+
+            if response.data and len(response.data) > 0:
+                buzzer_active = response.data[0].get("buzzer_active", False)
+                buzzer_type = response.data[0].get("buzzer_type", "alert")
+
+                # Only react to state changes
+                if buzzer_active != self.last_buzzer_state:
+                    if buzzer_active:
+                        print(f"\n>>> REMOTE BUZZER ACTIVATED ({buzzer_type}) <<<\n")
+                        self.buzzer.start_continuous(buzzer_type)
+                    else:
+                        print("\n>>> REMOTE BUZZER DEACTIVATED <<<\n")
+                        self.buzzer.stop_continuous()
+
+                    self.last_buzzer_state = buzzer_active
+
+        except Exception as e:
+            print(f"Error checking buzzer commands: {e}")
 
     def update_vehicle_realtime(
         self,
@@ -1999,7 +2057,7 @@ def main():
     driving_sim = DrivingSimulator(gps_reader=gps_reader)
     buzzer = BuzzerController()
     buzzer.start()
-    supabase_uploader = SupabaseUploader()
+    supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
     frame_count = 0
 
     while True:
@@ -2116,6 +2174,9 @@ def main():
         # Check for identified driver (every 5s when face detected)
         if detection_data:
             supabase_uploader.check_current_driver()
+
+        # Check for remote buzzer commands (every 2s)
+        supabase_uploader.check_buzzer_commands()
 
         # Draw driving info with buzzer
         processed_frame = draw_driving_info(processed_frame, driving_sim, buzzer)

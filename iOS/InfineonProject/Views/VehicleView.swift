@@ -10,6 +10,7 @@ import ActivityKit
 internal import Combine
 import CoreLocation
 import MapKit
+import Supabase
 import SwiftUI
 
 struct VehicleView: View {
@@ -27,6 +28,10 @@ struct VehicleView: View {
   @State private var cachedRoute: MKRoute?
   @State private var cachedVehicleCoordinate: CLLocationCoordinate2D?
   @State private var cachedUserCoordinate: CLLocationCoordinate2D?
+
+  // Buzzer preview data
+  @State private var cachedBuzzerActive: Bool?
+  @State private var cachedBuzzerType: String?
 
   var body: some View {
     NavigationStack {
@@ -92,6 +97,32 @@ struct VehicleView: View {
         // Live Data Section
         if let data = vehicle.realtimeData {
           Section("Live Data") {
+            NavigationLink {
+              VehicleAlertControlView(
+                vehicleId: vehicle.vehicle.id,
+                vehicleName: vehicle.name,
+                initialBuzzerActive: cachedBuzzerActive,
+                initialBuzzerType: cachedBuzzerType
+              )
+            } label: {
+              Label {
+                VStack(alignment: .leading) {
+                  Text("Alert")
+                  Text("Remote buzzer control")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                SettingsBoxView(
+                  icon: "bell.fill",
+                  color: .red
+                )
+              }
+            }
+            .task {
+              await fetchBuzzerStatus()
+            }
+
             NavigationLink {
               VehicleLiveLocationView(
                 vehicleData: data,
@@ -411,6 +442,24 @@ struct VehicleView: View {
     if score >= 4 { return .red }
     if score >= 2 { return .orange }
     return .green
+  }
+
+  private func fetchBuzzerStatus() async {
+    do {
+      let response: [VehicleRealtime] = try await supabase.client
+        .from("vehicle_realtime")
+        .select()
+        .eq("vehicle_id", value: vehicle.vehicle.id)
+        .execute()
+        .value
+
+      if let data = response.first {
+        cachedBuzzerActive = data.buzzerActive
+        cachedBuzzerType = data.buzzerType
+      }
+    } catch {
+      // Keep cached values as nil, will fetch fresh in VehicleAlertControlView
+    }
   }
 
   private func fetchVehicleLocationPreview(data: VehicleRealtime) async {
@@ -899,6 +948,315 @@ struct VehicleLiveLocationView: View {
       cachedRoute: nil,
       cachedStreetName: nil,
       cachedUserLocation: nil
+    )
+  }
+}
+
+// MARK: - Vehicle Alert Control View
+
+struct VehicleAlertControlView: View {
+  let vehicleId: String
+  let vehicleName: String
+  let initialBuzzerActive: Bool?
+  let initialBuzzerType: String?
+
+  @State private var buzzerActive = false
+  @State private var buzzerType: BuzzerType = .alert
+  @State private var isLoading = false
+  @State private var errorMessage: String?
+  @State private var policeRotation: Double = 0
+  @State private var policeLightsOn = true
+
+  enum BuzzerType: String, CaseIterable {
+    case alert = "alert"
+    case emergency = "emergency"
+    case warning = "warning"
+
+    var icon: String {
+      switch self {
+      case .alert: return "bell.fill"
+      case .emergency: return "exclamationmark.triangle.fill"
+      case .warning: return "exclamationmark.circle.fill"
+      }
+    }
+
+    var color: Color {
+      switch self {
+      case .alert: return .orange
+      case .emergency: return .red
+      case .warning: return .yellow
+      }
+    }
+
+    var displayName: String {
+      rawValue.capitalized
+    }
+  }
+
+  var body: some View {
+    List {
+      Section {
+        VStack(spacing: 20) {
+          // Buzzer icon with animation
+          ZStack {
+            // Police lights - revolving around the circle
+            if buzzerActive {
+              ForEach(0..<8, id: \.self) { index in
+                Circle()
+                  .fill(index % 2 == 0 ? Color.red : Color.blue)
+                  .frame(width: 14, height: 14)
+                  .opacity(policeLightsOn ? 1.0 : 0.3)
+                  .offset(y: -80)
+                  .rotationEffect(.degrees(Double(index) * 45 + policeRotation))
+                  .shadow(
+                    color: (index % 2 == 0 ? Color.red : Color.blue).opacity(0.8),
+                    radius: policeLightsOn ? 8 : 2
+                  )
+              }
+            }
+
+            // Pulsing background circle with shadow
+            if buzzerActive {
+              Circle()
+                .fill(buzzerType.color.opacity(0.2))
+                .frame(width: 120, height: 120)
+                .shadow(color: buzzerType.color.opacity(0.6), radius: 20)
+                .scaleEffect(buzzerActive ? 1.2 : 1.0)
+                .animation(
+                  .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                  value: buzzerActive
+                )
+            }
+
+            Image(systemName: buzzerType.icon)
+              .font(.system(size: 60))
+              .foregroundStyle(buzzerActive ? buzzerType.color : .gray)
+              .symbolEffect(.bounce, value: buzzerActive)
+          }
+          .frame(maxWidth: .infinity)
+          .padding(.vertical, 20)
+          .task(id: buzzerActive) {
+            // Continuous haptics while buzzer is active
+            guard buzzerActive else { return }
+            while buzzerActive {
+              Haptics.impact()
+              try? await Task.sleep(for: .seconds(2.5))
+            }
+          }
+          .task(id: buzzerActive) {
+            // Revolving police lights animation
+            guard buzzerActive else { return }
+            while buzzerActive {
+              withAnimation(.linear(duration: 1.2)) {
+                policeRotation += 360
+              }
+              try? await Task.sleep(for: .seconds(1.2))
+            }
+          }
+          .task(id: buzzerActive) {
+            // Flashing police lights
+            guard buzzerActive else { return }
+            while buzzerActive {
+              withAnimation(.easeInOut(duration: 0.4)) {
+                policeLightsOn.toggle()
+              }
+              try? await Task.sleep(for: .seconds(0.4))
+            }
+          }
+
+          // Status text
+          Text(buzzerActive ? "Buzzer Active" : "Buzzer Inactive")
+            .font(.title2)
+            .bold()
+            .foregroundStyle(buzzerActive ? buzzerType.color : .secondary)
+
+          if buzzerActive {
+            Text("The vehicle buzzer is currently sounding")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .multilineTextAlignment(.center)
+          }
+        }
+        .frame(maxWidth: .infinity)
+        .listRowBackground(Color.clear)
+      }
+
+      // Buzzer type picker
+      if !buzzerActive {
+        Section {
+          Picker("Type", selection: $buzzerType) {
+            ForEach(BuzzerType.allCases, id: \.self) { type in
+              Text(type.displayName)
+                .tag(type)
+            }
+          }
+          .pickerStyle(.segmented)
+        } header: {
+          Text("Buzzer Type")
+        } footer: {
+          Text(buzzerTypeDescription)
+        }
+      }
+
+      // Control button
+      Section {
+        Button {
+          Haptics.impact()
+          Task {
+            await toggleBuzzer()
+          }
+        } label: {
+          HStack {
+            Spacer()
+            if isLoading {
+              ProgressView()
+                .tint(.white)
+            } else {
+              Image(systemName: buzzerActive ? "stop.fill" : "play.fill")
+              Text(buzzerActive ? "Stop Buzzer" : "Start Buzzer")
+                .bold()
+            }
+            Spacer()
+          }
+          .padding()
+          .foregroundStyle(.white)
+        }
+        .listRowBackground(buzzerActive ? Color.red : buzzerType.color)
+        .disabled(isLoading)
+      }
+
+      // Error message
+      if let errorMessage {
+        Section {
+          Label {
+            Text(errorMessage)
+              .foregroundStyle(.red)
+          } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+              .foregroundStyle(.red)
+          }
+        }
+      }
+
+      // Info section
+      Section {
+        Label {
+          VStack(alignment: .leading) {
+            Text("Remote Control")
+              .font(.headline)
+            Text(
+              "This will activate the buzzer on \(vehicleName). The buzzer will sound continuously until stopped."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          }
+        } icon: {
+          Image(systemName: "info.circle.fill")
+            .foregroundStyle(.blue)
+        }
+      }
+    }
+    .navigationTitle("Alert Control")
+    .navigationBarTitleDisplayMode(.inline)
+    .task {
+      // Use cached values if available, otherwise fetch fresh
+      if let initialActive = initialBuzzerActive,
+        let initialType = initialBuzzerType,
+        let type = BuzzerType(rawValue: initialType)
+      {
+        buzzerActive = initialActive
+        buzzerType = type
+      } else {
+        await fetchBuzzerState()
+      }
+    }
+  }
+
+  private var buzzerTypeDescription: String {
+    switch buzzerType {
+    case .alert:
+      return "Moderate urgency - 800Hz, 0.5s pattern"
+    case .emergency:
+      return "High urgency - 1200Hz, fast 0.3s pattern"
+    case .warning:
+      return "Low urgency - 600Hz, slow 0.7s pattern"
+    }
+  }
+
+  private func fetchBuzzerState() async {
+    do {
+      let response: [VehicleRealtime] = try await supabase.client
+        .from("vehicle_realtime")
+        .select()
+        .eq("vehicle_id", value: vehicleId)
+        .execute()
+        .value
+
+      if let data = response.first {
+        buzzerActive = data.buzzerActive ?? false
+        if let typeString = data.buzzerType,
+          let type = BuzzerType(rawValue: typeString)
+        {
+          buzzerType = type
+        }
+      }
+    } catch {
+      errorMessage = "Failed to fetch buzzer state: \(error.localizedDescription)"
+    }
+  }
+
+  private func toggleBuzzer() async {
+    isLoading = true
+    errorMessage = nil
+
+    do {
+      if buzzerActive {
+        // Deactivate buzzer
+        struct DeactivateResponse: Codable {
+          let success: Bool
+        }
+
+        let _: DeactivateResponse = try await supabase.client.rpc(
+          "deactivate_vehicle_buzzer",
+          params: ["p_vehicle_id": vehicleId]
+        ).execute().value
+
+        buzzerActive = false
+        Haptics.notification(.success)
+      } else {
+        // Activate buzzer
+        struct ActivateResponse: Codable {
+          let success: Bool
+        }
+
+        let _: ActivateResponse = try await supabase.client.rpc(
+          "activate_vehicle_buzzer",
+          params: [
+            "p_vehicle_id": vehicleId,
+            "p_buzzer_type": buzzerType.rawValue,
+          ]
+        ).execute().value
+
+        buzzerActive = true
+        Haptics.notification(.warning)
+      }
+    } catch {
+      errorMessage =
+        "Failed to \(buzzerActive ? "stop" : "start") buzzer: \(error.localizedDescription)"
+      Haptics.notification(.error)
+    }
+
+    isLoading = false
+  }
+}
+
+#Preview("Alert Control") {
+  NavigationStack {
+    VehicleAlertControlView(
+      vehicleId: "test-vehicle",
+      vehicleName: "Test Vehicle",
+      initialBuzzerActive: nil,
+      initialBuzzerType: nil
     )
   }
 }

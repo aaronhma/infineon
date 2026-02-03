@@ -23,6 +23,10 @@ class BuzzerController:
         self.last_drowsy_alert = 0
         self.alert_cooldown = 3.0  # 3 seconds between alerts
 
+        # Continuous buzzer control (for remote activation)
+        self.continuous_active = False
+        self.continuous_thread = None
+
     def start(self):
         """Initialize the buzzer hardware"""
         try:
@@ -39,6 +43,9 @@ class BuzzerController:
 
     def stop(self):
         """Clean up GPIO resources"""
+        # Stop continuous buzzer if running
+        self.stop_continuous()
+
         with self._lock:
             if self.pwm:
                 self.pwm.stop()
@@ -98,6 +105,90 @@ class BuzzerController:
             self._play_tone(frequency=600, duration=0.5)
             print("[BUZZER] Distraction alert played")
             self.last_drowsy_alert = current_time
+
+    def _continuous_buzzer_loop(self, buzzer_type):
+        """Background thread to play continuous buzzer pattern
+
+        Args:
+            buzzer_type: 'alert', 'emergency', or 'warning'
+        """
+        # Define patterns for different types
+        patterns = {
+            'alert': (800, 0.5, 0.5),      # 800Hz, 0.5s on, 0.5s off
+            'emergency': (1200, 0.3, 0.3),  # 1200Hz, 0.3s on, 0.3s off (faster)
+            'warning': (600, 0.7, 0.7),     # 600Hz, 0.7s on, 0.7s off (slower)
+        }
+
+        frequency, duration_on, duration_off = patterns.get(buzzer_type, patterns['alert'])
+
+        print(f"[BUZZER] Starting continuous {buzzer_type} buzzer ({frequency}Hz)")
+
+        while self.continuous_active:
+            # Play tone
+            if self.use_fake:
+                print(f"[BUZZER SIMULATED] Continuous {buzzer_type} beep")
+            else:
+                try:
+                    with self._lock:
+                        if not self.continuous_active:
+                            break
+                        self.pwm = self.gpio.PWM(self.pin, frequency)
+                        self.pwm.start(50)
+
+                    # Sleep for duration_on
+                    time.sleep(duration_on)
+
+                    with self._lock:
+                        if self.pwm:
+                            self.pwm.stop()
+                            self.pwm = None
+                except Exception as e:
+                    print(f"[BUZZER] Error in continuous loop: {e}")
+                    break
+
+            # Silent period
+            if not self.continuous_active:
+                break
+            time.sleep(duration_off)
+
+        print(f"[BUZZER] Stopped continuous {buzzer_type} buzzer")
+
+    def start_continuous(self, buzzer_type='alert'):
+        """Start continuous buzzer (for remote activation)
+
+        Args:
+            buzzer_type: 'alert', 'emergency', or 'warning'
+        """
+        if self.continuous_active:
+            print("[BUZZER] Continuous buzzer already active")
+            return
+
+        self.continuous_active = True
+        self.continuous_thread = threading.Thread(
+            target=self._continuous_buzzer_loop,
+            args=(buzzer_type,),
+            daemon=True
+        )
+        self.continuous_thread.start()
+        print(f"[BUZZER] Remote continuous buzzer activated ({buzzer_type})")
+
+    def stop_continuous(self):
+        """Stop continuous buzzer"""
+        if not self.continuous_active:
+            return
+
+        self.continuous_active = False
+        if self.continuous_thread:
+            self.continuous_thread.join(timeout=2)
+            self.continuous_thread = None
+
+        # Ensure PWM is stopped
+        with self._lock:
+            if self.pwm:
+                self.pwm.stop()
+                self.pwm = None
+
+        print("[BUZZER] Remote continuous buzzer deactivated")
 
     @property
     def is_fake(self):

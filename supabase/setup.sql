@@ -83,7 +83,12 @@ CREATE TABLE IF NOT EXISTS public.vehicle_realtime (
 
     -- Driver status (from face detection)
     driver_status TEXT DEFAULT 'unknown', -- 'alert', 'drowsy', 'impaired', 'unknown'
-    intoxication_score INTEGER DEFAULT 0
+    intoxication_score INTEGER DEFAULT 0,
+
+    -- Remote buzzer control (controlled from iOS app)
+    buzzer_active BOOLEAN DEFAULT FALSE,
+    buzzer_type TEXT DEFAULT 'alert', -- 'alert', 'emergency', 'warning'
+    buzzer_updated_at TIMESTAMPTZ
 );
 
 -- Create indexes for vehicle tables
@@ -252,6 +257,22 @@ CREATE POLICY "vehicle_realtime_service_role_all" ON public.vehicle_realtime
 CREATE POLICY "vehicle_realtime_select_with_access" ON public.vehicle_realtime
     FOR SELECT TO authenticated
     USING (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    );
+
+-- Authenticated users can UPDATE buzzer control for vehicles they have access to
+CREATE POLICY "vehicle_realtime_update_buzzer_with_access" ON public.vehicle_realtime
+    FOR UPDATE TO authenticated
+    USING (
+        vehicle_id IN (
+            SELECT vehicle_id FROM public.vehicle_access
+            WHERE user_id = auth.uid()
+        )
+    )
+    WITH CHECK (
         vehicle_id IN (
             SELECT vehicle_id FROM public.vehicle_access
             WHERE user_id = auth.uid()
@@ -552,3 +573,76 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION public.find_or_create_face_cluster(TEXT, vector(128), FLOAT) TO service_role;
 GRANT EXECUTE ON FUNCTION public.get_unidentified_face_clusters(TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.assign_profile_to_cluster(UUID, UUID) TO authenticated;
+
+-- ============================================
+-- REMOTE BUZZER CONTROL FUNCTIONS
+-- ============================================
+
+-- Function to activate buzzer remotely
+CREATE OR REPLACE FUNCTION public.activate_vehicle_buzzer(
+    p_vehicle_id TEXT,
+    p_buzzer_type TEXT DEFAULT 'alert'
+)
+RETURNS JSONB AS $$
+DECLARE
+    v_has_access BOOLEAN;
+BEGIN
+    -- Check if user has access to this vehicle
+    SELECT EXISTS (
+        SELECT 1 FROM public.vehicle_access
+        WHERE user_id = auth.uid() AND vehicle_id = p_vehicle_id
+    ) INTO v_has_access;
+
+    IF NOT v_has_access THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Access denied');
+    END IF;
+
+    -- Activate buzzer
+    UPDATE public.vehicle_realtime
+    SET
+        buzzer_active = TRUE,
+        buzzer_type = p_buzzer_type,
+        buzzer_updated_at = NOW()
+    WHERE vehicle_id = p_vehicle_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'vehicle_id', p_vehicle_id,
+        'buzzer_type', p_buzzer_type
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function to deactivate buzzer remotely
+CREATE OR REPLACE FUNCTION public.deactivate_vehicle_buzzer(p_vehicle_id TEXT)
+RETURNS JSONB AS $$
+DECLARE
+    v_has_access BOOLEAN;
+BEGIN
+    -- Check if user has access to this vehicle
+    SELECT EXISTS (
+        SELECT 1 FROM public.vehicle_access
+        WHERE user_id = auth.uid() AND vehicle_id = p_vehicle_id
+    ) INTO v_has_access;
+
+    IF NOT v_has_access THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Access denied');
+    END IF;
+
+    -- Deactivate buzzer
+    UPDATE public.vehicle_realtime
+    SET
+        buzzer_active = FALSE,
+        buzzer_updated_at = NOW()
+    WHERE vehicle_id = p_vehicle_id;
+
+    RETURN jsonb_build_object(
+        'success', true,
+        'vehicle_id', p_vehicle_id
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute permissions to authenticated users
+GRANT EXECUTE ON FUNCTION public.activate_vehicle_buzzer(TEXT, TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.deactivate_vehicle_buzzer(TEXT) TO authenticated;

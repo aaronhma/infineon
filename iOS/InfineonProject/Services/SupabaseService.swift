@@ -64,6 +64,10 @@ struct VehicleRealtime: Codable, Identifiable {
   // Distraction detection
   let isPhoneDetected: Bool?
   let isDrinkingDetected: Bool?
+  // Remote buzzer control
+  let buzzerActive: Bool?
+  let buzzerType: String?
+  let buzzerUpdatedAt: Date?
 
   enum CodingKeys: String, CodingKey {
     case vehicleId = "vehicle_id"
@@ -80,6 +84,9 @@ struct VehicleRealtime: Codable, Identifiable {
     case satellites
     case isPhoneDetected = "is_phone_detected"
     case isDrinkingDetected = "is_drinking_detected"
+    case buzzerActive = "buzzer_active"
+    case buzzerType = "buzzer_type"
+    case buzzerUpdatedAt = "buzzer_updated_at"
   }
 
   init(
@@ -97,7 +104,10 @@ struct VehicleRealtime: Codable, Identifiable {
     intoxicationScore: Int,
     satellites: Int?,
     isPhoneDetected: Bool?,
-    isDrinkingDetected: Bool?
+    isDrinkingDetected: Bool?,
+    buzzerActive: Bool? = nil,
+    buzzerType: String? = nil,
+    buzzerUpdatedAt: Date? = nil
   ) {
     self.vehicleId = vehicleId
     self.updatedAt = updatedAt
@@ -114,6 +124,9 @@ struct VehicleRealtime: Codable, Identifiable {
     self.satellites = satellites
     self.isPhoneDetected = isPhoneDetected
     self.isDrinkingDetected = isDrinkingDetected
+    self.buzzerActive = buzzerActive
+    self.buzzerType = buzzerType
+    self.buzzerUpdatedAt = buzzerUpdatedAt
   }
 }
 
