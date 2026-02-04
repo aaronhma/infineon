@@ -5,7 +5,7 @@ scipy
 pygame
 supabase
 python-dotenv
-face_recognition  # For face embeddings and clustering similar faces
-dlib  # Required by face_recognition
+# face_recognition  # For face embeddings and clustering similar faces - temporarily disabled due to dlib issues
+# dlib  # Required by face_recognition - temporarily disabled due to compilation issues
 ultralytics # yolo model
 pynmea2 # gps

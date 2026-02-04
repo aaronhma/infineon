@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 PST = timezone(timedelta(hours=-8))
 
 import cv2
-import face_recognition
+# import face_recognition  # Temporarily disabled due to dlib issues
 import mediapipe as mp
 import numpy as np
 import pygame
@@ -183,41 +183,44 @@ class SupabaseUploader:
         Returns:
             List of 128 floats representing the face embedding, or None if no face found
         """
-        try:
-            # Convert BGR to RGB (face_recognition expects RGB)
-            rgb_image = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
+        # Temporarily disabled due to dlib compilation issues
+        return None
 
-            # Get face encodings (128-dimensional embedding)
-            # We use the 'large' model for better accuracy
-            encodings = face_recognition.face_encodings(
-                rgb_image,
-                known_face_locations=None,  # Let it detect the face
-                num_jitters=1,  # Slightly re-sample face for better accuracy
-                model="large",
-            )
+        # try:
+        #     # Convert BGR to RGB (face_recognition expects RGB)
+        #     rgb_image = cv2.cvtColor(face_image, cv2.COLOR_BGR2RGB)
 
-            if encodings:
-                # Return the first face encoding as a list
-                return encodings[0].tolist()
-            else:
-                # No face detected by face_recognition
-                # Try with the full image assuming it's already cropped to a face
-                # Use a face location covering the whole image
-                h, w = rgb_image.shape[:2]
-                face_location = [(0, w, h, 0)]  # top, right, bottom, left
-                encodings = face_recognition.face_encodings(
-                    rgb_image,
-                    known_face_locations=face_location,
-                    num_jitters=1,
-                    model="large",
-                )
-                if encodings:
-                    return encodings[0].tolist()
+        #     # Get face encodings (128-dimensional embedding)
+        #     # We use the 'large' model for better accuracy
+        #     encodings = face_recognition.face_encodings(
+        #         rgb_image,
+        #         known_face_locations=None,  # Let it detect the face
+        #         num_jitters=1,  # Slightly re-sample face for better accuracy
+        #         model="large",
+        #     )
 
-            return None
-        except Exception as e:
-            print(f"Error generating face embedding: {e}")
-            return None
+        #     if encodings:
+        #         # Return the first face encoding as a list
+        #         return encodings[0].tolist()
+        #     else:
+        #         # No face detected by face_recognition
+        #         # Try with the full image assuming it's already cropped to a face
+        #         # Use a face location covering the whole image
+        #         h, w = rgb_image.shape[:2]
+        #         face_location = [(0, w, h, 0)]  # top, right, bottom, left
+        #         encodings = face_recognition.face_encodings(
+        #             rgb_image,
+        #             known_face_locations=face_location,
+        #             num_jitters=1,
+        #             model="large",
+        #         )
+        #         if encodings:
+        #             return encodings[0].tolist()
+
+        #     return None
+        # except Exception as e:
+        #     print(f"Error generating face embedding: {e}")
+        #     return None
 
     def find_or_create_cluster(self, embedding: list) -> str | None:
         """Find a matching face cluster or create a new one.
