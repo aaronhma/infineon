@@ -2,7 +2,7 @@
 """
 Test script for verifying individual modules and system components
 Run with: python test.py [module_name]
-Available tests: all, gps, buzzer, supabase, camera, yolo, mediapipe, env
+Available tests: all, gps, buzzer, supabase, camera, yolo, mediapipe, speed_limit, env
 """
 
 import argparse
@@ -273,6 +273,48 @@ def test_mediapipe():
         return False
 
 
+def test_speed_limit():
+    """Test speed limit checker"""
+    print("\n=== Testing Speed Limit Checker ===")
+    try:
+        from speed_limit import SpeedLimitChecker
+
+        print("✓ Speed limit module imported successfully")
+
+        checker = SpeedLimitChecker(search_radius=50)
+        print("✓ Speed limit checker initialized")
+
+        # Test with known location (San Francisco)
+        test_lat = 37.7749
+        test_lon = -122.4194
+        print(f"Testing with coordinates: ({test_lat}, {test_lon})")
+
+        speed_limit = checker.get_speed_limit(test_lat, test_lon)
+
+        if speed_limit is not None:
+            print(f"✓ Speed limit found: {speed_limit} MPH")
+        else:
+            print("⚠ Speed limit not found (may be unavailable for this location)")
+
+        # Test with detailed info
+        speed_limit, road_info = checker.get_speed_limit_with_details(test_lat, test_lon)
+
+        if road_info:
+            print(f"✓ Road details retrieved:")
+            print(f"  Name: {road_info.get('name', 'N/A')}")
+            print(f"  Type: {road_info.get('highway_type', 'N/A')}")
+            print(f"  Speed: {speed_limit if speed_limit else 'N/A'} MPH")
+        else:
+            print("⚠ Road details not available for this location")
+
+        print("✓ Speed limit checker functioning correctly")
+        return True
+
+    except Exception as e:
+        print(f"✗ Speed limit test failed: {e}")
+        return False
+
+
 def run_all_tests():
     """Run all available tests"""
     print("=" * 60)
@@ -287,6 +329,7 @@ def run_all_tests():
         ("Camera", test_camera),
         ("YOLO", test_yolo),
         ("MediaPipe", test_mediapipe),
+        ("Speed Limit", test_speed_limit),
     ]
 
     results = {}
@@ -319,7 +362,7 @@ def main():
         "module",
         nargs="?",
         default="all",
-        choices=["all", "env", "gps", "buzzer", "supabase", "camera", "yolo", "mediapipe"],
+        choices=["all", "env", "gps", "buzzer", "supabase", "camera", "yolo", "mediapipe", "speed_limit"],
         help="Module to test (default: all)",
     )
     args = parser.parse_args()
@@ -333,6 +376,7 @@ def main():
         "camera": test_camera,
         "yolo": test_yolo,
         "mediapipe": test_mediapipe,
+        "speed_limit": test_speed_limit,
     }
 
     success = test_map[args.module]()

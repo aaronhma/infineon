@@ -8,5 +8,6 @@ insightface  # For face embeddings and clustering similar faces (no dlib depende
 onnxruntime  # Required by insightface for model inference
 ultralytics # yolo model
 pynmea2 # gps
+requests  # For speed limit API calls
 # RPi.GPIO
 pyserial

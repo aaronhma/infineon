@@ -22,6 +22,7 @@ from ultralytics import YOLO
 
 from buzzer import BuzzerController
 from gps import GPSReader
+from speed_limit import SpeedLimitChecker
 
 # Load environment variables from .env file
 load_dotenv()
@@ -915,10 +916,11 @@ class Settings:
 
 
 class DrivingSimulator:
-    def __init__(self, gps_reader: GPSReader = None):
+    def __init__(self, gps_reader: GPSReader = None, speed_limit_checker: SpeedLimitChecker = None):
         self.gps = gps_reader
+        self.speed_limit_checker = speed_limit_checker
         self.speed = 45.0  # Start at 45 MPH (used for simulation mode)
-        self.speed_limit = 65  # Speed limit
+        self.speed_limit = 65  # Default speed limit (will be updated from GPS)
         self.min_speed = 0
         self.max_speed = 100
         self.direction = "forward"
@@ -935,9 +937,51 @@ class DrivingSimulator:
         self._latitude = GPSReader.APPLE_PARK_LAT if gps_reader else 37.3349
         self._longitude = GPSReader.APPLE_PARK_LON if gps_reader else -122.0090
 
+        # Speed limit update tracking
+        self.last_speed_limit_update = 0
+        self.speed_limit_update_interval = 30.0  # Update every 30 seconds
+        self.speed_limit_fetching = False
+
+    def update_speed_limit(self):
+        """Update speed limit from GPS coordinates (called periodically)"""
+        if not self.speed_limit_checker:
+            return
+
+        current_time = time.time()
+        if current_time - self.last_speed_limit_update < self.speed_limit_update_interval:
+            return
+
+        if self.speed_limit_fetching:
+            return  # Already fetching
+
+        self.speed_limit_fetching = True
+        self.last_speed_limit_update = current_time
+
+        try:
+            # Get current coordinates
+            lat = self.get_latitude()
+            lon = self.get_longitude()
+
+            # Fetch speed limit from API
+            fetched_limit = self.speed_limit_checker.get_speed_limit(lat, lon)
+
+            if fetched_limit is not None:
+                self.speed_limit = fetched_limit
+                print(f"Speed limit updated: {self.speed_limit} MPH (from GPS location)")
+            else:
+                print("Speed limit not available for current location, using default")
+
+        except Exception as e:
+            print(f"Error fetching speed limit: {e}")
+        finally:
+            self.speed_limit_fetching = False
+
     def update_speed(self):
         """Update speed - from GPS if available, otherwise simulate"""
         self.update_counter += 1
+
+        # Update speed limit periodically
+        self.update_speed_limit()
 
         if self.gps and not self.gps.is_fake:
             # Use real GPS data
@@ -1062,6 +1106,10 @@ class DrivingSimulator:
     def is_using_gps(self):
         """Check if using real GPS data"""
         return self.gps is not None and not self.gps.is_fake
+
+    def get_speed_limit(self):
+        """Get current speed limit"""
+        return self.speed_limit
 
 
 class FaceAnalyzer:
@@ -1532,10 +1580,11 @@ def draw_driving_info(frame, driving_sim, buzzer=None):
     )
     y_offset += 25
 
-    # Speed limit
+    # Speed limit (dynamic from GPS location)
+    speed_limit = driving_sim.get_speed_limit()
     cv2.putText(
         frame,
-        "Limit: 65 MPH",
+        f"Limit: {speed_limit} MPH",
         (x_pos + 10, y_offset),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -1672,6 +1721,7 @@ def main():
     print("- Drinking detection (YOLO)")
     print("- Camera zoom control (0.5x - 10x)")
     print("- GPS tracking (real or simulated)")
+    print("- Dynamic speed limit from GPS location (OpenStreetMap)")
     print("- Warning sound alerts for speeding and drowsiness")
     print("- Supabase cloud sync with real-time vehicle tracking")
     print("\nGPS Data:")
@@ -1697,7 +1747,8 @@ def main():
     analyzer = FaceAnalyzer()
     distraction_detector = DistractionDetector()  # YOLO-based phone/drinking detection
     settings = Settings()
-    driving_sim = DrivingSimulator(gps_reader=gps_reader)
+    speed_limit_checker = SpeedLimitChecker(search_radius=50)  # Check within 50m radius
+    driving_sim = DrivingSimulator(gps_reader=gps_reader, speed_limit_checker=speed_limit_checker)
     buzzer = BuzzerController()
     buzzer.start()
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
