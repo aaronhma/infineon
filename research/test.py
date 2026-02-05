@@ -201,6 +201,13 @@ def test_camera():
 def test_yolo():
     """Test YOLO model loading"""
     print("\n=== Testing YOLO Model ===")
+
+    # Check if YOLO is enabled
+    enable_yolo = os.environ.get("ENABLE_YOLO", "true").lower() in ("true", "1", "yes")
+    if not enable_yolo:
+        print("⚠ YOLO disabled via ENABLE_YOLO environment variable - skipping test")
+        return True
+
     try:
         from ultralytics import YOLO
 

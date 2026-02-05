@@ -18,14 +18,27 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from scipy.spatial import distance
 from supabase import Client, create_client
-from ultralytics import YOLO
-
 from buzzer import BuzzerController
 from gps import GPSReader
 from speed_limit import SpeedLimitChecker
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Check if YOLO should be enabled (defaults to True)
+ENABLE_YOLO = os.environ.get("ENABLE_YOLO", "true").lower() in ("true", "1", "yes")
+
+# Conditionally import YOLO
+if ENABLE_YOLO:
+    try:
+        from ultralytics import YOLO
+        print("YOLO model enabled")
+    except ImportError as e:
+        print(f"Warning: Could not import YOLO: {e}")
+        print("Disabling YOLO detection")
+        ENABLE_YOLO = False
+else:
+    print("YOLO model disabled via ENABLE_YOLO environment variable")
 
 
 class SupabaseUploader:
@@ -691,16 +704,24 @@ class DistractionDetector:
     BOTTLE = 39
     CUP = 41
 
-    def __init__(self, model_path="yolov8m.pt"):
+    def __init__(self, model_path="yolov8m.pt", enabled=True):
         """Initialize YOLO model for object detection
 
         Args:
             model_path: Path to YOLO model weights. Use 'yolov8n.pt' for nano (fast),
                        'yolov8s.pt' for small, 'yolov8m.pt' for medium accuracy.
+            enabled: Whether YOLO detection is enabled (requires YOLO module)
         """
-        print(f"Loading YOLO model: {model_path}")
-        self.model = YOLO(model_path)
-        self.confidence_threshold = 0.25  # Lower threshold for better detection
+        self.enabled = enabled
+
+        if self.enabled:
+            print(f"Loading YOLO model: {model_path}")
+            self.model = YOLO(model_path)
+            self.confidence_threshold = 0.25  # Lower threshold for better detection
+            print("YOLO model loaded successfully")
+        else:
+            print("YOLO detection disabled - distraction detection unavailable")
+            self.model = None
 
         # Detection state
         self.phone_detected = False
@@ -712,8 +733,6 @@ class DistractionDetector:
         self.phone_frames = 0
         self.drinking_frames = 0
         self.detection_threshold = 2  # Frames needed to confirm detection
-
-        print("YOLO model loaded successfully")
 
     def _boxes_overlap(self, box1, box2, overlap_threshold=0.1):
         """Check if two bounding boxes overlap significantly"""
@@ -779,6 +798,17 @@ class DistractionDetector:
         Returns:
             dict with detection results
         """
+        # Return empty results if YOLO is disabled
+        if not self.enabled or self.model is None:
+            return {
+                "phone_detected": False,
+                "drinking_detected": False,
+                "phone_bbox": None,
+                "bottle_bbox": None,
+                "phone_frames": 0,
+                "drinking_frames": 0,
+            }
+
         # Run YOLO inference
         results = self.model(frame, verbose=False, conf=self.confidence_threshold)
 
@@ -1717,8 +1747,12 @@ def main():
     print("- Face detection with bounding boxes")
     print("- Real-time eye state detection (Open/Closed)")
     print("- Intoxication risk assessment")
-    print("- Phone usage detection (YOLO)")
-    print("- Drinking detection (YOLO)")
+    if ENABLE_YOLO:
+        print("- Phone usage detection (YOLO)")
+        print("- Drinking detection (YOLO)")
+    else:
+        print("- Phone usage detection (DISABLED)")
+        print("- Drinking detection (DISABLED)")
     print("- Camera zoom control (0.5x - 10x)")
     print("- GPS tracking (real or simulated)")
     print("- Dynamic speed limit from GPS location (OpenStreetMap)")
@@ -1728,9 +1762,10 @@ def main():
     print("- Satellites, Speed (mph), Direction (e.g., 342NW)")
     print("- Latitude, Longitude")
     print("- Falls back to Apple Park coordinates if GPS unavailable")
-    print("\nDistraction Detection:")
-    print("- Phone usage near face")
-    print("- Drinking from bottle/cup")
+    if ENABLE_YOLO:
+        print("\nDistraction Detection:")
+        print("- Phone usage near face")
+        print("- Drinking from bottle/cup")
     print("\nIntoxication Indicators:")
     print("- Drowsiness (prolonged eye closure)")
     print("- Excessive blinking patterns")
@@ -1745,7 +1780,7 @@ def main():
     print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
 
     analyzer = FaceAnalyzer()
-    distraction_detector = DistractionDetector()  # YOLO-based phone/drinking detection
+    distraction_detector = DistractionDetector(enabled=ENABLE_YOLO)  # YOLO-based phone/drinking detection
     settings = Settings()
     speed_limit_checker = SpeedLimitChecker(search_radius=50)  # Check within 50m radius
     driving_sim = DrivingSimulator(gps_reader=gps_reader, speed_limit_checker=speed_limit_checker)
