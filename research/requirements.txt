@@ -4,7 +4,9 @@ numpy
 scipy
 supabase
 python-dotenv
-# face_recognition  # For face embeddings and clustering similar faces - temporarily disabled due to dlib issues
-# dlib  # Required by face_recognition - temporarily disabled due to compilation issues
+insightface  # For face embeddings and clustering similar faces (no dlib dependency)
+onnxruntime  # Required by insightface for model inference
 ultralytics # yolo model
 pynmea2 # gps
+# RPi.GPIO
+pyserial
