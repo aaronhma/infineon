@@ -9,10 +9,10 @@ from datetime import datetime, timedelta, timezone
 PST = timezone(timedelta(hours=-8))
 
 import cv2
+
 # import face_recognition  # Temporarily disabled due to dlib issues
 import mediapipe as mp
 import numpy as np
-import pygame
 from dotenv import load_dotenv
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -1203,11 +1203,7 @@ class FaceAnalyzer:
                 left_eye_state = "CLOSED" if left_ear < self.EAR_THRESHOLD else "OPEN"
                 right_eye_state = "CLOSED" if right_ear < self.EAR_THRESHOLD else "OPEN"
 
-                # Draw eye landmarks
-                for point in left_eye:
-                    cv2.circle(frame, point, 2, (255, 0, 0), -1)
-                for point in right_eye:
-                    cv2.circle(frame, point, 2, (255, 0, 0), -1)
+                # Note: Eye landmark circles removed for performance
 
                 # Detect intoxication
                 intox_data = self.detect_intoxication(left_ear, right_ear)
@@ -1326,10 +1322,8 @@ def draw_distraction_warning(frame, distraction_data):
     h, w = frame.shape[:2]
 
     if distraction_data["phone_detected"]:
-        # Red banner for phone usage
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, h - 80), (w, h), (0, 0, 180), -1)
-        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        # Red banner for phone usage - use direct rectangle with reduced opacity
+        cv2.rectangle(frame, (0, h - 80), (w, h), (0, 0, 128), -1)
 
         cv2.putText(
             frame,
@@ -1351,10 +1345,8 @@ def draw_distraction_warning(frame, distraction_data):
         )
 
     elif distraction_data["drinking_detected"]:
-        # Orange banner for drinking
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (0, h - 60), (w, h), (0, 100, 180), -1)
-        frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+        # Orange banner for drinking - use direct rectangle
+        cv2.rectangle(frame, (0, h - 60), (w, h), (0, 80, 128), -1)
 
         cv2.putText(
             frame,
@@ -1397,16 +1389,10 @@ def draw_settings_overlay(frame, settings):
     """Draw settings menu overlay on frame"""
     h, w = frame.shape[:2]
 
-    # Create semi-transparent overlay
-    overlay = frame.copy()
-
     if settings.show_settings:
-        # Draw settings panel background (larger to fit speed controls)
-        cv2.rectangle(overlay, (20, 20), (450, 480), (40, 40, 40), -1)
-        cv2.rectangle(overlay, (20, 20), (450, 480), (0, 255, 0), 2)
-
-        # Add transparency
-        frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
+        # Draw settings panel background directly - no overlay blending
+        cv2.rectangle(frame, (20, 20), (450, 480), (40, 40, 40), -1)
+        cv2.rectangle(frame, (20, 20), (450, 480), (0, 255, 0), 2)
 
         # Draw title
         cv2.putText(
@@ -1446,167 +1432,49 @@ def draw_settings_overlay(frame, settings):
         )
         y_offset += 25
 
-        # Keyboard shortcuts
-        cv2.putText(
-            frame,
-            "'+' or '=' : Zoom In",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 25
-        cv2.putText(
-            frame,
-            "'-' or '_' : Zoom Out",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 25
-        cv2.putText(
-            frame,
-            "'r'        : Reset to 1x",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 35
-
-        # Quick zoom levels
-        cv2.putText(
-            frame,
-            "QUICK ZOOM LEVELS",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            2,
-        )
-        y_offset += 30
-
-        quick_zooms = [
-            ("'1' : 1.0x", "'2' : 2.0x"),
-            ("'3' : 3.0x", "'4' : 4.0x"),
-            ("'5' : 5.0x", "'0' : 10.0x"),
+        # Combine keyboard shortcuts into fewer text calls
+        shortcuts = [
+            "'+/-' : Zoom In/Out",
+            "'r'  : Reset zoom",
+            "'1-5': Quick zoom",
         ]
 
-        for left, right in quick_zooms:
-            cv2.putText(
-                frame,
-                left,
-                (30, y_offset),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (200, 200, 200),
-                1,
-            )
-            cv2.putText(
-                frame,
-                right,
-                (230, y_offset),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (200, 200, 200),
-                1,
-            )
+        for text in shortcuts:
+            cv2.putText(frame, text, (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
             y_offset += 25
 
         y_offset += 10
         cv2.line(frame, (30, y_offset), (440, y_offset), (0, 255, 0), 1)
         y_offset += 25
 
-        # Speed test controls
-        cv2.putText(
-            frame,
-            "SPEED TEST CONTROLS",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            2,
-        )
+        # Speed test controls (simplified)
+        cv2.putText(frame, "SPEED TEST", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         y_offset += 30
 
-        cv2.putText(
-            frame,
-            "'X'       : Simulate Speeding (75 MPH)",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 25
-        cv2.putText(
-            frame,
-            "'C'       : Reset Speed (45 MPH)",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 25
-        cv2.putText(
-            frame,
-            "UP Arrow  : +10 MPH",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 25
-        cv2.putText(
-            frame,
-            "DOWN Arrow: -10 MPH",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
+        speed_controls = [
+            "'X' : Speeding (75 MPH)",
+            "'C' : Reset (45 MPH)",
+            "Arrows: +/- 10 MPH",
+        ]
 
-        y_offset += 35
+        for text in speed_controls:
+            cv2.putText(frame, text, (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            y_offset += 25
+
+        y_offset += 10
         cv2.line(frame, (30, y_offset), (440, y_offset), (0, 255, 0), 1)
         y_offset += 25
 
-        # Other controls
-        cv2.putText(
-            frame,
-            "'s' : Toggle Settings Menu",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 25
-        cv2.putText(
-            frame,
-            "'h' : Toggle Help Overlay",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-        y_offset += 25
-        cv2.putText(
-            frame,
-            "'q' : Quit Application",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
+        # Other controls (simplified)
+        other_controls = [
+            "'s' : Settings",
+            "'h' : Help",
+            "'q' : Quit",
+        ]
+
+        for text in other_controls:
+            cv2.putText(frame, text, (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            y_offset += 25
 
     # Always show zoom indicator and help hint
     if settings.show_help:
@@ -1633,339 +1501,134 @@ def draw_settings_overlay(frame, settings):
 
 
 def draw_driving_info(frame, driving_sim, buzzer=None):
-    """Draw driving speed and speed limit information"""
+    """Draw driving speed and speed limit information (text-based for performance)"""
     h, w = frame.shape[:2]
 
     # Position for driving info (top-left area)
     x_pos = 20
     y_pos = 20
 
-    # Draw semi-transparent background for driving info (expanded for GPS info)
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x_pos, y_pos), (x_pos + 400, y_pos + 250), (30, 30, 30), -1)
-    cv2.rectangle(
-        overlay, (x_pos, y_pos), (x_pos + 400, y_pos + 250), (255, 255, 255), 2
-    )
-    frame = cv2.addWeighted(overlay, 0.7, frame, 0.3, 0)
+    # Calculate required height based on content
+    info_height = 180
+    info_width = 300
 
-    # Draw current speed
-    y_offset = y_pos + 35
-    cv2.putText(
-        frame,
-        "CURRENT SPEED",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (255, 255, 255),
-        1,
-    )
+    # Draw semi-transparent background
+    cv2.rectangle(frame, (x_pos, y_pos), (x_pos + info_width, y_pos + info_height), (30, 30, 30), -1)
+    cv2.rectangle(frame, (x_pos, y_pos), (x_pos + info_width, y_pos + info_height), (255, 255, 255), 2)
 
-    y_offset += 45
+    y_offset = y_pos + 25
+
+    # Current speed
     speed = driving_sim.get_speed()
     speed_color = driving_sim.get_speed_status()
-
-    # Large speed display
     cv2.putText(
         frame,
-        f"{speed}",
-        (x_pos + 30, y_offset),
-        cv2.FONT_HERSHEY_DUPLEX,
-        2.0,
-        speed_color,
-        3,
-    )
-    cv2.putText(
-        frame,
-        "MPH",
-        (x_pos + 180, y_offset - 5),
+        f"Speed: {speed} MPH",
+        (x_pos + 10, y_offset),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
+        0.6,
         speed_color,
         2,
     )
+    y_offset += 25
 
-    # Direction indicator
-    y_offset += 30
-    direction_text = f"Status: {driving_sim.direction.upper()}"
+    # Speed limit
     cv2.putText(
         frame,
-        direction_text,
+        "Limit: 65 MPH",
         (x_pos + 10, y_offset),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
+        0.5,
         (200, 200, 200),
         1,
     )
-
-    # Compass visualization
-    y_offset += 30
-    compass_center_x = x_pos + 240
-    compass_center_y = y_offset + 35
-    compass_radius = 45
-
-    # Draw compass circle (dark background)
-    cv2.circle(
-        frame, (compass_center_x, compass_center_y), compass_radius, (50, 50, 50), -1
-    )
-    cv2.circle(
-        frame, (compass_center_x, compass_center_y), compass_radius, (200, 200, 200), 2
-    )
-
-    # Draw cardinal direction markers
-    cardinal_positions = {"N": 0, "E": 90, "S": 180, "W": 270}
-
-    for direction, angle in cardinal_positions.items():
-        angle_rad = np.radians(angle - 90)  # -90 to start from top
-        # Outer point for direction label
-        label_x = int(compass_center_x + (compass_radius - 10) * np.cos(angle_rad))
-        label_y = int(compass_center_y + (compass_radius - 10) * np.sin(angle_rad))
-
-        # Color N in red, others in white
-        color = (0, 0, 255) if direction == "N" else (200, 200, 200)
-        cv2.putText(
-            frame,
-            direction,
-            (label_x - 5, label_y + 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            color,
-            2,
-        )
-
-    # Draw heading needle (points to current heading)
-    heading = driving_sim.heading
-    heading_rad = np.radians(heading - 90)  # -90 to start from top (North)
-
-    # Needle tip (pointing to heading direction)
-    needle_length = compass_radius - 15
-    needle_tip_x = int(compass_center_x + needle_length * np.cos(heading_rad))
-    needle_tip_y = int(compass_center_y + needle_length * np.sin(heading_rad))
-
-    # Needle base (opposite direction, smaller)
-    base_length = 10
-    needle_base_x = int(compass_center_x - base_length * np.cos(heading_rad))
-    needle_base_y = int(compass_center_y - base_length * np.sin(heading_rad))
-
-    # Draw red needle
-    cv2.line(
-        frame,
-        (needle_base_x, needle_base_y),
-        (needle_tip_x, needle_tip_y),
-        (0, 0, 255),
-        3,
-    )
-    # Draw needle tip arrow
-    cv2.circle(frame, (needle_tip_x, needle_tip_y), 4, (0, 0, 255), -1)
-
-    # Center dot
-    cv2.circle(frame, (compass_center_x, compass_center_y), 3, (255, 255, 255), -1)
-
-    # Display compass direction and heading below compass
-    compass_dir = driving_sim.get_compass_direction()
-    heading_degrees = driving_sim.get_heading()
-    cv2.putText(
-        frame,
-        f"{compass_dir} ({heading_degrees}°)",
-        (compass_center_x - 35, compass_center_y + compass_radius + 20),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (0, 255, 255),
-        2,
-    )
-
-    # Compass label
-    cv2.putText(
-        frame,
-        "HEADING",
-        (compass_center_x - 30, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (255, 255, 255),
-        1,
-    )
-
-    # Speed limit sign - Apple Maps style
-    y_offset += 110
-    cv2.line(
-        frame,
-        (x_pos + 10, y_offset - 10),
-        (x_pos + 180, y_offset - 10),
-        (150, 150, 150),
-        1,
-    )
-
-    # Draw Apple Maps style speed limit sign (white with black border)
-    sign_x = x_pos + 95
-    sign_y = y_offset + 15
-    sign_width = 70
-    sign_height = 80
-    corner_radius = 8
-
-    # Create rounded rectangle for sign background (white)
-    overlay_sign = frame.copy()
-
-    # Draw rounded rectangle (white background)
-    cv2.rectangle(
-        overlay_sign,
-        (sign_x, sign_y + corner_radius),
-        (sign_x + sign_width, sign_y + sign_height - corner_radius),
-        (255, 255, 255),
-        -1,
-    )
-    cv2.rectangle(
-        overlay_sign,
-        (sign_x + corner_radius, sign_y),
-        (sign_x + sign_width - corner_radius, sign_y + sign_height),
-        (255, 255, 255),
-        -1,
-    )
-
-    # Draw corners
-    cv2.circle(
-        overlay_sign,
-        (sign_x + corner_radius, sign_y + corner_radius),
-        corner_radius,
-        (255, 255, 255),
-        -1,
-    )
-    cv2.circle(
-        overlay_sign,
-        (sign_x + sign_width - corner_radius, sign_y + corner_radius),
-        corner_radius,
-        (255, 255, 255),
-        -1,
-    )
-    cv2.circle(
-        overlay_sign,
-        (sign_x + corner_radius, sign_y + sign_height - corner_radius),
-        corner_radius,
-        (255, 255, 255),
-        -1,
-    )
-    cv2.circle(
-        overlay_sign,
-        (sign_x + sign_width - corner_radius, sign_y + sign_height - corner_radius),
-        corner_radius,
-        (255, 255, 255),
-        -1,
-    )
-
-    # Blend for slight transparency
-    cv2.addWeighted(overlay_sign, 0.95, frame, 0.05, 0, frame)
-
-    # Draw black border
-    cv2.rectangle(
-        frame,
-        (sign_x, sign_y + corner_radius),
-        (sign_x + sign_width, sign_y + sign_height - corner_radius),
-        (0, 0, 0),
-        2,
-    )
-    cv2.rectangle(
-        frame,
-        (sign_x + corner_radius, sign_y),
-        (sign_x + sign_width - corner_radius, sign_y + sign_height),
-        (0, 0, 0),
-        2,
-    )
-
-    # Draw corner arcs for border
-    cv2.ellipse(
-        frame,
-        (sign_x + corner_radius, sign_y + corner_radius),
-        (corner_radius, corner_radius),
-        180,
-        0,
-        90,
-        (0, 0, 0),
-        2,
-    )
-    cv2.ellipse(
-        frame,
-        (sign_x + sign_width - corner_radius, sign_y + corner_radius),
-        (corner_radius, corner_radius),
-        270,
-        0,
-        90,
-        (0, 0, 0),
-        2,
-    )
-    cv2.ellipse(
-        frame,
-        (sign_x + corner_radius, sign_y + sign_height - corner_radius),
-        (corner_radius, corner_radius),
-        90,
-        0,
-        90,
-        (0, 0, 0),
-        2,
-    )
-    cv2.ellipse(
-        frame,
-        (sign_x + sign_width - corner_radius, sign_y + sign_height - corner_radius),
-        (corner_radius, corner_radius),
-        0,
-        0,
-        90,
-        (0, 0, 0),
-        2,
-    )
-
-    # Black text on white background
-    cv2.putText(
-        frame,
-        "SPEED",
-        (sign_x + 8, sign_y + 23),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (0, 0, 0),
-        2,
-    )
-    cv2.putText(
-        frame,
-        "LIMIT",
-        (sign_x + 8, sign_y + 41),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (0, 0, 0),
-        2,
-    )
-
-    # Large speed limit number
-    cv2.putText(
-        frame,
-        "65",
-        (sign_x + 15, sign_y + 70),
-        cv2.FONT_HERSHEY_DUPLEX,
-        1.2,
-        (0, 0, 0),
-        2,
-    )
+    y_offset += 25
 
     # Speeding warning
     if driving_sim.is_speeding():
-        warning_y = y_pos + 195
         cv2.putText(
             frame,
-            "SPEEDING!",
-            (x_pos + 80, warning_y),
-            cv2.FONT_HERSHEY_DUPLEX,
-            0.7,
+            ">>> SPEEDING! <<<",
+            (x_pos + 10, y_offset),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
             (0, 0, 255),
             2,
         )
+        y_offset += 25
 
         # Play speeding alert sound
         if buzzer:
             buzzer.play_speeding_alert()
 
-    # GPS info display
-    gps_y = y_pos + 215
-    satellites = driving_sim.get_satellites()
+    # Heading/Direction
+    heading_str = driving_sim.get_direction_string()
+    cv2.putText(
+        frame,
+        f"Heading: {heading_str}",
+        (x_pos + 10, y_offset),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (0, 255, 255),
+        1,
+    )
+    y_offset += 25
+
+    # Status (accelerating/decelerating/steady)
+    status = driving_sim.direction.upper()
+    status_color = (0, 255, 0) if status == "STEADY" else (200, 200, 200)
+    cv2.putText(
+        frame,
+        f"Status: {status}",
+        (x_pos + 10, y_offset),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        status_color,
+        1,
+    )
+    y_offset += 25
+
+    # Buzzer status
+    buzzer_status = "OFF"
+    if buzzer and hasattr(buzzer, 'is_active') and buzzer.is_active:
+        buzzer_status = "ACTIVE"
+    cv2.putText(
+        frame,
+        f"Buzzer: {buzzer_status}",
+        (x_pos + 10, y_offset),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 255, 0) if buzzer_status == "ACTIVE" else (200, 200, 200),
+        1,
+    )
+    y_offset += 25
+
+    # GPS coordinates
     latitude = driving_sim.get_latitude()
     longitude = driving_sim.get_longitude()
+    cv2.putText(
+        frame,
+        f"Lat: {latitude:.6f}",
+        (x_pos + 10, y_offset),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (200, 200, 200),
+        1,
+    )
+    y_offset += 20
+    cv2.putText(
+        frame,
+        f"Lon: {longitude:.6f}",
+        (x_pos + 10, y_offset),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (200, 200, 200),
+        1,
+    )
+    y_offset += 20
 
-    # GPS status indicator
+    # GPS status
+    satellites = driving_sim.get_satellites()
     if driving_sim.is_using_gps():
         gps_status = f"GPS: {satellites} sats"
         gps_color = (0, 255, 0) if driving_sim.has_gps_fix() else (0, 165, 255)
@@ -1976,33 +1639,10 @@ def draw_driving_info(frame, driving_sim, buzzer=None):
     cv2.putText(
         frame,
         gps_status,
-        (x_pos + 10, gps_y),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        gps_color,
-        1,
-    )
-
-    # Direction string (e.g., "342NW")
-    cv2.putText(
-        frame,
-        f"Dir: {driving_sim.get_direction_string()}",
-        (x_pos + 150, gps_y),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (0, 255, 255),
-        1,
-    )
-
-    # Coordinates
-    gps_y += 20
-    cv2.putText(
-        frame,
-        f"Lat: {latitude:.6f}  Lon: {longitude:.6f}",
-        (x_pos + 10, gps_y),
+        (x_pos + 10, y_offset),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.4,
-        (200, 200, 200),
+        gps_color,
         1,
     )
 
