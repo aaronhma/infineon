@@ -1,5 +1,7 @@
+import argparse
 import os
 import random
+import signal
 import time
 import uuid
 from collections import deque
@@ -1729,20 +1731,52 @@ def draw_driving_info(frame, driving_sim, buzzer=None):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Driver monitoring system")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        default=os.environ.get("HEADLESS", "").lower() in ("true", "1", "yes"),
+        help="Run without GUI display (env: HEADLESS=true)",
+    )
+    parser.add_argument(
+        "--camera",
+        type=int,
+        default=int(os.environ.get("CAMERA_INDEX", "0")),
+        help="Camera device index (env: CAMERA_INDEX, default: 0)",
+    )
+    args = parser.parse_args()
+    headless = args.headless
+
+    # Graceful shutdown via SIGINT/SIGTERM in headless mode
+    shutdown_requested = False
+
+    def _signal_handler(signum, frame):
+        nonlocal shutdown_requested
+        print("\nShutdown signal received, stopping...")
+        shutdown_requested = True
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
+
     # Initialize GPS reader (will fallback to Apple Park coordinates if unavailable)
     gps_reader = GPSReader()
     gps_reader.start()
 
-    # Open the default camera (index 0)
-    cap = cv2.VideoCapture(0)
+    # Open the default camera
+    cap = cv2.VideoCapture(args.camera)
 
     if not cap.isOpened():
         print("Error: Could not open camera")
         gps_reader.stop()
         return
 
-    print("Camera opened successfully!")
-    print("Press 'q' to quit")
+    mode_label = "HEADLESS" if headless else "GUI"
+    print(f"Camera opened successfully! (mode: {mode_label})")
+    if headless:
+        print("Running in headless mode — no GUI window will be shown.")
+        print("Send SIGINT (Ctrl+C) or SIGTERM to stop.")
+    else:
+        print("Press 'q' to quit")
     print("\nDetection Features:")
     print("- Face detection with bounding boxes")
     print("- Real-time eye state detection (Open/Closed)")
@@ -1753,31 +1787,32 @@ def main():
     else:
         print("- Phone usage detection (DISABLED)")
         print("- Drinking detection (DISABLED)")
-    print("- Camera zoom control (0.5x - 10x)")
     print("- GPS tracking (real or simulated)")
     print("- Dynamic speed limit from GPS location (OpenStreetMap)")
     print("- Warning sound alerts for speeding and drowsiness")
     print("- Supabase cloud sync with real-time vehicle tracking")
-    print("\nGPS Data:")
-    print("- Satellites, Speed (mph), Direction (e.g., 342NW)")
-    print("- Latitude, Longitude")
-    print("- Falls back to Apple Park coordinates if GPS unavailable")
-    if ENABLE_YOLO:
-        print("\nDistraction Detection:")
-        print("- Phone usage near face")
-        print("- Drinking from bottle/cup")
-    print("\nIntoxication Indicators:")
-    print("- Drowsiness (prolonged eye closure)")
-    print("- Excessive blinking patterns")
-    print("- Eye movement instability")
-    print("\nControls:")
-    print("- Press 's' to open Settings Menu")
-    print("- Press '+/-' to zoom in/out")
-    print("- Press '1-5' or '0' for quick zoom levels")
-    print("\nSpeed Test Controls (simulation mode only):")
-    print("- Press 'X' to simulate speeding (75 MPH)")
-    print("- Press 'C' to reset speed to normal (45 MPH)")
-    print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
+    if not headless:
+        print("- Camera zoom control (0.5x - 10x)")
+        print("\nGPS Data:")
+        print("- Satellites, Speed (mph), Direction (e.g., 342NW)")
+        print("- Latitude, Longitude")
+        print("- Falls back to Apple Park coordinates if GPS unavailable")
+        if ENABLE_YOLO:
+            print("\nDistraction Detection:")
+            print("- Phone usage near face")
+            print("- Drinking from bottle/cup")
+        print("\nIntoxication Indicators:")
+        print("- Drowsiness (prolonged eye closure)")
+        print("- Excessive blinking patterns")
+        print("- Eye movement instability")
+        print("\nControls:")
+        print("- Press 's' to open Settings Menu")
+        print("- Press '+/-' to zoom in/out")
+        print("- Press '1-5' or '0' for quick zoom levels")
+        print("\nSpeed Test Controls (simulation mode only):")
+        print("- Press 'X' to simulate speeding (75 MPH)")
+        print("- Press 'C' to reset speed to normal (45 MPH)")
+        print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
 
     analyzer = FaceAnalyzer()
     distraction_detector = DistractionDetector(enabled=ENABLE_YOLO)  # YOLO-based phone/drinking detection
@@ -1789,7 +1824,7 @@ def main():
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
     frame_count = 0
 
-    while True:
+    while not shutdown_requested:
         # Capture frame-by-frame
         ret, frame = cap.read()
 
@@ -1797,8 +1832,11 @@ def main():
             print("Error: Could not read frame")
             break
 
-        # Apply zoom before processing
-        zoomed_frame = apply_zoom(frame, settings.zoom_level)
+        # Apply zoom before processing (skip in headless — no display)
+        if not headless:
+            zoomed_frame = apply_zoom(frame, settings.zoom_level)
+        else:
+            zoomed_frame = frame
 
         # Calculate timestamp in milliseconds
         timestamp_ms = int(frame_count * 33.33)  # Assuming ~30 FPS
@@ -1818,9 +1856,6 @@ def main():
         # Run YOLO distraction detection (phone/drinking)
         face_bbox = detection_data["face_bbox"] if detection_data else None
         distraction_data = distraction_detector.detect(processed_frame, face_bbox)
-
-        # Draw distraction detection boxes
-        processed_frame = distraction_detector.draw_detections(processed_frame)
 
         # Check for drowsy/intoxicated driver and play alert
         if intox_data and intox_data["score"] >= 4:
@@ -1907,75 +1942,80 @@ def main():
         # Check for remote buzzer commands (every 2s)
         supabase_uploader.check_buzzer_commands()
 
-        # Draw driving info with buzzer
-        processed_frame = draw_driving_info(processed_frame, driving_sim, buzzer)
+        if not headless:
+            # Draw distraction detection boxes
+            processed_frame = distraction_detector.draw_detections(processed_frame)
 
-        # Draw distraction warning banner if detected
-        processed_frame = draw_distraction_warning(processed_frame, distraction_data)
+            # Draw driving info with buzzer
+            processed_frame = draw_driving_info(processed_frame, driving_sim, buzzer)
 
-        # Draw settings overlay
-        final_frame = draw_settings_overlay(processed_frame, settings)
+            # Draw distraction warning banner if detected
+            processed_frame = draw_distraction_warning(processed_frame, distraction_data)
 
-        # Display the frame
-        cv2.imshow("Face & Eye Analysis - Press Q to Quit", final_frame)
+            # Draw settings overlay
+            final_frame = draw_settings_overlay(processed_frame, settings)
 
-        # Handle keyboard input
-        key = cv2.waitKey(1) & 0xFF
+            # Display the frame
+            cv2.imshow("Face & Eye Analysis - Press Q to Quit", final_frame)
 
-        if key == ord("q"):
-            break
-        elif key == ord("s"):
-            settings.toggle_settings()
-        elif key == ord("h"):
-            settings.show_help = not settings.show_help
-        elif key == ord("+") or key == ord("="):
-            if settings.increase_zoom():
-                print(f"Zoom: {settings.zoom_level}x")
-        elif key == ord("-") or key == ord("_"):
-            if settings.decrease_zoom():
-                print(f"Zoom: {settings.zoom_level}x")
-        elif key == ord("r"):
-            settings.reset_zoom()
-            print("Zoom reset to 1.0x")
-        elif key == ord("1"):
-            settings.set_zoom(1.0)
-            print("Zoom: 1.0x")
-        elif key == ord("2"):
-            settings.set_zoom(2.0)
-            print("Zoom: 2.0x")
-        elif key == ord("3"):
-            settings.set_zoom(3.0)
-            print("Zoom: 3.0x")
-        elif key == ord("4"):
-            settings.set_zoom(4.0)
-            print("Zoom: 4.0x")
-        elif key == ord("5"):
-            settings.set_zoom(5.0)
-            print("Zoom: 5.0x")
-        elif key == ord("0"):
-            settings.set_zoom(10.0)
-            print("Zoom: 10.0x")
+            # Handle keyboard input
+            key = cv2.waitKey(1) & 0xFF
 
-        # Speed control keys (for testing)
-        elif key == 82 or key == 0:  # Up arrow (different codes on different systems)
-            driving_sim.manual_speed_increase(10)
-            print(f"Speed increased to: {driving_sim.get_speed()} MPH")
-        elif key == 84 or key == 1:  # Down arrow
-            driving_sim.manual_speed_decrease(10)
-            print(f"Speed decreased to: {driving_sim.get_speed()} MPH")
-        elif key == ord("x"):
-            driving_sim.set_speeding_mode()
-            print(f"SPEEDING MODE: Speed set to {driving_sim.get_speed()} MPH")
-        elif key == ord("c"):
-            driving_sim.reset_speed()
-            print(f"Speed reset to: {driving_sim.get_speed()} MPH")
+            if key == ord("q"):
+                break
+            elif key == ord("s"):
+                settings.toggle_settings()
+            elif key == ord("h"):
+                settings.show_help = not settings.show_help
+            elif key == ord("+") or key == ord("="):
+                if settings.increase_zoom():
+                    print(f"Zoom: {settings.zoom_level}x")
+            elif key == ord("-") or key == ord("_"):
+                if settings.decrease_zoom():
+                    print(f"Zoom: {settings.zoom_level}x")
+            elif key == ord("r"):
+                settings.reset_zoom()
+                print("Zoom reset to 1.0x")
+            elif key == ord("1"):
+                settings.set_zoom(1.0)
+                print("Zoom: 1.0x")
+            elif key == ord("2"):
+                settings.set_zoom(2.0)
+                print("Zoom: 2.0x")
+            elif key == ord("3"):
+                settings.set_zoom(3.0)
+                print("Zoom: 3.0x")
+            elif key == ord("4"):
+                settings.set_zoom(4.0)
+                print("Zoom: 4.0x")
+            elif key == ord("5"):
+                settings.set_zoom(5.0)
+                print("Zoom: 5.0x")
+            elif key == ord("0"):
+                settings.set_zoom(10.0)
+                print("Zoom: 10.0x")
+
+            # Speed control keys (for testing)
+            elif key == 82 or key == 0:  # Up arrow (different codes on different systems)
+                driving_sim.manual_speed_increase(10)
+                print(f"Speed increased to: {driving_sim.get_speed()} MPH")
+            elif key == 84 or key == 1:  # Down arrow
+                driving_sim.manual_speed_decrease(10)
+                print(f"Speed decreased to: {driving_sim.get_speed()} MPH")
+            elif key == ord("x"):
+                driving_sim.set_speeding_mode()
+                print(f"SPEEDING MODE: Speed set to {driving_sim.get_speed()} MPH")
+            elif key == ord("c"):
+                driving_sim.reset_speed()
+                print(f"Speed reset to: {driving_sim.get_speed()} MPH")
 
     # End trip and release resources
     supabase_uploader.end_trip()
     buzzer.stop()
     gps_reader.stop()
     cap.release()
-    cv2.destroyAllWindows()
+    if not headless:
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
