@@ -1,9 +1,11 @@
 import argparse
+import json
 import os
 import random
 import signal
 import threading
 import time
+import urllib.request
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -68,8 +70,8 @@ STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
 class VideoStreamer:
     """Uploads annotated video frames to Supabase Storage for remote viewing.
 
-    The iOS app polls the stored frame at:
-        storage bucket "live-frames" / "{vehicle_id}/latest.jpg"
+    After each upload, broadcasts a Realtime notification so the iOS app
+    can fetch the new frame immediately instead of polling.
     """
 
     BUCKET = "live-frames"
@@ -91,6 +93,16 @@ class VideoStreamer:
         self._last_upload = 0
         self._uploading = False
         self._lock = threading.Lock()
+
+        # Realtime broadcast endpoint for notifying iOS clients
+        supabase_url = os.environ.get("SUPABASE_URL", "")
+        supabase_key = os.environ.get("SUPABASE_SECRET_KEY", "")
+        self._broadcast_url = f"{supabase_url}/realtime/v1/api/broadcast"
+        self._broadcast_headers = {
+            "apikey": supabase_key,
+            "Content-Type": "application/json",
+        }
+        self._broadcast_topic = f"live-frames:{vehicle_id}"
 
     def start(self):
         # Ensure the storage bucket exists (requires service-role key)
@@ -164,11 +176,37 @@ class VideoStreamer:
                 file=image_bytes,
                 file_options={"content-type": "image/jpeg", "x-upsert": "true"},
             )
+            # Notify iOS clients via Realtime broadcast (fire-and-forget)
+            self._broadcast_new_frame()
         except Exception:
             pass  # Silently skip failed uploads to avoid log spam
         finally:
             with self._lock:
                 self._uploading = False
+
+    def _broadcast_new_frame(self):
+        """Send a lightweight Realtime broadcast so iOS clients fetch immediately."""
+        try:
+            body = json.dumps(
+                {
+                    "messages": [
+                        {
+                            "topic": self._broadcast_topic,
+                            "event": "new_frame",
+                            "payload": {},
+                        }
+                    ]
+                }
+            ).encode()
+            req = urllib.request.Request(
+                self._broadcast_url,
+                data=body,
+                headers=self._broadcast_headers,
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=2)
+        except Exception:
+            pass  # Non-critical — iOS falls back to polling
 
 
 class SupabaseUploader:
@@ -201,6 +239,13 @@ class SupabaseUploader:
         self.upload_cooldown = 2.0  # Minimum seconds between face uploads
         self.realtime_cooldown = 0.5  # Update realtime every 500ms
         self.driver_check_cooldown = 5.0  # Check for driver identification every 5s
+
+        # Background thread guards to prevent blocking the main loop
+        self._realtime_busy = False
+        self._upload_busy = False
+        self._driver_check_busy = False
+        self._buzzer_check_busy = False
+        self._trip_sync_busy = False
 
         # Driver identification
         self.driver_profiles = {}  # {profile_id: profile_data}
@@ -471,43 +516,48 @@ class SupabaseUploader:
             self.last_trip_update = current_time
 
     def _sync_trip_to_db(self):
-        """Sync current trip stats to database"""
+        """Sync current trip stats to database (non-blocking)"""
         if not self.trip_id:
             return
+        if self._trip_sync_busy:
+            return
 
-        try:
-            avg_speed = (
-                sum(self.trip_speed_samples) / len(self.trip_speed_samples)
-                if self.trip_speed_samples
-                else 0
-            )
+        self._trip_sync_busy = True
 
-            record = {
-                "max_speed_mph": int(self.trip_max_speed),
-                "avg_speed_mph": float(round(avg_speed, 2)),
-                "max_intoxication_score": int(self.trip_max_intox_score),
-                "speeding_event_count": int(self.trip_speeding_events),
-                "drowsy_event_count": int(self.trip_drowsy_events),
-                "excessive_blinking_event_count": int(
-                    self.trip_excessive_blinking_events
-                ),
-                "unstable_eyes_event_count": int(self.trip_unstable_eyes_events),
-                "face_detection_count": int(self.trip_face_detections),
-                "speed_sample_count": len(self.trip_speed_samples),
-                "speed_sample_sum": int(sum(self.trip_speed_samples)),
-                "status": self._calculate_trip_status(),
-            }
+        # Snapshot values to avoid races with main thread
+        avg_speed = (
+            sum(self.trip_speed_samples) / len(self.trip_speed_samples)
+            if self.trip_speed_samples
+            else 0
+        )
+        record = {
+            "max_speed_mph": int(self.trip_max_speed),
+            "avg_speed_mph": float(round(avg_speed, 2)),
+            "max_intoxication_score": int(self.trip_max_intox_score),
+            "speeding_event_count": int(self.trip_speeding_events),
+            "drowsy_event_count": int(self.trip_drowsy_events),
+            "excessive_blinking_event_count": int(self.trip_excessive_blinking_events),
+            "unstable_eyes_event_count": int(self.trip_unstable_eyes_events),
+            "face_detection_count": int(self.trip_face_detections),
+            "speed_sample_count": len(self.trip_speed_samples),
+            "speed_sample_sum": int(sum(self.trip_speed_samples)),
+            "status": self._calculate_trip_status(),
+        }
+        if self.current_driver_profile_id:
+            record["driver_profile_id"] = self.current_driver_profile_id
+        trip_id = self.trip_id
 
-            # Add driver profile if identified
-            if self.current_driver_profile_id:
-                record["driver_profile_id"] = self.current_driver_profile_id
+        def _do_sync():
+            try:
+                self.client.table("vehicle_trips").update(record).eq(
+                    "id", trip_id
+                ).execute()
+            except Exception as e:
+                print(f"Error syncing trip stats: {e}")
+            finally:
+                self._trip_sync_busy = False
 
-            self.client.table("vehicle_trips").update(record).eq(
-                "id", self.trip_id
-            ).execute()
-
-        except Exception as e:
-            print(f"Error syncing trip stats: {e}")
+        threading.Thread(target=_do_sync, daemon=True).start()
 
     def end_trip(self):
         """End the current trip (called on session end)"""
@@ -557,50 +607,54 @@ class SupabaseUploader:
         self.trip_face_detections += 1
 
     def check_current_driver(self):
-        """Check the most recently identified driver for this vehicle"""
+        """Check the most recently identified driver for this vehicle (non-blocking)"""
         current_time = time.time()
         if current_time - self.last_driver_check < self.driver_check_cooldown:
             return self.current_driver_name
+        if self._driver_check_busy:
+            return self.current_driver_name
 
+        self._driver_check_busy = True
         self.last_driver_check = current_time
 
-        try:
-            # Refresh driver profiles periodically
-            self._load_driver_profiles()
+        def _do_check():
+            try:
+                # Refresh driver profiles periodically
+                self._load_driver_profiles()
 
-            # Get the most recent face detection with a driver profile assigned
-            response = (
-                self.client.table("face_detections")
-                .select("driver_profile_id, created_at")
-                .eq("vehicle_id", self.vehicle_id)
-                .not_.is_("driver_profile_id", "null")
-                .order("created_at", desc=True)
-                .limit(1)
-                .execute()
-            )
+                # Get the most recent face detection with a driver profile assigned
+                response = (
+                    self.client.table("face_detections")
+                    .select("driver_profile_id, created_at")
+                    .eq("vehicle_id", self.vehicle_id)
+                    .not_.is_("driver_profile_id", "null")
+                    .order("created_at", desc=True)
+                    .limit(1)
+                    .execute()
+                )
 
-            if response.data and len(response.data) > 0:
-                profile_id = response.data[0]["driver_profile_id"]
-                if profile_id in self.driver_profiles:
-                    driver_name = self.driver_profiles[profile_id]["name"]
-                    self.current_driver_name = driver_name
-                    self.current_driver_profile_id = profile_id
+                if response.data and len(response.data) > 0:
+                    profile_id = response.data[0]["driver_profile_id"]
+                    if profile_id in self.driver_profiles:
+                        driver_name = self.driver_profiles[profile_id]["name"]
+                        self.current_driver_name = driver_name
+                        self.current_driver_profile_id = profile_id
 
-                    # Announce driver if changed
-                    if driver_name != self.last_announced_driver:
-                        print(f"\n>>> Driver detected: {driver_name} <<<\n")
-                        self.last_announced_driver = driver_name
+                        if driver_name != self.last_announced_driver:
+                            print(f"\n>>> Driver detected: {driver_name} <<<\n")
+                            self.last_announced_driver = driver_name
+                        return
 
-                    return driver_name
+                self.current_driver_name = None
+                self.current_driver_profile_id = None
 
-            # No identified driver found
-            self.current_driver_name = None
-            self.current_driver_profile_id = None
-            return None
+            except Exception as e:
+                print(f"Error checking current driver: {e}")
+            finally:
+                self._driver_check_busy = False
 
-        except Exception as e:
-            print(f"Error checking current driver: {e}")
-            return None
+        threading.Thread(target=_do_check, daemon=True).start()
+        return self.current_driver_name
 
     def get_current_driver(self):
         """Get the current driver name (cached)"""
@@ -623,42 +677,50 @@ class SupabaseUploader:
         print("Remote buzzer control enabled (polling mode)")
 
     def check_buzzer_commands(self):
-        """Poll for buzzer command changes (called from main loop)"""
+        """Poll for buzzer command changes (non-blocking)"""
         if not self.buzzer:
             return
 
         current_time = time.time()
         if current_time - self.last_buzzer_check < self.buzzer_check_interval:
             return
+        if self._buzzer_check_busy:
+            return
 
+        self._buzzer_check_busy = True
         self.last_buzzer_check = current_time
 
-        try:
-            # Query current buzzer state
-            response = (
-                self.client.table("vehicle_realtime")
-                .select("buzzer_active, buzzer_type")
-                .eq("vehicle_id", self.vehicle_id)
-                .execute()
-            )
+        def _do_check():
+            try:
+                response = (
+                    self.client.table("vehicle_realtime")
+                    .select("buzzer_active, buzzer_type")
+                    .eq("vehicle_id", self.vehicle_id)
+                    .execute()
+                )
 
-            if response.data and len(response.data) > 0:
-                buzzer_active = response.data[0].get("buzzer_active", False)
-                buzzer_type = response.data[0].get("buzzer_type", "alert")
+                if response.data and len(response.data) > 0:
+                    buzzer_active = response.data[0].get("buzzer_active", False)
+                    buzzer_type = response.data[0].get("buzzer_type", "alert")
 
-                # Only react to state changes
-                if buzzer_active != self.last_buzzer_state:
-                    if buzzer_active:
-                        print(f"\n>>> REMOTE BUZZER ACTIVATED ({buzzer_type}) <<<\n")
-                        self.buzzer.start_continuous(buzzer_type)
-                    else:
-                        print("\n>>> REMOTE BUZZER DEACTIVATED <<<\n")
-                        self.buzzer.stop_continuous()
+                    if buzzer_active != self.last_buzzer_state:
+                        if buzzer_active:
+                            print(
+                                f"\n>>> REMOTE BUZZER ACTIVATED ({buzzer_type}) <<<\n"
+                            )
+                            self.buzzer.start_continuous(buzzer_type)
+                        else:
+                            print("\n>>> REMOTE BUZZER DEACTIVATED <<<\n")
+                            self.buzzer.stop_continuous()
 
-                    self.last_buzzer_state = buzzer_active
+                        self.last_buzzer_state = buzzer_active
 
-        except Exception as e:
-            print(f"Error checking buzzer commands: {e}")
+            except Exception as e:
+                print(f"Error checking buzzer commands: {e}")
+            finally:
+                self._buzzer_check_busy = False
+
+        threading.Thread(target=_do_check, daemon=True).start()
 
     def update_vehicle_realtime(
         self,
@@ -674,38 +736,46 @@ class SupabaseUploader:
         is_phone_detected: bool = False,
         is_drinking_detected: bool = False,
     ):
-        """Update vehicle real-time location/status (called frequently)"""
+        """Update vehicle real-time location/status (non-blocking)"""
         current_time = time.time()
         if current_time - self.last_realtime_update < self.realtime_cooldown:
             return None
+        if self._realtime_busy:
+            return None
 
-        try:
-            # Convert to native Python types to ensure JSON serialization
-            record = {
-                "vehicle_id": self.vehicle_id,
-                "updated_at": datetime.now(PST).isoformat(),
-                "speed_mph": int(speed_mph),
-                "heading_degrees": int(heading_degrees),
-                "compass_direction": str(compass_direction),
-                "is_speeding": bool(is_speeding),
-                "is_moving": bool(speed_mph > 0),
-                "driver_status": str(driver_status),
-                "intoxication_score": int(intoxication_score),
-                "is_phone_detected": bool(is_phone_detected),
-                "is_drinking_detected": bool(is_drinking_detected),
-            }
+        self._realtime_busy = True
+        self.last_realtime_update = current_time
 
-            # Add GPS coordinates if available
-            if latitude is not None and longitude is not None:
-                record["latitude"] = float(latitude)
-                record["longitude"] = float(longitude)
-                record["satellites"] = int(satellites)
+        # Convert to native Python types to ensure JSON serialization
+        record = {
+            "vehicle_id": self.vehicle_id,
+            "updated_at": datetime.now(PST).isoformat(),
+            "speed_mph": int(speed_mph),
+            "heading_degrees": int(heading_degrees),
+            "compass_direction": str(compass_direction),
+            "is_speeding": bool(is_speeding),
+            "is_moving": bool(speed_mph > 0),
+            "driver_status": str(driver_status),
+            "intoxication_score": int(intoxication_score),
+            "is_phone_detected": bool(is_phone_detected),
+            "is_drinking_detected": bool(is_drinking_detected),
+        }
 
-            self.client.table("vehicle_realtime").upsert(record).execute()
-            self.last_realtime_update = current_time
+        # Add GPS coordinates if available
+        if latitude is not None and longitude is not None:
+            record["latitude"] = float(latitude)
+            record["longitude"] = float(longitude)
+            record["satellites"] = int(satellites)
 
-        except Exception as e:
-            print(f"Error updating vehicle realtime: {e}")
+        def _do_update():
+            try:
+                self.client.table("vehicle_realtime").upsert(record).execute()
+            except Exception as e:
+                print(f"Error updating vehicle realtime: {e}")
+            finally:
+                self._realtime_busy = False
+
+        threading.Thread(target=_do_update, daemon=True).start()
 
     def should_upload(self):
         """Check if enough time has passed since last upload"""
@@ -724,98 +794,93 @@ class SupabaseUploader:
         driving_data: dict = None,
         distraction_data: dict = None,
     ):
-        """Upload face snapshot and metadata to Supabase with face clustering"""
+        """Upload face snapshot and metadata to Supabase (non-blocking)"""
         if not self.should_upload():
             return None
-
-        try:
-            # Generate unique filename (vehicle_id/session_id/timestamp.jpg)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{self.vehicle_id}/{self.session_id}/{timestamp}.jpg"
-
-            # Encode image to JPEG bytes
-            _, buffer = cv2.imencode(".jpg", face_image, [cv2.IMWRITE_JPEG_QUALITY, 85])
-            image_bytes = buffer.tobytes()
-
-            # Upload image to storage
-            storage_response = self.client.storage.from_("face-snapshots").upload(
-                path=filename,
-                file=image_bytes,
-                file_options={"content-type": "image/jpeg"},
-            )
-
-            # Generate face embedding for clustering similar faces
-            face_embedding = self.generate_face_embedding(face_image)
-            face_cluster_id = None
-
-            if face_embedding:
-                # Find existing cluster or create new one
-                face_cluster_id = self.find_or_create_cluster(face_embedding)
-
-            # Prepare metadata record (convert numpy types to Python native types)
-            avg_ear = float((left_eye_ear + right_eye_ear) / 2)
-            record = {
-                "vehicle_id": self.vehicle_id,
-                "face_bbox": face_bbox,
-                "left_eye_state": left_eye_state,
-                "left_eye_ear": float(round(left_eye_ear, 4)),
-                "right_eye_state": right_eye_state,
-                "right_eye_ear": float(round(right_eye_ear, 4)),
-                "avg_ear": float(round(avg_ear, 4)),
-                "is_drowsy": bool(intox_data.get("drowsy", False)),
-                "is_excessive_blinking": bool(
-                    intox_data.get("excessive_blinking", False)
-                ),
-                "is_unstable_eyes": bool(intox_data.get("unstable_eyes", False)),
-                "intoxication_score": int(intox_data.get("score", 0)),
-                "image_path": filename,
-                "session_id": self.session_id,
-            }
-
-            # Add face embedding and cluster for similarity matching
-            if face_embedding:
-                # Format as PostgreSQL vector string
-                record["face_embedding"] = (
-                    "[" + ",".join(str(x) for x in face_embedding) + "]"
-                )
-            if face_cluster_id:
-                record["face_cluster_id"] = face_cluster_id
-
-            # Add current driver profile if identified
-            if self.current_driver_profile_id:
-                record["driver_profile_id"] = self.current_driver_profile_id
-
-            # Add driving data if available
-            if driving_data:
-                record["speed_mph"] = int(driving_data.get("speed", 0))
-                record["heading_degrees"] = int(driving_data.get("heading", 0))
-                record["compass_direction"] = str(driving_data.get("direction", "N"))
-                record["is_speeding"] = bool(driving_data.get("is_speeding", False))
-
-            # Add distraction data if available
-            if distraction_data:
-                record["is_phone_detected"] = bool(
-                    distraction_data.get("phone_detected", False)
-                )
-                record["is_drinking_detected"] = bool(
-                    distraction_data.get("drinking_detected", False)
-                )
-
-            # Insert record into database
-            db_response = self.client.table("face_detections").insert(record).execute()
-
-            self.last_upload_time = time.time()
-
-            # Print upload info with driver name and cluster info
-            cluster_info = (
-                f", Cluster: {face_cluster_id[:8]}..." if face_cluster_id else ""
-            )
-
-            return db_response
-
-        except Exception as e:
-            print(f"Error uploading to Supabase: {e}")
+        if self._upload_busy:
             return None
+
+        self._upload_busy = True
+        self.last_upload_time = time.time()
+
+        # Encode image to JPEG bytes on the main thread (needs numpy array)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        filename = f"{self.vehicle_id}/{self.session_id}/{timestamp}.jpg"
+        _, buffer = cv2.imencode(".jpg", face_image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        image_bytes = buffer.tobytes()
+
+        # Snapshot all data needed for the upload (avoid referencing mutable state later)
+        driver_profile_id = self.current_driver_profile_id
+
+        def _do_upload():
+            try:
+                # Upload image to storage
+                self.client.storage.from_("face-snapshots").upload(
+                    path=filename,
+                    file=image_bytes,
+                    file_options={"content-type": "image/jpeg"},
+                )
+
+                # Generate face embedding for clustering similar faces
+                face_embedding = self.generate_face_embedding(face_image)
+                face_cluster_id = None
+
+                if face_embedding:
+                    face_cluster_id = self.find_or_create_cluster(face_embedding)
+
+                # Prepare metadata record
+                avg_ear = float((left_eye_ear + right_eye_ear) / 2)
+                record = {
+                    "vehicle_id": self.vehicle_id,
+                    "face_bbox": face_bbox,
+                    "left_eye_state": left_eye_state,
+                    "left_eye_ear": float(round(left_eye_ear, 4)),
+                    "right_eye_state": right_eye_state,
+                    "right_eye_ear": float(round(right_eye_ear, 4)),
+                    "avg_ear": float(round(avg_ear, 4)),
+                    "is_drowsy": bool(intox_data.get("drowsy", False)),
+                    "is_excessive_blinking": bool(
+                        intox_data.get("excessive_blinking", False)
+                    ),
+                    "is_unstable_eyes": bool(intox_data.get("unstable_eyes", False)),
+                    "intoxication_score": int(intox_data.get("score", 0)),
+                    "image_path": filename,
+                    "session_id": self.session_id,
+                }
+
+                if face_embedding:
+                    record["face_embedding"] = (
+                        "[" + ",".join(str(x) for x in face_embedding) + "]"
+                    )
+                if face_cluster_id:
+                    record["face_cluster_id"] = face_cluster_id
+                if driver_profile_id:
+                    record["driver_profile_id"] = driver_profile_id
+
+                if driving_data:
+                    record["speed_mph"] = int(driving_data.get("speed", 0))
+                    record["heading_degrees"] = int(driving_data.get("heading", 0))
+                    record["compass_direction"] = str(
+                        driving_data.get("direction", "N")
+                    )
+                    record["is_speeding"] = bool(driving_data.get("is_speeding", False))
+
+                if distraction_data:
+                    record["is_phone_detected"] = bool(
+                        distraction_data.get("phone_detected", False)
+                    )
+                    record["is_drinking_detected"] = bool(
+                        distraction_data.get("drinking_detected", False)
+                    )
+
+                self.client.table("face_detections").insert(record).execute()
+
+            except Exception as e:
+                print(f"Error uploading to Supabase: {e}")
+            finally:
+                self._upload_busy = False
+
+        threading.Thread(target=_do_upload, daemon=True).start()
 
 
 class DistractionDetector:
@@ -1090,7 +1155,7 @@ class DrivingSimulator:
         self.speed_limit_fetching = False
 
     def update_speed_limit(self):
-        """Update speed limit from GPS coordinates (called periodically)"""
+        """Update speed limit from GPS coordinates (non-blocking)"""
         if not self.speed_limit_checker:
             return
 
@@ -1107,26 +1172,27 @@ class DrivingSimulator:
         self.speed_limit_fetching = True
         self.last_speed_limit_update = current_time
 
-        try:
-            # Get current coordinates
-            lat = self.get_latitude()
-            lon = self.get_longitude()
+        lat = self.get_latitude()
+        lon = self.get_longitude()
 
-            # Fetch speed limit from API
-            fetched_limit = self.speed_limit_checker.get_speed_limit(lat, lon)
+        def _do_fetch():
+            try:
+                fetched_limit = self.speed_limit_checker.get_speed_limit(lat, lon)
+                if fetched_limit is not None:
+                    self.speed_limit = fetched_limit
+                    print(
+                        f"Speed limit updated: {self.speed_limit} MPH (from GPS location)"
+                    )
+                else:
+                    print(
+                        "Speed limit not available for current location, using default"
+                    )
+            except Exception as e:
+                print(f"Error fetching speed limit: {e}")
+            finally:
+                self.speed_limit_fetching = False
 
-            if fetched_limit is not None:
-                self.speed_limit = fetched_limit
-                print(
-                    f"Speed limit updated: {self.speed_limit} MPH (from GPS location)"
-                )
-            else:
-                print("Speed limit not available for current location, using default")
-
-        except Exception as e:
-            print(f"Error fetching speed limit: {e}")
-        finally:
-            self.speed_limit_fetching = False
+        threading.Thread(target=_do_fetch, daemon=True).start()
 
     def update_speed(self):
         """Update speed - from GPS if available, otherwise simulate"""
@@ -1608,6 +1674,9 @@ def main():
         print("Error: Could not open camera")
         gps_reader.stop()
         return
+
+    # Minimize internal buffer so we always get the latest frame
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     mode_label = "HEADLESS" if headless else "GUI"
     print(f"Camera opened successfully! (mode: {mode_label})")

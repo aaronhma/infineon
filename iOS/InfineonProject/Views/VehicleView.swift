@@ -1475,28 +1475,39 @@ struct VehicleLiveCameraView: View {
     pollTask = Task {
       var consecutiveErrors = 0
 
-      while !Task.isCancelled {
-        do {
-          let data = try await supabase.client.storage
-            .from("live-frames")
-            .download(path: "\(vehicleId)/latest.jpg")
+      // Subscribe to Realtime Broadcast for instant frame notifications
+      let channel = await supabase.client.realtimeV2.channel("live-frames:\(vehicleId)")
+      let broadcastStream = await channel.broadcast(event: "new_frame")
+      await channel.subscribe()
 
-          if let image = UIImage(data: data) {
-            currentFrame = image
-            consecutiveErrors = 0
-          }
-        } catch {
-          consecutiveErrors += 1
-          // Only give up if we never got a frame and many attempts failed
-          if consecutiveErrors > 15 && currentFrame == nil {
-            self.error =
-              "Make sure ENABLE_STREAM=true on the vehicle."
-            isStreaming = false
-            return
-          }
-        }
+      // Fetch the first frame immediately
+      await fetchFrame(&consecutiveErrors)
 
-        try? await Task.sleep(for: .milliseconds(300))
+      // Then fetch on each broadcast notification (event-driven, no polling delay)
+      for await _ in broadcastStream {
+        guard !Task.isCancelled else { break }
+        await fetchFrame(&consecutiveErrors)
+      }
+
+      await supabase.client.realtimeV2.removeChannel(channel)
+    }
+  }
+
+  private func fetchFrame(_ consecutiveErrors: inout Int) async {
+    do {
+      let data = try await supabase.client.storage
+        .from("live-frames")
+        .download(path: "\(vehicleId)/latest.jpg")
+
+      if let image = UIImage(data: data) {
+        currentFrame = image
+        consecutiveErrors = 0
+      }
+    } catch {
+      consecutiveErrors += 1
+      if consecutiveErrors > 15 && currentFrame == nil {
+        self.error = "Make sure ENABLE_STREAM=true on the vehicle."
+        isStreaming = false
       }
     }
   }
