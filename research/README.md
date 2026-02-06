@@ -56,17 +56,37 @@ The system uses multiple AI-based indicators to assess intoxication risk:
 ## Technology Stack
 
 - **MediaPipe Face Mesh**: 468 facial landmark detection with refined landmarks
+- **YOLO v26**: State-of-the-art object detection for phone and distraction detection
 - **OpenCV**: Computer vision and image processing
 - **Eye Aspect Ratio (EAR)**: Industry-standard eye state detection
 - **SciPy**: Euclidean distance calculations for landmark analysis
 - **NumPy**: Statistical analysis and variance detection
-- **Pygame**: Audio generation and playback for warning alerts
+- **Shazamio**: Free music recognition for identifying currently playing songs
+- **PyAudio**: Real-time microphone audio capture
+- **Supabase**: Real-time database and cloud storage for vehicle telemetry
 
 ## Getting Data
+
+### MediaPipe Models
 
 ```zsh
 $ curl -L -o face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 $ curl -L -o hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task
+```
+
+### YOLO v26 Models (Object Detection)
+
+Download one of the following models based on your performance needs:
+
+```zsh
+# YOLO26 Nano - Fastest, lowest accuracy (recommended for Raspberry Pi)
+$ curl -L -o yolo26n.pt https://huggingface.co/Ultralytics/YOLO26/resolve/main/yolo26n.pt
+
+# YOLO26 Small - Balanced speed and accuracy
+$ curl -L -o yolo26s.pt https://huggingface.co/Ultralytics/YOLO26/resolve/main/yolo26s.pt
+
+# YOLO26 Medium - Higher accuracy, slower (recommended for desktop)
+$ curl -L -o yolo26m.pt https://huggingface.co/Ultralytics/YOLO26/resolve/main/yolo26m.pt
 ```
 
 ## Running Locally

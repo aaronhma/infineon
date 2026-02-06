@@ -22,9 +22,9 @@ from mediapipe.tasks.python import vision
 from scipy.spatial import distance
 from supabase import Client, create_client
 
-from buzzer import BuzzerController
-from gps import GPSReader
-from speed_limit import SpeedLimitChecker
+from components.buzzer import BuzzerController
+from components.gps import GPSReader
+from components.speed_limit import SpeedLimitChecker
 
 # Performance optimization constants
 # Pre-computed color tuples for faster drawing (avoids tuple creation overhead)
@@ -826,19 +826,19 @@ class DistractionDetector:
     BOTTLE = 39
     CUP = 41
 
-    def __init__(self, model_path="yolov8m.pt", enabled=True):
+    def __init__(self, model_path="yolo-models/yolo26m.pt", enabled=True):
         """Initialize YOLO model for object detection
 
         Args:
-            model_path: Path to YOLO model weights. Use 'yolov8n.pt' for nano (fast),
-                       'yolov8s.pt' for small, 'yolov8m.pt' for medium accuracy.
+            model_path: Path to YOLO model weights. Use 'yolo26n.pt' for nano (fast),
+                       'yolo26s.pt' for small, 'yolo26m.pt' for medium accuracy (v26).
             enabled: Whether YOLO detection is enabled (requires YOLO module)
         """
         self.enabled = enabled
 
         if self.enabled:
             print(f"Loading YOLO model: {model_path}")
-            self.model = YOLO(model_path)
+            self.model = YOLO(model_path, task="classify")
             self.confidence_threshold = 0.25  # Lower threshold for better detection
             print("YOLO model loaded successfully")
         else:

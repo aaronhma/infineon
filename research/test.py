@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Test script for verifying individual modules and system components
-Run with: python test.py [module_name]
-Available tests: all, gps, buzzer, supabase, camera, yolo, mediapipe, speed_limit, env
+Run with: uv run test.py [module_name]
+Available tests: all, gps, buzzer, supabase, camera, yolo, mediapipe, speed_limit, env, shazam, microphone
 """
 
 import argparse
@@ -55,7 +55,7 @@ def test_gps():
     """Test GPS module"""
     print("\n=== Testing GPS Module ===")
     try:
-        from gps import GPSReader
+        from components.gps import GPSReader
 
         print("✓ GPS module imported successfully")
 
@@ -87,7 +87,7 @@ def test_buzzer():
     """Test buzzer module"""
     print("\n=== Testing Buzzer Module ===")
     try:
-        from buzzer import BuzzerController
+        from components.buzzer import BuzzerController
 
         print("✓ Buzzer module imported successfully")
 
@@ -109,7 +109,7 @@ def test_buzzer():
         time.sleep(2)
 
         print("Testing continuous buzzer (3 seconds)...")
-        buzzer.start_continuous('alert')
+        buzzer.start_continuous("alert")
         time.sleep(3)
         buzzer.stop_continuous()
 
@@ -142,7 +142,9 @@ def test_supabase():
         print("✓ Supabase client created")
 
         # Test connection by fetching vehicle data
-        response = client.table("vehicles").select("id, name").eq("id", vehicle_id).execute()
+        response = (
+            client.table("vehicles").select("id, name").eq("id", vehicle_id).execute()
+        )
 
         if response.data:
             print(f"✓ Connected to Supabase")
@@ -153,11 +155,22 @@ def test_supabase():
             return False
 
         # Test realtime table
-        response = client.table("vehicle_realtime").select("vehicle_id").eq("vehicle_id", vehicle_id).execute()
+        response = (
+            client.table("vehicle_realtime")
+            .select("vehicle_id")
+            .eq("vehicle_id", vehicle_id)
+            .execute()
+        )
         print(f"✓ Realtime table accessible ({len(response.data)} records)")
 
         # Test trips table
-        response = client.table("vehicle_trips").select("id").eq("vehicle_id", vehicle_id).limit(1).execute()
+        response = (
+            client.table("vehicle_trips")
+            .select("id")
+            .eq("vehicle_id", vehicle_id)
+            .limit(1)
+            .execute()
+        )
         print(f"✓ Trips table accessible")
 
         return True
@@ -214,10 +227,10 @@ def test_yolo():
         print("✓ YOLO module imported successfully")
 
         # Try loading the model
-        model_path = "yolov8m.pt"
+        model_path = "yolo-models/yolo26m.pt"
         print(f"Loading model: {model_path}")
 
-        model = YOLO(model_path)
+        model = YOLO(model_path, task="classify")
         print("✓ YOLO model loaded successfully")
 
         # Test inference on a dummy image
@@ -284,7 +297,7 @@ def test_speed_limit():
     """Test speed limit checker"""
     print("\n=== Testing Speed Limit Checker ===")
     try:
-        from speed_limit import SpeedLimitChecker
+        from components.speed_limit import SpeedLimitChecker
 
         print("✓ Speed limit module imported successfully")
 
@@ -304,7 +317,9 @@ def test_speed_limit():
             print("⚠ Speed limit not found (may be unavailable for this location)")
 
         # Test with detailed info
-        speed_limit, road_info = checker.get_speed_limit_with_details(test_lat, test_lon)
+        speed_limit, road_info = checker.get_speed_limit_with_details(
+            test_lat, test_lon
+        )
 
         if road_info:
             print(f"✓ Road details retrieved:")
@@ -319,6 +334,109 @@ def test_speed_limit():
 
     except Exception as e:
         print(f"✗ Speed limit test failed: {e}")
+        return False
+
+
+def test_microphone():
+    """Test microphone module"""
+    print("\n=== Testing Microphone Module ===")
+    try:
+        from components.microphone import MicrophoneController
+
+        print("✓ Microphone module imported successfully")
+
+        mic = MicrophoneController()
+
+        # List available devices (if not in fake mode)
+        if not mic.use_fake:
+            try:
+                import pyaudio
+
+                pa = pyaudio.PyAudio()
+                mic.pyaudio = pa
+                devices = mic.list_devices()
+                print(f"✓ Found {len(devices)} input device(s):")
+                for idx, name, channels in devices:
+                    print(f"  [{idx}] {name} ({channels} channels)")
+                pa.terminate()
+            except Exception:
+                pass
+
+        mic.start()
+        print("✓ Microphone started")
+
+        print(f"Mode: {'SIMULATED' if mic.is_fake else 'REAL'}")
+        print(f"Recording: {mic.is_recording}")
+
+        # Record for 3 seconds
+        print("Recording for 3 seconds...")
+        time.sleep(3)
+
+        buffer_duration = mic.buffer_duration
+        print(f"✓ Buffer contains {buffer_duration:.1f} seconds of audio")
+
+        # Test getting audio chunk
+        audio_data = mic.get_audio_chunk(duration=2)
+        print(f"✓ Retrieved {len(audio_data)} bytes of audio data")
+
+        # Test WAV export
+        wav_data = mic.get_audio_wav(duration=2)
+        print(f"✓ Generated WAV data ({wav_data.getbuffer().nbytes} bytes)")
+
+        mic.stop()
+        print("✓ Microphone stopped")
+
+        return True
+
+    except Exception as e:
+        print(f"✗ Microphone test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
+        return False
+
+
+def test_shazam():
+    """Test Shazam music recognition"""
+    print("\n=== Testing Shazam Recognition ===")
+    try:
+        from components.shazam import ShazamRecognizer
+
+        print("✓ Shazam module imported successfully")
+
+        recognizer = ShazamRecognizer()
+        recognizer.start()
+        print("✓ Shazam recognizer initialized")
+
+        print(f"Mode: {'SIMULATED' if recognizer.is_fake else 'REAL'}")
+        print(f"Ready: {recognizer.is_ready}")
+
+        # Test recognition (will use fake mode if no audio file)
+        print("\nAttempting song recognition...")
+        song_info = recognizer.recognize_from_file("test_audio.wav")
+
+        if song_info:
+            print("✓ Recognition successful!")
+            print("\nSong Info:")
+            print(recognizer.format_song_info(song_info))
+        else:
+            print("⚠ No song recognized (this is normal in test mode)")
+
+        # Test last recognition retrieval
+        last = recognizer.get_last_recognition()
+        if last:
+            print(f"\n✓ Last recognition cached: {last['title']} by {last['artist']}")
+        else:
+            print("\n⚠ No previous recognition cached")
+
+        print("\n✓ Shazam recognizer functioning correctly")
+        return True
+
+    except Exception as e:
+        print(f"✗ Shazam test failed: {e}")
+        import traceback
+
+        traceback.print_exc()
         return False
 
 
@@ -337,6 +455,8 @@ def run_all_tests():
         ("YOLO", test_yolo),
         ("MediaPipe", test_mediapipe),
         ("Speed Limit", test_speed_limit),
+        ("Microphone", test_microphone),
+        ("Shazam", test_shazam),
     ]
 
     results = {}
@@ -369,7 +489,19 @@ def main():
         "module",
         nargs="?",
         default="all",
-        choices=["all", "env", "gps", "buzzer", "supabase", "camera", "yolo", "mediapipe", "speed_limit"],
+        choices=[
+            "all",
+            "env",
+            "gps",
+            "buzzer",
+            "supabase",
+            "camera",
+            "yolo",
+            "mediapipe",
+            "speed_limit",
+            "microphone",
+            "shazam",
+        ],
         help="Module to test (default: all)",
     )
     args = parser.parse_args()
@@ -384,6 +516,8 @@ def main():
         "yolo": test_yolo,
         "mediapipe": test_mediapipe,
         "speed_limit": test_speed_limit,
+        "microphone": test_microphone,
+        "shazam": test_shazam,
     }
 
     success = test_map[args.module]()
