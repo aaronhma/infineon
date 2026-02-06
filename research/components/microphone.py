@@ -74,6 +74,16 @@ class MicrophoneController:
             # Get device info
             device_info = self.pyaudio.get_device_info_by_index(device_index)
             device_name = device_info.get('name', 'Unknown')
+
+            # Use device's default sample rate if available (fixes Raspberry Pi compatibility)
+            device_sample_rate = int(device_info.get('defaultSampleRate', self.sample_rate))
+            if device_sample_rate != self.sample_rate:
+                print(f"\n  Note: Using device's native sample rate {device_sample_rate} Hz instead of {self.sample_rate} Hz")
+                self.sample_rate = device_sample_rate
+                # Update buffer size for new sample rate
+                buffer_chunks = int(10 * self.sample_rate / self.chunk_size)
+                self.audio_buffer = deque(maxlen=buffer_chunks)
+
             print(f"\n=== Selected Device ===")
             print(f"  Device: {device_name}")
             print(f"  Index: {device_index}")
