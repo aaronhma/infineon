@@ -7,8 +7,6 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from socketserver import ThreadingMixIn
 
 # PST timezone (UTC-8)
 PST = timezone(timedelta(hours=-8))
@@ -47,132 +45,117 @@ else:
 
 # Check if video streaming should be enabled (defaults to False)
 ENABLE_STREAM = os.environ.get("ENABLE_STREAM", "false").lower() in ("true", "1", "yes")
-STREAM_PORT = int(os.environ.get("STREAM_PORT", "8554"))
 STREAM_QUALITY = int(os.environ.get("STREAM_QUALITY", "50"))
+STREAM_FPS = int(os.environ.get("STREAM_FPS", "3"))
+STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
 
 
 class VideoStreamer:
-    """MJPEG HTTP server for streaming annotated video to clients (e.g. iOS app).
+    """Uploads annotated video frames to Supabase Storage for remote viewing.
 
-    Endpoints:
-        /stream   - continuous MJPEG stream
-        /snapshot - single JPEG frame
-        /         - HTML page embedding the stream
+    The iOS app polls the stored frame at:
+        storage bucket "live-frames" / "{vehicle_id}/latest.jpg"
     """
 
-    def __init__(self, port: int = 8554, quality: int = 50):
-        self.port = port
+    BUCKET = "live-frames"
+
+    def __init__(
+        self,
+        supabase_client,
+        vehicle_id: str,
+        quality: int = 50,
+        fps: int = 3,
+        width: int = 640,
+    ):
+        self.client = supabase_client
+        self.vehicle_id = vehicle_id
         self.quality = quality
-        self._frame_bytes: bytes | None = None
+        self.min_interval = 1.0 / fps
+        self.target_width = width
+        self._path = f"{vehicle_id}/latest.jpg"
+        self._last_upload = 0
+        self._uploading = False
         self._lock = threading.Lock()
-        self._condition = threading.Condition(self._lock)
-        self._server = None
-        self._thread = None
 
     def start(self):
-        streamer_ref = self
+        # Ensure the storage bucket exists (requires service-role key)
+        try:
+            self.client.storage.create_bucket(
+                self.BUCKET,
+                options={"public": True, "file_size_limit": 1_000_000},
+            )
+            print(f"Created storage bucket: {self.BUCKET}")
+        except Exception:
+            pass  # Bucket already exists
 
-        class MJPEGHandler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path == "/stream":
-                    self._handle_stream()
-                elif self.path == "/snapshot":
-                    self._handle_snapshot()
-                elif self.path == "/":
-                    self._handle_index()
-                else:
-                    self.send_response(404)
-                    self.end_headers()
-
-            def _handle_stream(self):
-                self.send_response(200)
-                self.send_header(
-                    "Content-Type",
-                    "multipart/x-mixed-replace; boundary=frame",
-                )
-                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                self.send_header("Connection", "keep-alive")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-
-                try:
-                    while True:
-                        with streamer_ref._condition:
-                            streamer_ref._condition.wait(timeout=1.0)
-                            frame_bytes = streamer_ref._frame_bytes
-
-                        if frame_bytes is None:
-                            continue
-
-                        self.wfile.write(b"--frame\r\n")
-                        self.wfile.write(b"Content-Type: image/jpeg\r\n")
-                        self.wfile.write(
-                            f"Content-Length: {len(frame_bytes)}\r\n\r\n".encode()
-                        )
-                        self.wfile.write(frame_bytes)
-                        self.wfile.write(b"\r\n")
-                        self.wfile.flush()
-                except (BrokenPipeError, ConnectionResetError, OSError):
-                    pass
-
-            def _handle_snapshot(self):
-                """Single JPEG frame for quick previews."""
-                with streamer_ref._lock:
-                    frame_bytes = streamer_ref._frame_bytes
-
-                if frame_bytes is None:
-                    self.send_response(503)
-                    self.end_headers()
-                    return
-
-                self.send_response(200)
-                self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Content-Length", str(len(frame_bytes)))
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(frame_bytes)
-
-            def _handle_index(self):
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(
-                    b"<html><body style='margin:0;background:#000'>"
-                    b"<img src='/stream' style='width:100%;height:auto'/>"
-                    b"</body></html>"
-                )
-
-            def log_message(self, format, *args):
-                pass  # Suppress per-request logs
-
-        class _ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-            daemon_threads = True
-            allow_reuse_address = True
-
-        self._server = _ThreadedHTTPServer(("0.0.0.0", self.port), MJPEGHandler)
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
-        self._thread.start()
-        print(f"Video stream started at http://0.0.0.0:{self.port}/stream")
-        print(f"  Snapshot available at http://0.0.0.0:{self.port}/snapshot")
+        fps_display = 1.0 / self.min_interval
+        print(
+            f"Video stream active — uploading to Supabase Storage "
+            f"(bucket={self.BUCKET}, ~{fps_display:.0f} fps, "
+            f"quality={self.quality}, width={self.target_width})"
+        )
 
     def stop(self):
-        if self._server:
-            self._server.shutdown()
-            self._server = None
-        if self._thread:
-            self._thread.join(timeout=5)
-            self._thread = None
+        # Wait for any in-flight upload to finish
+        for _ in range(20):
+            with self._lock:
+                if not self._uploading:
+                    break
+            time.sleep(0.1)
+
+        # Remove the live frame on shutdown
+        try:
+            self.client.storage.from_(self.BUCKET).remove([self._path])
+        except Exception:
+            pass
         print("Video stream stopped")
 
     def update_frame(self, frame):
-        """Encode and publish a new frame to all connected clients."""
+        """Downscale, encode, and upload a frame to Supabase Storage."""
+        current_time = time.time()
+        if current_time - self._last_upload < self.min_interval:
+            return
+
+        with self._lock:
+            if self._uploading:
+                return  # Previous upload still in progress
+            self._uploading = True
+
+        self._last_upload = current_time
+
+        # Downscale if wider than target
+        h, w = frame.shape[:2]
+        if w > self.target_width:
+            scale = self.target_width / w
+            frame = cv2.resize(
+                frame,
+                (self.target_width, int(h * scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+
+        # JPEG encode
         _, buffer = cv2.imencode(
             ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality]
         )
-        with self._condition:
-            self._frame_bytes = buffer.tobytes()
-            self._condition.notify_all()
+        image_bytes = buffer.tobytes()
+
+        # Upload in background thread to avoid blocking the main loop
+        threading.Thread(
+            target=self._upload, args=(image_bytes,), daemon=True
+        ).start()
+
+    def _upload(self, image_bytes: bytes):
+        try:
+            self.client.storage.from_(self.BUCKET).upload(
+                path=self._path,
+                file=image_bytes,
+                file_options={"content-type": "image/jpeg", "x-upsert": "true"},
+            )
+        except Exception:
+            pass  # Silently skip failed uploads to avoid log spam
+        finally:
+            with self._lock:
+                self._uploading = False
 
 
 class SupabaseUploader:
@@ -1924,7 +1907,7 @@ def main():
     print("- Warning sound alerts for speeding and drowsiness")
     print("- Supabase cloud sync with real-time vehicle tracking")
     if ENABLE_STREAM:
-        print(f"- Video stream on port {STREAM_PORT} (MJPEG)")
+        print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
     if not headless:
         print("- Camera zoom control (0.5x - 10x)")
         print("\nGPS Data:")
@@ -1957,10 +1940,16 @@ def main():
     buzzer.start()
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
 
-    # Video streaming (MJPEG over HTTP)
+    # Video streaming (Supabase Storage)
     streamer = None
     if ENABLE_STREAM:
-        streamer = VideoStreamer(port=STREAM_PORT, quality=STREAM_QUALITY)
+        streamer = VideoStreamer(
+            supabase_client=supabase_uploader.client,
+            vehicle_id=supabase_uploader.vehicle_id,
+            quality=STREAM_QUALITY,
+            fps=STREAM_FPS,
+            width=STREAM_WIDTH,
+        )
         streamer.start()
 
     frame_count = 0
