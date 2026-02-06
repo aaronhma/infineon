@@ -2,10 +2,13 @@ import argparse
 import os
 import random
 import signal
+import threading
 import time
 import uuid
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 
 # PST timezone (UTC-8)
 PST = timezone(timedelta(hours=-8))
@@ -41,6 +44,135 @@ if ENABLE_YOLO:
         ENABLE_YOLO = False
 else:
     print("YOLO model disabled via ENABLE_YOLO environment variable")
+
+# Check if video streaming should be enabled (defaults to False)
+ENABLE_STREAM = os.environ.get("ENABLE_STREAM", "false").lower() in ("true", "1", "yes")
+STREAM_PORT = int(os.environ.get("STREAM_PORT", "8554"))
+STREAM_QUALITY = int(os.environ.get("STREAM_QUALITY", "50"))
+
+
+class VideoStreamer:
+    """MJPEG HTTP server for streaming annotated video to clients (e.g. iOS app).
+
+    Endpoints:
+        /stream   - continuous MJPEG stream
+        /snapshot - single JPEG frame
+        /         - HTML page embedding the stream
+    """
+
+    def __init__(self, port: int = 8554, quality: int = 50):
+        self.port = port
+        self.quality = quality
+        self._frame_bytes: bytes | None = None
+        self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
+        self._server = None
+        self._thread = None
+
+    def start(self):
+        streamer_ref = self
+
+        class MJPEGHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/stream":
+                    self._handle_stream()
+                elif self.path == "/snapshot":
+                    self._handle_snapshot()
+                elif self.path == "/":
+                    self._handle_index()
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+
+            def _handle_stream(self):
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "multipart/x-mixed-replace; boundary=frame",
+                )
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+
+                try:
+                    while True:
+                        with streamer_ref._condition:
+                            streamer_ref._condition.wait(timeout=1.0)
+                            frame_bytes = streamer_ref._frame_bytes
+
+                        if frame_bytes is None:
+                            continue
+
+                        self.wfile.write(b"--frame\r\n")
+                        self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                        self.wfile.write(
+                            f"Content-Length: {len(frame_bytes)}\r\n\r\n".encode()
+                        )
+                        self.wfile.write(frame_bytes)
+                        self.wfile.write(b"\r\n")
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+
+            def _handle_snapshot(self):
+                """Single JPEG frame for quick previews."""
+                with streamer_ref._lock:
+                    frame_bytes = streamer_ref._frame_bytes
+
+                if frame_bytes is None:
+                    self.send_response(503)
+                    self.end_headers()
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(frame_bytes)))
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(frame_bytes)
+
+            def _handle_index(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(
+                    b"<html><body style='margin:0;background:#000'>"
+                    b"<img src='/stream' style='width:100%;height:auto'/>"
+                    b"</body></html>"
+                )
+
+            def log_message(self, format, *args):
+                pass  # Suppress per-request logs
+
+        class _ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+            daemon_threads = True
+            allow_reuse_address = True
+
+        self._server = _ThreadedHTTPServer(("0.0.0.0", self.port), MJPEGHandler)
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        print(f"Video stream started at http://0.0.0.0:{self.port}/stream")
+        print(f"  Snapshot available at http://0.0.0.0:{self.port}/snapshot")
+
+    def stop(self):
+        if self._server:
+            self._server.shutdown()
+            self._server = None
+        if self._thread:
+            self._thread.join(timeout=5)
+            self._thread = None
+        print("Video stream stopped")
+
+    def update_frame(self, frame):
+        """Encode and publish a new frame to all connected clients."""
+        _, buffer = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality]
+        )
+        with self._condition:
+            self._frame_bytes = buffer.tobytes()
+            self._condition.notify_all()
 
 
 class SupabaseUploader:
@@ -1791,6 +1923,8 @@ def main():
     print("- Dynamic speed limit from GPS location (OpenStreetMap)")
     print("- Warning sound alerts for speeding and drowsiness")
     print("- Supabase cloud sync with real-time vehicle tracking")
+    if ENABLE_STREAM:
+        print(f"- Video stream on port {STREAM_PORT} (MJPEG)")
     if not headless:
         print("- Camera zoom control (0.5x - 10x)")
         print("\nGPS Data:")
@@ -1822,6 +1956,13 @@ def main():
     buzzer = BuzzerController()
     buzzer.start()
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
+
+    # Video streaming (MJPEG over HTTP)
+    streamer = None
+    if ENABLE_STREAM:
+        streamer = VideoStreamer(port=STREAM_PORT, quality=STREAM_QUALITY)
+        streamer.start()
+
     frame_count = 0
 
     while not shutdown_requested:
@@ -1942,6 +2083,14 @@ def main():
         # Check for remote buzzer commands (every 2s)
         supabase_uploader.check_buzzer_commands()
 
+        # Stream annotated frame to connected clients
+        if streamer:
+            stream_frame = processed_frame.copy()
+            stream_frame = distraction_detector.draw_detections(stream_frame)
+            stream_frame = draw_driving_info(stream_frame, driving_sim)
+            stream_frame = draw_distraction_warning(stream_frame, distraction_data)
+            streamer.update_frame(stream_frame)
+
         if not headless:
             # Draw distraction detection boxes
             processed_frame = distraction_detector.draw_detections(processed_frame)
@@ -2010,6 +2159,8 @@ def main():
                 print(f"Speed reset to: {driving_sim.get_speed()} MPH")
 
     # End trip and release resources
+    if streamer:
+        streamer.stop()
     supabase_uploader.end_trip()
     buzzer.stop()
     gps_reader.stop()
