@@ -1347,7 +1347,7 @@ struct VehicleLiveCameraView: View {
       }
 
       // Vehicle stats
-      if let data = vehicleData {
+      if currentFrame != nil, let data = vehicleData {
         ScrollView {
           VStack(spacing: 12) {
             // Speed row

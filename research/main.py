@@ -21,6 +21,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from scipy.spatial import distance
 from supabase import Client, create_client
+
 from buzzer import BuzzerController
 from gps import GPSReader
 from speed_limit import SpeedLimitChecker
@@ -35,6 +36,7 @@ ENABLE_YOLO = os.environ.get("ENABLE_YOLO", "true").lower() in ("true", "1", "ye
 if ENABLE_YOLO:
     try:
         from ultralytics import YOLO
+
         print("YOLO model enabled")
     except ImportError as e:
         print(f"Warning: Could not import YOLO: {e}")
@@ -140,9 +142,7 @@ class VideoStreamer:
         image_bytes = buffer.tobytes()
 
         # Upload in background thread to avoid blocking the main loop
-        threading.Thread(
-            target=self._upload, args=(image_bytes,), daemon=True
-        ).start()
+        threading.Thread(target=self._upload, args=(image_bytes,), daemon=True).start()
 
     def _upload(self, image_bytes: bytes):
         try:
@@ -1019,7 +1019,6 @@ class Settings:
     def __init__(self):
         self.zoom_level = 1.0
         self.zoom_levels = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0]
-        self.show_settings = False
         self.show_help = True
 
     def increase_zoom(self):
@@ -1057,13 +1056,13 @@ class Settings:
         """Reset zoom to 1x"""
         self.zoom_level = 1.0
 
-    def toggle_settings(self):
-        """Toggle settings menu visibility"""
-        self.show_settings = not self.show_settings
-
 
 class DrivingSimulator:
-    def __init__(self, gps_reader: GPSReader = None, speed_limit_checker: SpeedLimitChecker = None):
+    def __init__(
+        self,
+        gps_reader: GPSReader = None,
+        speed_limit_checker: SpeedLimitChecker = None,
+    ):
         self.gps = gps_reader
         self.speed_limit_checker = speed_limit_checker
         self.speed = 45.0  # Start at 45 MPH (used for simulation mode)
@@ -1095,7 +1094,10 @@ class DrivingSimulator:
             return
 
         current_time = time.time()
-        if current_time - self.last_speed_limit_update < self.speed_limit_update_interval:
+        if (
+            current_time - self.last_speed_limit_update
+            < self.speed_limit_update_interval
+        ):
             return
 
         if self.speed_limit_fetching:
@@ -1114,7 +1116,9 @@ class DrivingSimulator:
 
             if fetched_limit is not None:
                 self.speed_limit = fetched_limit
-                print(f"Speed limit updated: {self.speed_limit} MPH (from GPS location)")
+                print(
+                    f"Speed limit updated: {self.speed_limit} MPH (from GPS location)"
+                )
             else:
                 print("Speed limit not available for current location, using default")
 
@@ -1580,271 +1584,6 @@ def apply_zoom(frame, zoom_level):
     return zoomed
 
 
-def draw_settings_overlay(frame, settings):
-    """Draw settings menu overlay on frame"""
-    h, w = frame.shape[:2]
-
-    if settings.show_settings:
-        # Draw settings panel background directly - no overlay blending
-        cv2.rectangle(frame, (20, 20), (450, 480), (40, 40, 40), -1)
-        cv2.rectangle(frame, (20, 20), (450, 480), (0, 255, 0), 2)
-
-        # Draw title
-        cv2.putText(
-            frame,
-            "SETTINGS MENU",
-            (30, 50),
-            cv2.FONT_HERSHEY_DUPLEX,
-            0.8,
-            (0, 255, 0),
-            2,
-        )
-
-        # Draw separator
-        cv2.line(frame, (30, 60), (440, 60), (0, 255, 0), 1)
-
-        # Draw zoom controls
-        y_offset = 90
-        cv2.putText(
-            frame,
-            "ZOOM CONTROLS",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (255, 255, 255),
-            2,
-        )
-        y_offset += 30
-
-        cv2.putText(
-            frame,
-            f"Current Zoom: {settings.zoom_level}x",
-            (30, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 255, 255),
-            1,
-        )
-        y_offset += 25
-
-        # Combine keyboard shortcuts into fewer text calls
-        shortcuts = [
-            "'+/-' : Zoom In/Out",
-            "'r'  : Reset zoom",
-            "'1-5': Quick zoom",
-        ]
-
-        for text in shortcuts:
-            cv2.putText(frame, text, (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-            y_offset += 25
-
-        y_offset += 10
-        cv2.line(frame, (30, y_offset), (440, y_offset), (0, 255, 0), 1)
-        y_offset += 25
-
-        # Speed test controls (simplified)
-        cv2.putText(frame, "SPEED TEST", (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        y_offset += 30
-
-        speed_controls = [
-            "'X' : Speeding (75 MPH)",
-            "'C' : Reset (45 MPH)",
-            "Arrows: +/- 10 MPH",
-        ]
-
-        for text in speed_controls:
-            cv2.putText(frame, text, (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-            y_offset += 25
-
-        y_offset += 10
-        cv2.line(frame, (30, y_offset), (440, y_offset), (0, 255, 0), 1)
-        y_offset += 25
-
-        # Other controls (simplified)
-        other_controls = [
-            "'s' : Settings",
-            "'h' : Help",
-            "'q' : Quit",
-        ]
-
-        for text in other_controls:
-            cv2.putText(frame, text, (30, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-            y_offset += 25
-
-    # Always show zoom indicator and help hint
-    if settings.show_help:
-        cv2.putText(
-            frame,
-            f"Zoom: {settings.zoom_level}x",
-            (w - 150, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 255, 255),
-            2,
-        )
-        cv2.putText(
-            frame,
-            "Press 's' for Settings",
-            (w - 220, h - 20),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (200, 200, 200),
-            1,
-        )
-
-    return frame
-
-
-def draw_driving_info(frame, driving_sim, buzzer=None):
-    """Draw driving speed and speed limit information (text-based for performance)"""
-    h, w = frame.shape[:2]
-
-    # Position for driving info (top-left area)
-    x_pos = 20
-    y_pos = 20
-
-    # Calculate required height based on content
-    info_height = 180
-    info_width = 300
-
-    # Draw semi-transparent background
-    cv2.rectangle(frame, (x_pos, y_pos), (x_pos + info_width, y_pos + info_height), (30, 30, 30), -1)
-    cv2.rectangle(frame, (x_pos, y_pos), (x_pos + info_width, y_pos + info_height), (255, 255, 255), 2)
-
-    y_offset = y_pos + 25
-
-    # Current speed
-    speed = driving_sim.get_speed()
-    speed_color = driving_sim.get_speed_status()
-    cv2.putText(
-        frame,
-        f"Speed: {speed} MPH",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
-        speed_color,
-        2,
-    )
-    y_offset += 25
-
-    # Speed limit (dynamic from GPS location)
-    speed_limit = driving_sim.get_speed_limit()
-    cv2.putText(
-        frame,
-        f"Limit: {speed_limit} MPH",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (200, 200, 200),
-        1,
-    )
-    y_offset += 25
-
-    # Speeding warning
-    if driving_sim.is_speeding():
-        cv2.putText(
-            frame,
-            ">>> SPEEDING! <<<",
-            (x_pos + 10, y_offset),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 0, 255),
-            2,
-        )
-        y_offset += 25
-
-        # Play speeding alert sound
-        if buzzer:
-            buzzer.play_speeding_alert()
-
-    # Heading/Direction
-    heading_str = driving_sim.get_direction_string()
-    cv2.putText(
-        frame,
-        f"Heading: {heading_str}",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (0, 255, 255),
-        1,
-    )
-    y_offset += 25
-
-    # Status (accelerating/decelerating/steady)
-    status = driving_sim.direction.upper()
-    status_color = (0, 255, 0) if status == "STEADY" else (200, 200, 200)
-    cv2.putText(
-        frame,
-        f"Status: {status}",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        status_color,
-        1,
-    )
-    y_offset += 25
-
-    # Buzzer status
-    buzzer_status = "OFF"
-    if buzzer and hasattr(buzzer, 'is_active') and buzzer.is_active:
-        buzzer_status = "ACTIVE"
-    cv2.putText(
-        frame,
-        f"Buzzer: {buzzer_status}",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.5,
-        (255, 255, 0) if buzzer_status == "ACTIVE" else (200, 200, 200),
-        1,
-    )
-    y_offset += 25
-
-    # GPS coordinates
-    latitude = driving_sim.get_latitude()
-    longitude = driving_sim.get_longitude()
-    cv2.putText(
-        frame,
-        f"Lat: {latitude:.6f}",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (200, 200, 200),
-        1,
-    )
-    y_offset += 20
-    cv2.putText(
-        frame,
-        f"Lon: {longitude:.6f}",
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (200, 200, 200),
-        1,
-    )
-    y_offset += 20
-
-    # GPS status
-    satellites = driving_sim.get_satellites()
-    if driving_sim.is_using_gps():
-        gps_status = f"GPS: {satellites} sats"
-        gps_color = (0, 255, 0) if driving_sim.has_gps_fix() else (0, 165, 255)
-    else:
-        gps_status = "GPS: SIMULATED"
-        gps_color = (128, 128, 128)
-
-    cv2.putText(
-        frame,
-        gps_status,
-        (x_pos + 10, y_offset),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        gps_color,
-        1,
-    )
-
-    return frame
-
-
 def main():
     parser = argparse.ArgumentParser(description="Driver monitoring system")
     parser.add_argument(
@@ -1889,39 +1628,19 @@ def main():
     print(f"Camera opened successfully! (mode: {mode_label})")
     if headless:
         print("Running in headless mode — no GUI window will be shown.")
-        print("Send SIGINT (Ctrl+C) or SIGTERM to stop.")
     else:
         print("Press 'q' to quit")
-    print("\nDetection Features:")
-    print("- Face detection with bounding boxes")
-    print("- Real-time eye state detection (Open/Closed)")
-    print("- Intoxication risk assessment")
     if ENABLE_YOLO:
-        print("- Phone usage detection (YOLO)")
-        print("- Drinking detection (YOLO)")
+        print("- YOLO ENABLED")
     else:
         print("- Phone usage detection (DISABLED)")
         print("- Drinking detection (DISABLED)")
-    print("- GPS tracking (real or simulated)")
-    print("- Dynamic speed limit from GPS location (OpenStreetMap)")
-    print("- Warning sound alerts for speeding and drowsiness")
-    print("- Supabase cloud sync with real-time vehicle tracking")
     if ENABLE_STREAM:
         print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
     if not headless:
         print("- Camera zoom control (0.5x - 10x)")
-        print("\nGPS Data:")
-        print("- Satellites, Speed (mph), Direction (e.g., 342NW)")
-        print("- Latitude, Longitude")
-        print("- Falls back to Apple Park coordinates if GPS unavailable")
         if ENABLE_YOLO:
-            print("\nDistraction Detection:")
-            print("- Phone usage near face")
-            print("- Drinking from bottle/cup")
-        print("\nIntoxication Indicators:")
-        print("- Drowsiness (prolonged eye closure)")
-        print("- Excessive blinking patterns")
-        print("- Eye movement instability")
+            print("- YOLO ENABLED")
         print("\nControls:")
         print("- Press 's' to open Settings Menu")
         print("- Press '+/-' to zoom in/out")
@@ -1932,10 +1651,14 @@ def main():
         print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
 
     analyzer = FaceAnalyzer()
-    distraction_detector = DistractionDetector(enabled=ENABLE_YOLO)  # YOLO-based phone/drinking detection
+    distraction_detector = DistractionDetector(
+        enabled=ENABLE_YOLO
+    )  # YOLO-based phone/drinking detection
     settings = Settings()
     speed_limit_checker = SpeedLimitChecker(search_radius=50)  # Check within 50m radius
-    driving_sim = DrivingSimulator(gps_reader=gps_reader, speed_limit_checker=speed_limit_checker)
+    driving_sim = DrivingSimulator(
+        gps_reader=gps_reader, speed_limit_checker=speed_limit_checker
+    )
     buzzer = BuzzerController()
     buzzer.start()
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
@@ -2076,7 +1799,6 @@ def main():
         if streamer:
             stream_frame = processed_frame.copy()
             stream_frame = distraction_detector.draw_detections(stream_frame)
-            stream_frame = draw_driving_info(stream_frame, driving_sim)
             stream_frame = draw_distraction_warning(stream_frame, distraction_data)
             streamer.update_frame(stream_frame)
 
@@ -2084,25 +1806,19 @@ def main():
             # Draw distraction detection boxes
             processed_frame = distraction_detector.draw_detections(processed_frame)
 
-            # Draw driving info with buzzer
-            processed_frame = draw_driving_info(processed_frame, driving_sim, buzzer)
-
             # Draw distraction warning banner if detected
-            processed_frame = draw_distraction_warning(processed_frame, distraction_data)
-
-            # Draw settings overlay
-            final_frame = draw_settings_overlay(processed_frame, settings)
+            processed_frame = draw_distraction_warning(
+                processed_frame, distraction_data
+            )
 
             # Display the frame
-            cv2.imshow("Face & Eye Analysis - Press Q to Quit", final_frame)
+            cv2.imshow("Infineon Project - Winter 2026", processed_frame)
 
             # Handle keyboard input
             key = cv2.waitKey(1) & 0xFF
 
             if key == ord("q"):
                 break
-            elif key == ord("s"):
-                settings.toggle_settings()
             elif key == ord("h"):
                 settings.show_help = not settings.show_help
             elif key == ord("+") or key == ord("="):
@@ -2134,7 +1850,9 @@ def main():
                 print("Zoom: 10.0x")
 
             # Speed control keys (for testing)
-            elif key == 82 or key == 0:  # Up arrow (different codes on different systems)
+            elif (
+                key == 82 or key == 0
+            ):  # Up arrow (different codes on different systems)
                 driving_sim.manual_speed_increase(10)
                 print(f"Speed increased to: {driving_sim.get_speed()} MPH")
             elif key == 84 or key == 1:  # Down arrow
