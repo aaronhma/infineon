@@ -16,6 +16,8 @@ import SwiftUI
 struct VehicleView: View {
   var vehicle: V2Profile
 
+  @Namespace private var namespace
+
   @State private var showingUnidentifiedFaces = false
   @State private var showingVehicleAccessSheet = false
 
@@ -32,6 +34,13 @@ struct VehicleView: View {
   // Buzzer preview data
   @State private var cachedBuzzerActive: Bool?
   @State private var cachedBuzzerType: String?
+
+  enum VehicleOptions: Hashable {
+    case faceDetections
+    case liveCamera
+    case alert
+    case liveLocation
+  }
 
   var body: some View {
     NavigationStack {
@@ -72,9 +81,7 @@ struct VehicleView: View {
             .tint(.primary)
           }
 
-          NavigationLink {
-            FaceDetectionsView(vehicle: vehicle.vehicle)
-          } label: {
+          NavigationLink(value: VehicleOptions.faceDetections) {
             Label {
               VStack(alignment: .leading) {
                 Text("Face Detections")
@@ -83,10 +90,11 @@ struct VehicleView: View {
                   .foregroundStyle(.secondary)
               }
             } icon: {
-              Image(
-                systemName: "person.crop.rectangle.stack.fill"
+              SettingsBoxView(
+                icon: "person.crop.rectangle.stack.fill",
+                color: .blue
               )
-              .foregroundStyle(.blue)
+              .stableMatchedTransition(id: VehicleOptions.faceDetections, in: namespace)
             }
           }
           .tint(.primary)
@@ -97,14 +105,24 @@ struct VehicleView: View {
         // Live Data Section
         if let data = vehicle.realtimeData {
           Section("Live Data") {
-            NavigationLink {
-              VehicleAlertControlView(
-                vehicleId: vehicle.vehicle.id,
-                vehicleName: vehicle.name,
-                initialBuzzerActive: cachedBuzzerActive,
-                initialBuzzerType: cachedBuzzerType
-              )
-            } label: {
+            NavigationLink(value: VehicleOptions.liveCamera) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text("Live Camera")
+                  Text("View real-time camera feed")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                SettingsBoxView(
+                  icon: "video.fill",
+                  color: .green
+                )
+                .stableMatchedTransition(id: VehicleOptions.liveCamera, in: namespace)
+              }
+            }
+
+            NavigationLink(value: VehicleOptions.alert) {
               Label {
                 VStack(alignment: .leading) {
                   Text("Alert")
@@ -117,21 +135,14 @@ struct VehicleView: View {
                   icon: "bell.fill",
                   color: .red
                 )
+                .stableMatchedTransition(id: VehicleOptions.alert, in: namespace)
               }
             }
             .task {
               await fetchBuzzerStatus()
             }
 
-            NavigationLink {
-              VehicleLiveLocationView(
-                vehicleData: data,
-                vehicleName: vehicle.name,
-                cachedRoute: cachedRoute,
-                cachedStreetName: vehicleStreetName,
-                cachedUserLocation: cachedUserCoordinate
-              )
-            } label: {
+            NavigationLink(value: VehicleOptions.liveLocation) {
               Label {
                 // Primary: Street name, fallback: "Live Location"
                 if let streetName = vehicleStreetName {
@@ -161,6 +172,7 @@ struct VehicleView: View {
                   icon: "location.fill",
                   color: .blue
                 )
+                .stableMatchedTransition(id: VehicleOptions.liveLocation, in: namespace)
               }
             }
             .task {
@@ -336,6 +348,39 @@ struct VehicleView: View {
           Text("Currently chosen vehicle info. Connected to server.")
         }
       }
+      .navigationDestination(for: VehicleOptions.self) { route in
+        switch route {
+        case .faceDetections:
+          FaceDetectionsView(vehicle: vehicle.vehicle)
+            .navigationTransition(.zoom(sourceID: VehicleOptions.faceDetections, in: namespace))
+        case .liveCamera:
+          VehicleLiveCameraView(vehicleId: vehicle.vehicle.id)
+            .navigationTransition(.zoom(sourceID: VehicleOptions.liveCamera, in: namespace))
+        case .alert:
+          VehicleAlertControlView(
+            vehicleId: vehicle.vehicle.id,
+            vehicleName: vehicle.name,
+            initialBuzzerActive: cachedBuzzerActive,
+            initialBuzzerType: cachedBuzzerType
+          )
+          .navigationTransition(.zoom(sourceID: VehicleOptions.alert, in: namespace))
+        case .liveLocation:
+          Group {
+            if let data = vehicle.realtimeData {
+              VehicleLiveLocationView(
+                vehicleData: data,
+                vehicleName: vehicle.name,
+                cachedRoute: cachedRoute,
+                cachedStreetName: vehicleStreetName,
+                cachedUserLocation: cachedUserCoordinate
+              )
+            } else {
+              Text("Unable to load location.")
+            }
+          }
+          .navigationTransition(.zoom(sourceID: VehicleOptions.liveLocation, in: namespace))
+        }
+      }
       .navigationTitle(vehicle.name)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
@@ -347,6 +392,7 @@ struct VehicleView: View {
           }
         }
       }
+      //      .dynamicIslandToast(isPresented: .constant(vehicleStreetName != nil), toast: .init(symbol: "xmark.circle.fill", symbolForegroundStyle: (.green, .white), title: "Distracted Driving", message: "Driver was alerted"))
     }
     .sheet(isPresented: $showingVehicleAccessSheet) {
       VehicleAccessSheet(vehicle: vehicle.vehicle)
@@ -1258,5 +1304,249 @@ struct VehicleAlertControlView: View {
       initialBuzzerActive: nil,
       initialBuzzerType: nil
     )
+  }
+}
+
+// MARK: - Live Camera View
+
+struct VehicleLiveCameraView: View {
+  let vehicleId: String
+
+  @State private var currentFrame: UIImage?
+  @State private var isStreaming = false
+  @State private var error: String?
+  @State private var pollTask: Task<Void, Never>?
+  @State private var vehicleData: VehicleRealtime?
+  @State private var dataTask: Task<Void, Never>?
+
+  var body: some View {
+    VStack(spacing: 0) {
+      // Camera feed
+      ZStack {
+        if let frame = currentFrame {
+          Image(uiImage: frame)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+        } else if isStreaming {
+          ProgressView("Connecting to camera...")
+            .controlSize(.extraLarge)
+        } else if let error {
+          ContentUnavailableView {
+            Label("Stream Unavailable", systemImage: "video.slash")
+          } description: {
+            Text(error)
+          } actions: {
+            Button("Retry") {
+              self.error = nil
+              startPolling()
+            }
+            .buttonStyle(.borderedProminent)
+            .possibleGlassEffect(.accentColor, in: .capsule)
+          }
+        }
+      }
+
+      // Vehicle stats
+      if let data = vehicleData {
+        ScrollView {
+          VStack(spacing: 12) {
+            // Speed row
+            HStack {
+              Label("Speed", systemImage: "speedometer")
+              Spacer()
+              Text("\(data.speedMph) mph")
+                .foregroundStyle(data.isSpeeding ? .red : .primary)
+                .bold()
+            }
+
+            Divider()
+
+            // Speed limit
+            HStack {
+              Label("Speed Limit", systemImage: "mph")
+              Spacer()
+              Text("\(data.speedLimitMph) mph")
+            }
+
+            Divider()
+
+            // Heading
+            HStack {
+              Label("Heading", systemImage: "location.north.fill")
+              Spacer()
+              HStack(spacing: 4) {
+                Image(systemName: "location.north.fill")
+                  .rotationEffect(.degrees(Double(data.headingDegrees)))
+                  .foregroundStyle(.blue)
+                Text("\(data.headingDegrees)° \(data.compassDirection)")
+              }
+            }
+
+            Divider()
+
+            // Status (moving/parked)
+            HStack {
+              Label("Status", systemImage: "location.circle.fill")
+              Spacer()
+              HStack(spacing: 6) {
+                Circle()
+                  .fill(data.isMoving ? .green : .gray)
+                  .frame(width: 8, height: 8)
+                Text(data.isMoving ? "Moving" : "Parked")
+              }
+            }
+
+            Divider()
+
+            // Driver status
+            HStack {
+              Label("Driver Status", systemImage: "person.fill")
+              Spacer()
+              DriverStatusBadge(status: data.driverStatus)
+            }
+
+            Divider()
+
+            // Risk score
+            HStack {
+              Label("Risk Score", systemImage: "exclamationmark.triangle.fill")
+              Spacer()
+              Text("\(data.intoxicationScore)/6")
+                .foregroundStyle(intoxicationColor(for: data.intoxicationScore))
+                .bold()
+            }
+
+            Divider()
+
+            // GPS satellites
+            if let satellites = data.satellites {
+              HStack {
+                Label("GPS Satellites", systemImage: "location.fill")
+                Spacer()
+                HStack(spacing: 4) {
+                  Image(systemName: "location.fill")
+                    .foregroundStyle(satellites > 0 ? .green : .gray)
+                  Text("\(satellites)")
+                    .foregroundStyle(satellites > 0 ? .primary : .secondary)
+                }
+              }
+
+              Divider()
+            }
+
+            // Last updated
+            HStack {
+              Label("Last Updated", systemImage: "clock.fill")
+              Spacer()
+              Text(data.updatedAt, style: .relative)
+                .foregroundStyle(.secondary)
+                .font(.caption)
+            }
+          }
+          .padding()
+          .font(.subheadline)
+        }
+        .frame(maxHeight: 280)
+        .background(Color(.systemBackground))
+      }
+    }
+    .navigationTitle("Live Camera")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbar {
+      ToolbarItem(placement: .topBarTrailing) {
+        Circle()
+          .fill(currentFrame != nil ? .green : (isStreaming ? .yellow : .red))
+          .frame(width: 15, height: 15)
+      }
+    }
+    .onAppear {
+      startPolling()
+      startFetchingData()
+    }
+    .onDisappear {
+      stopPolling()
+      stopFetchingData()
+    }
+  }
+
+  private func startPolling() {
+    stopPolling()
+    isStreaming = true
+
+    pollTask = Task {
+      var consecutiveErrors = 0
+
+      while !Task.isCancelled {
+        do {
+          let data = try await supabase.client.storage
+            .from("live-frames")
+            .download(path: "\(vehicleId)/latest.jpg")
+
+          if let image = UIImage(data: data) {
+            currentFrame = image
+            consecutiveErrors = 0
+          }
+        } catch {
+          consecutiveErrors += 1
+          // Only give up if we never got a frame and many attempts failed
+          if consecutiveErrors > 15 && currentFrame == nil {
+            self.error =
+              "Make sure ENABLE_STREAM=true on the vehicle."
+            isStreaming = false
+            return
+          }
+        }
+
+        try? await Task.sleep(for: .milliseconds(300))
+      }
+    }
+  }
+
+  private func stopPolling() {
+    pollTask?.cancel()
+    pollTask = nil
+    isStreaming = false
+  }
+
+  private func startFetchingData() {
+    stopFetchingData()
+
+    dataTask = Task {
+      while !Task.isCancelled {
+        do {
+          let response: [VehicleRealtime] = try await supabase.client
+            .from("vehicle_realtime")
+            .select()
+            .eq("vehicle_id", value: vehicleId)
+            .execute()
+            .value
+
+          if let data = response.first {
+            vehicleData = data
+          }
+        } catch {
+          // Silently continue if fetch fails
+        }
+
+        try? await Task.sleep(for: .milliseconds(500))
+      }
+    }
+  }
+
+  private func stopFetchingData() {
+    dataTask?.cancel()
+    dataTask = nil
+  }
+
+  private func intoxicationColor(for score: Int) -> Color {
+    if score >= 4 { return .red }
+    if score >= 2 { return .orange }
+    return .green
+  }
+}
+
+#Preview("Live Camera") {
+  NavigationStack {
+    VehicleLiveCameraView(vehicleId: "test-vehicle")
   }
 }

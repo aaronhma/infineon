@@ -83,7 +83,7 @@ struct VehicleAccessSheet: View {
                 }
               }
             } header: {
-              Text("Other")
+              Text("Authorized Drivers")
             } footer: {
               if isOwner {
                 Text(
@@ -143,9 +143,9 @@ struct VehicleAccessSheet: View {
       .task {
         await loadAccessUsers()
       }
-      .refreshable {
-        await loadAccessUsers()
-      }
+      //      .refreshable {
+      //        await loadAccessUsers()
+      //      }
     }
   }
 
