@@ -39,6 +39,7 @@ struct VehicleView: View {
     case faceDetections
     case liveCamera
     case alert
+    case shazamHistory
     case liveLocation
   }
 
@@ -140,6 +141,23 @@ struct VehicleView: View {
             }
             .task {
               await fetchBuzzerStatus()
+            }
+
+            NavigationLink(value: VehicleOptions.shazamHistory) {
+              Label {
+                VStack(alignment: .leading) {
+                  Text("Shazam History")
+                  Text("View detected songs")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+              } icon: {
+                SettingsBoxView(
+                  icon: "music.note.list",
+                  color: .purple
+                )
+                .stableMatchedTransition(id: VehicleOptions.shazamHistory, in: namespace)
+              }
             }
 
             NavigationLink(value: VehicleOptions.liveLocation) {
@@ -364,6 +382,9 @@ struct VehicleView: View {
             initialBuzzerType: cachedBuzzerType
           )
           .navigationTransition(.zoom(sourceID: VehicleOptions.alert, in: namespace))
+        case .shazamHistory:
+          ShazamHistoryView(vehicleId: vehicle.vehicle.id)
+            .navigationTransition(.zoom(sourceID: VehicleOptions.shazamHistory, in: namespace))
         case .liveLocation:
           Group {
             if let data = vehicle.realtimeData {

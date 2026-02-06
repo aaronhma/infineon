@@ -51,6 +51,17 @@ class MicrophoneController:
 
             self.pyaudio = pyaudio.PyAudio()
 
+            # List all available input devices for debugging
+            print("\n=== Available Audio Input Devices ===")
+            available_devices = []
+            for i in range(self.pyaudio.get_device_count()):
+                device_info = self.pyaudio.get_device_info_by_index(i)
+                if device_info.get('maxInputChannels', 0) > 0:
+                    available_devices.append((i, device_info))
+                    print(f"  [{i}] {device_info.get('name', 'Unknown')} "
+                          f"({device_info.get('maxInputChannels', 0)} channels, "
+                          f"{int(device_info.get('defaultSampleRate', 0))} Hz)")
+
             # Find available input device if not specified
             if device_index is None:
                 device_index = self._find_input_device()
@@ -63,6 +74,12 @@ class MicrophoneController:
             # Get device info
             device_info = self.pyaudio.get_device_info_by_index(device_index)
             device_name = device_info.get('name', 'Unknown')
+            print(f"\n=== Selected Device ===")
+            print(f"  Device: {device_name}")
+            print(f"  Index: {device_index}")
+            print(f"  Channels: {self.channels}")
+            print(f"  Sample Rate: {self.sample_rate} Hz")
+            print(f"  Chunk Size: {self.chunk_size} frames")
 
             # Open audio stream
             self.stream = self.pyaudio.open(
@@ -76,10 +93,14 @@ class MicrophoneController:
             )
 
             self.use_fake = False
-            print(f"Microphone connected: {device_name} (device {device_index})")
+            print(f"\n✓ Microphone initialized successfully")
+            print(f"  Note: On macOS, you may need to grant microphone permissions")
+            print(f"  Go to: System Preferences → Security & Privacy → Microphone")
 
         except Exception as e:
-            print(f"Microphone unavailable ({e}), using simulated mode")
+            print(f"\n✗ Microphone unavailable ({e}), using simulated mode")
+            import traceback
+            traceback.print_exc()
             self.use_fake = True
 
         # Start recording thread
@@ -235,6 +256,65 @@ class MicrophoneController:
             chunk_count = len(self.audio_buffer)
 
         return (chunk_count * self.chunk_size) / self.sample_rate
+
+    def get_audio_level(self):
+        """Get current audio level (RMS amplitude)
+
+        Returns:
+            float: RMS amplitude (0.0 to 1.0), or -1 if no data available
+        """
+        with self._lock:
+            if len(self.audio_buffer) == 0:
+                return -1
+
+            # Get the most recent chunk
+            recent_chunk = self.audio_buffer[-1]
+
+        if not recent_chunk:
+            return -1
+
+        # Convert bytes to numpy array of int16
+        import numpy as np
+        audio_data = np.frombuffer(recent_chunk, dtype=np.int16)
+
+        # Calculate RMS (root mean square) amplitude
+        rms = np.sqrt(np.mean(audio_data.astype(float) ** 2))
+
+        # Normalize to 0-1 range (int16 max is 32768)
+        normalized_rms = rms / 32768.0
+
+        return normalized_rms
+
+    def test_audio_input(self, duration=3):
+        """Test audio input and show level meter
+
+        Args:
+            duration: How many seconds to test (default: 3)
+        """
+        import time
+
+        print(f"\n=== Testing Audio Input ({duration}s) ===")
+        print("Speak or play music near the microphone...")
+        print("")
+
+        for i in range(duration * 10):  # Check 10 times per second
+            level = self.get_audio_level()
+
+            if level < 0:
+                print("  Waiting for audio data...")
+            else:
+                # Create a visual level meter
+                bar_length = 50
+                filled = int(level * bar_length)
+                bar = "█" * filled + "░" * (bar_length - filled)
+                percentage = level * 100
+
+                status = "LOUD" if level > 0.5 else "GOOD" if level > 0.1 else "QUIET" if level > 0.01 else "SILENT"
+                print(f"  [{bar}] {percentage:5.1f}% - {status}", end="\r")
+
+            time.sleep(0.1)
+
+        print("\n\n✓ Audio test complete")
 
 
 # For standalone testing

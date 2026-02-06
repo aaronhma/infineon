@@ -12,13 +12,23 @@ from typing import Optional
 class ShazamRecognizer:
     """Music recognition using Shazam API"""
 
-    def __init__(self):
-        """Initialize Shazam recognizer"""
+    def __init__(self, debug_save_audio=False):
+        """Initialize Shazam recognizer
+
+        Args:
+            debug_save_audio: If True, saves audio samples to audio_samples/ directory
+        """
         self.shazam = None
         self.use_fake = False
         self.last_recognition = None
-        self.last_recognition_time = 0
-        self.recognition_cooldown = 5.0  # Minimum 5 seconds between recognitions
+        self.debug_save_audio = debug_save_audio
+
+        # Create audio samples directory if debug mode is enabled
+        if self.debug_save_audio:
+            import os
+            self.audio_samples_dir = "audio_samples"
+            os.makedirs(self.audio_samples_dir, exist_ok=True)
+            print(f"SHAZAM DEBUG: Audio samples will be saved to {self.audio_samples_dir}/")
 
     def start(self):
         """Initialize the Shazam client"""
@@ -56,26 +66,24 @@ class ShazamRecognizer:
                 'spotify_url': str (optional),
             }
         """
-        # Rate limiting
-        current_time = time.time()
-        if current_time - self.last_recognition_time < self.recognition_cooldown:
-            print("Recognition rate limited, waiting...")
-            time.sleep(self.recognition_cooldown - (current_time - self.last_recognition_time))
-
         if self.use_fake:
+            print("SHAZAM: Using simulated mode - generating fake song")
             return self._fake_recognition()
 
         try:
+            print("SHAZAM: Sending audio to Shazam API for recognition...")
             # Run async recognition
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             result = loop.run_until_complete(self.shazam.recognize(audio_file_path))
             loop.close()
 
-            self.last_recognition_time = time.time()
+            if not result:
+                print("SHAZAM: ✗ API returned no result (possible reasons: no music playing, audio too quiet, network issue)")
+                return None
 
-            if not result or 'track' not in result:
-                print("No match found")
+            if 'track' not in result:
+                print("SHAZAM: ✗ No match found in Shazam database (song not recognized or not in database)")
                 return None
 
             # Parse the result
@@ -83,10 +91,13 @@ class ShazamRecognizer:
             song_info = self._parse_track_info(track)
             self.last_recognition = song_info
 
+            print(f"SHAZAM: ✓ Recognized - {song_info['title']} by {song_info['artist']}")
             return song_info
 
         except Exception as e:
-            print(f"Error during recognition: {e}")
+            print(f"SHAZAM: ✗ Error during recognition: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def recognize_from_bytes(self, audio_bytes: bytes) -> Optional[dict]:
@@ -101,16 +112,48 @@ class ShazamRecognizer:
         # Save to temporary file since shazamio works with files
         import tempfile
         import os
+        from datetime import datetime
 
         temp_file = None
+        debug_file = None
+
         try:
             # Create temporary file
             with tempfile.NamedTemporaryFile(mode='wb', suffix='.wav', delete=False) as f:
                 temp_file = f.name
                 f.write(audio_bytes)
 
+            # Save debug copy if debug mode is enabled
+            if self.debug_save_audio:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                debug_file = os.path.join(self.audio_samples_dir, f"sample_{timestamp}.wav")
+                with open(debug_file, 'wb') as f:
+                    f.write(audio_bytes)
+                print(f"SHAZAM DEBUG: Saved audio to {debug_file}")
+
+            print(f"SHAZAM: Analyzing {len(audio_bytes)} bytes of audio...")
+
             # Recognize from temp file
             result = self.recognize_from_file(temp_file)
+
+            # If debug mode and recognition succeeded, rename the file to include song info
+            if self.debug_save_audio and debug_file and result:
+                # Sanitize filename (remove invalid characters)
+                title = result.get('title', 'Unknown')
+                artist = result.get('artist', 'Unknown')
+                safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
+                safe_artist = "".join(c for c in artist if c.isalnum() or c in (' ', '-', '_')).strip()
+
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                new_name = os.path.join(
+                    self.audio_samples_dir,
+                    f"{timestamp}_{safe_artist}_-_{safe_title}.wav"
+                )
+                try:
+                    os.rename(debug_file, new_name)
+                    print(f"SHAZAM DEBUG: Renamed to {new_name}")
+                except Exception:
+                    pass  # Keep original name if rename fails
 
             return result
 

@@ -26,6 +26,8 @@ from supabase import Client, create_client
 
 from components.buzzer import BuzzerController
 from components.gps import GPSReader
+from components.microphone import MicrophoneController
+from components.shazam import ShazamRecognizer
 from components.speed_limit import SpeedLimitChecker
 
 # Performance optimization constants
@@ -65,6 +67,13 @@ ENABLE_STREAM = os.environ.get("ENABLE_STREAM", "false").lower() in ("true", "1"
 STREAM_QUALITY = int(os.environ.get("STREAM_QUALITY", "50"))
 STREAM_FPS = int(os.environ.get("STREAM_FPS", "3"))
 STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
+
+# Check if Shazam music recognition should be enabled (defaults to False)
+ENABLE_SHAZAM = os.environ.get("ENABLE_SHAZAM", "true").lower() in ("true", "1", "yes")
+SHAZAM_INTERVAL = int(
+    os.environ.get("SHAZAM_INTERVAL", "20")
+)  # Seconds between recognitions
+SHAZAM_DEBUG = os.environ.get("SHAZAM_DEBUG", "false").lower() in ("true", "1", "yes")
 
 
 class VideoStreamer:
@@ -246,6 +255,7 @@ class SupabaseUploader:
         self._driver_check_busy = False
         self._buzzer_check_busy = False
         self._trip_sync_busy = False
+        self._music_upload_busy = False
 
         # Driver identification
         self.driver_profiles = {}  # {profile_id: profile_data}
@@ -721,6 +731,70 @@ class SupabaseUploader:
                 self._buzzer_check_busy = False
 
         threading.Thread(target=_do_check, daemon=True).start()
+
+    def upload_music_detection(self, song_info: dict):
+        """Upload detected music to Supabase (non-blocking)
+
+        Args:
+            song_info: Dictionary with song information from Shazam
+                {title, artist, album, release_year, genres, shazam_url, etc.}
+        """
+        if not song_info:
+            return
+        if self._music_upload_busy:
+            return
+
+        self._music_upload_busy = True
+
+        # Snapshot data to avoid races
+        record = {
+            "vehicle_id": self.vehicle_id,
+            "session_id": self.session_id,
+            "title": song_info.get("title", "Unknown"),
+            "artist": song_info.get("artist", "Unknown Artist"),
+            "detected_at": datetime.now(PST).isoformat(),
+        }
+
+        # Optional fields
+        if "album" in song_info:
+            record["album"] = song_info["album"]
+        if "release_year" in song_info:
+            record["release_year"] = song_info["release_year"]
+        if "genres" in song_info:
+            record["genres"] = song_info["genres"]
+        if "label" in song_info:
+            record["label"] = song_info["label"]
+        if "shazam_url" in song_info:
+            record["shazam_url"] = song_info["shazam_url"]
+        if "apple_music_url" in song_info:
+            record["apple_music_url"] = song_info["apple_music_url"]
+        if "spotify_url" in song_info:
+            record["spotify_url"] = song_info["spotify_url"]
+
+        def _do_upload():
+            try:
+                # Insert music detection
+                self.client.table("music_detections").insert(record).execute()
+
+                # Update vehicle_realtime with current song
+                self.client.table("vehicle_realtime").upsert(
+                    {
+                        "vehicle_id": self.vehicle_id,
+                        "current_song_title": record["title"],
+                        "current_song_artist": record["artist"],
+                        "current_song_detected_at": record["detected_at"],
+                        "updated_at": datetime.now(PST).isoformat(),
+                    }
+                ).execute()
+
+                print(f"\n🎵 Detected: {record['title']} by {record['artist']}")
+
+            except Exception as e:
+                print(f"Error uploading music detection: {e}")
+            finally:
+                self._music_upload_busy = False
+
+        threading.Thread(target=_do_upload, daemon=True).start()
 
     def update_vehicle_realtime(
         self,
@@ -1566,6 +1640,160 @@ class FaceAnalyzer:
         return frame, detection_data
 
 
+class MusicRecognizer:
+    """Manages microphone and Shazam integration for ambient music detection"""
+
+    def __init__(self, recognition_interval=20, debug_save_audio=False):
+        """Initialize music recognizer
+
+        Args:
+            recognition_interval: Seconds between recognition attempts (default: 20)
+            debug_save_audio: If True, saves audio samples to audio_samples/ directory
+        """
+        self.microphone = None
+        self.shazam = None
+        self.recognition_interval = recognition_interval
+        self.debug_save_audio = debug_save_audio
+        self.last_recognition = 0
+        self.enabled = False
+        self._recognizing = False
+
+    def start(self):
+        """Start microphone and Shazam services"""
+        try:
+            # Initialize microphone
+            self.microphone = MicrophoneController(sample_rate=44100, channels=1)
+            self.microphone.start()
+
+            # Initialize Shazam
+            self.shazam = ShazamRecognizer(debug_save_audio=self.debug_save_audio)
+            self.shazam.start()
+
+            self.enabled = True
+
+            # Determine mode
+            if self.microphone.is_fake and self.shazam.is_fake:
+                mode = "SIMULATED (no microphone or Shazam API)"
+            elif self.microphone.is_fake:
+                mode = "REAL SHAZAM / SIMULATED MICROPHONE (no audio input device)"
+            elif self.shazam.is_fake:
+                mode = "REAL MICROPHONE / SIMULATED SHAZAM (no shazamio library)"
+            else:
+                mode = "REAL (hardware microphone + Shazam API)"
+
+            print(f"\nMusic recognition enabled:")
+            print(f"  Mode: {mode}")
+            print(f"  Interval: {self.recognition_interval}s between attempts")
+            print(f"  Microphone: {'SIMULATED' if self.microphone.is_fake else 'REAL'}")
+            print(f"  Shazam API: {'SIMULATED' if self.shazam.is_fake else 'REAL'}")
+
+        except Exception as e:
+            print(f"Music recognition unavailable: {e}")
+            self.enabled = False
+
+    def stop(self):
+        """Stop microphone and cleanup resources"""
+        if self.microphone:
+            self.microphone.stop()
+        print("Music recognition stopped")
+
+    def should_recognize(self):
+        """Check if enough time has passed for another recognition"""
+        current_time = time.time()
+        return (
+            self.enabled
+            and not self._recognizing
+            and (current_time - self.last_recognition) >= self.recognition_interval
+        )
+
+    def recognize_song(self, callback=None):
+        """Attempt to recognize currently playing song (non-blocking)
+
+        Args:
+            callback: Optional function to call with song_info when recognition completes
+        """
+        if not self.should_recognize():
+            return
+
+        self._recognizing = True
+        self.last_recognition = time.time()
+
+        print("\nSHAZAM: Capturing audio for music recognition...")
+
+        def _do_recognition():
+            try:
+                # Get recent audio (last 5 seconds for recognition)
+                wav_data = self.microphone.get_audio_wav(duration=5)
+                audio_bytes = wav_data.getvalue()
+
+                # Check audio level
+                audio_level = self.microphone.get_audio_level()
+                level_status = (
+                    "SILENT"
+                    if audio_level < 0.01
+                    else "QUIET"
+                    if audio_level < 0.1
+                    else "GOOD"
+                    if audio_level < 0.5
+                    else "LOUD"
+                )
+
+                print(
+                    f"SHAZAM: Captured {len(audio_bytes)} bytes of audio (level: {audio_level * 100:.1f}% - {level_status})"
+                )
+
+                # Check if we actually got audio data
+                if len(audio_bytes) < 1000:
+                    print(
+                        f"SHAZAM: ✗ Warning - very little audio captured ({len(audio_bytes)} bytes)"
+                    )
+                    print(
+                        "SHAZAM:   Check if microphone is working and music is playing"
+                    )
+                    return
+
+                # Warn if audio is silent or very quiet
+                if audio_level < 0.01:
+                    print(
+                        f"SHAZAM: ⚠️  Warning - microphone is SILENT (level: {audio_level * 100:.1f}%)"
+                    )
+                elif audio_level < 0.05:
+                    print(
+                        f"SHAZAM: ⚠️  Warning - audio is very QUIET (level: {audio_level * 100:.1f}%)"
+                    )
+
+                # Recognize song
+                song_info = self.shazam.recognize_from_bytes(audio_bytes)
+
+                # Call callback if provided
+                if callback and song_info:
+                    callback(song_info)
+                elif not song_info:
+                    print("SHAZAM: No song identified from audio")
+                    if self.microphone.is_fake:
+                        print("SHAZAM:   (Using simulated microphone - no real audio)")
+
+            except Exception as e:
+                print(f"SHAZAM: ✗ Error during music recognition: {e}")
+                import traceback
+
+                traceback.print_exc()
+            finally:
+                self._recognizing = False
+
+        threading.Thread(target=_do_recognition, daemon=True).start()
+
+    @property
+    def is_recognizing(self):
+        """Check if currently performing recognition"""
+        return self._recognizing
+
+    @property
+    def is_enabled(self):
+        """Check if music recognition is enabled and working"""
+        return self.enabled
+
+
 def draw_distraction_warning(frame, distraction_data):
     """Draw prominent distraction warning banner on frame (optimized)
 
@@ -1687,6 +1915,8 @@ def main():
         print("- YOLO DISABLED")
     if ENABLE_STREAM:
         print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
+    if ENABLE_SHAZAM:
+        print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
     if not headless:
         print("- Camera zoom control (0.5x - 10x)")
         if ENABLE_YOLO:
@@ -1724,6 +1954,14 @@ def main():
             width=STREAM_WIDTH,
         )
         streamer.start()
+
+    # Music recognition (Shazam)
+    music_recognizer = None
+    if ENABLE_SHAZAM:
+        music_recognizer = MusicRecognizer(
+            recognition_interval=SHAZAM_INTERVAL, debug_save_audio=SHAZAM_DEBUG
+        )
+        music_recognizer.start()
 
     frame_count = 0
 
@@ -1845,6 +2083,12 @@ def main():
         # Check for remote buzzer commands (every 2s)
         supabase_uploader.check_buzzer_commands()
 
+        # Attempt music recognition periodically
+        if music_recognizer:
+            music_recognizer.recognize_song(
+                callback=supabase_uploader.upload_music_detection
+            )
+
         # Draw distraction overlays once (used for both streaming and GUI)
         # This is more efficient than drawing twice
         processed_frame = distraction_detector.draw_detections(processed_frame)
@@ -1912,6 +2156,8 @@ def main():
     # End trip and release resources
     if streamer:
         streamer.stop()
+    if music_recognizer:
+        music_recognizer.stop()
     supabase_uploader.end_trip()
     buzzer.stop()
     gps_reader.stop()

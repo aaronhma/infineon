@@ -338,14 +338,15 @@ def test_speed_limit():
 
 
 def test_microphone():
-    """Test microphone module"""
+    """Test microphone module with comprehensive diagnostics"""
     print("\n=== Testing Microphone Module ===")
     try:
         from components.microphone import MicrophoneController
 
         print("✓ Microphone module imported successfully")
 
-        mic = MicrophoneController()
+        # Initialize microphone
+        mic = MicrophoneController(sample_rate=44100, channels=1)
 
         # List available devices (if not in fake mode)
         if not mic.use_fake:
@@ -365,15 +366,33 @@ def test_microphone():
         mic.start()
         print("✓ Microphone started")
 
-        print(f"Mode: {'SIMULATED' if mic.is_fake else 'REAL'}")
+        # Check if in fake mode
+        if mic.is_fake:
+            print("\n⚠ WARNING: Microphone is in SIMULATED mode")
+            print("This means the microphone could not be initialized.")
+            print("\nPossible solutions:")
+            print("1. Check if pyaudio is installed: pip install pyaudio")
+            print("2. On macOS, install portaudio: brew install portaudio")
+            print("3. Check microphone permissions in System Preferences")
+            mic.stop()
+            return False
+
+        print(f"✓ Microphone initialized in REAL mode")
         print(f"Recording: {mic.is_recording}")
 
-        # Record for 3 seconds
-        print("Recording for 3 seconds...")
-        time.sleep(3)
+        # Wait for buffer to fill
+        print("\nWaiting for audio buffer to fill...")
+        time.sleep(2)
+
+        # Test audio input levels
+        print("\n--- Audio Level Test ---")
+        print("Speak, play music, or make noise near the microphone...")
+        print("The meter should show activity if audio is being captured.\n")
+
+        mic.test_audio_input(duration=5)
 
         buffer_duration = mic.buffer_duration
-        print(f"✓ Buffer contains {buffer_duration:.1f} seconds of audio")
+        print(f"\n✓ Buffer contains {buffer_duration:.1f} seconds of audio")
 
         # Test getting audio chunk
         audio_data = mic.get_audio_chunk(duration=2)
@@ -383,8 +402,21 @@ def test_microphone():
         wav_data = mic.get_audio_wav(duration=2)
         print(f"✓ Generated WAV data ({wav_data.getbuffer().nbytes} bytes)")
 
+        # Save a test recording
+        print("\n--- Saving Test Recording ---")
+        output_file = "test_microphone_output.wav"
+        print(f"Saving 5 seconds of audio to '{output_file}'...")
+        mic.save_audio(output_file, duration=5)
+        print(f"✓ Test recording saved to {output_file}")
+        print("\nTo verify:")
+        print(f"  play {output_file}  # or open {output_file}")
+
         mic.stop()
-        print("✓ Microphone stopped")
+        print("\n✓ Microphone test complete!")
+        print("\nIf the recording is silent, check:")
+        print("  - System Preferences → Security & Privacy → Microphone")
+        print("  - System Preferences → Sound → Input (check input level)")
+        print("  - Try selecting a different input device")
 
         return True
 

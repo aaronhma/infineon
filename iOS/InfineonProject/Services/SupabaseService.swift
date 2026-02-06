@@ -348,6 +348,37 @@ struct VehicleTrip: Codable, Identifiable {
   }
 }
 
+struct MusicDetection: Codable, Identifiable {
+  let id: UUID
+  let vehicleId: String
+  let sessionId: UUID?
+  let title: String
+  let artist: String
+  let album: String?
+  let releaseYear: String?
+  let genres: [String]?
+  let label: String?
+  let shazamUrl: String?
+  let appleMusicUrl: String?
+  let spotifyUrl: String?
+  let detectedAt: Date
+  let createdAt: Date
+
+  enum CodingKeys: String, CodingKey {
+    case id
+    case vehicleId = "vehicle_id"
+    case sessionId = "session_id"
+    case title, artist, album
+    case releaseYear = "release_year"
+    case genres, label
+    case shazamUrl = "shazam_url"
+    case appleMusicUrl = "apple_music_url"
+    case spotifyUrl = "spotify_url"
+    case detectedAt = "detected_at"
+    case createdAt = "created_at"
+  }
+}
+
 struct NotificationPreferences: Codable, Equatable {
   var unidentifiedFace: Bool
   var collision: Bool
@@ -1164,6 +1195,24 @@ class SupabaseService {
       .eq("session_id", value: sessionId)
       .eq("is_drinking_detected", value: true)
       .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  // MARK: - Music Detection Methods
+
+  func fetchMusicDetections(for vehicleId: String, limit: Int = 100) async throws
+    -> [MusicDetection]
+  {
+    let detections: [MusicDetection] =
+      try await client
+      .from("music_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .order("detected_at", ascending: false)
+      .limit(limit)
       .execute()
       .value
 
