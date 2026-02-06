@@ -1446,7 +1446,6 @@ struct VehicleLiveCameraView: View {
           .padding()
           .font(.subheadline)
         }
-        .frame(maxHeight: 280)
         .background(Color(.systemBackground))
       }
     }
