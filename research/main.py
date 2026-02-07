@@ -965,15 +965,20 @@ class DistractionDetector:
     BOTTLE = 39
     CUP = 41
 
-    def __init__(self, model_path="yolo-models/yolo26m.pt", enabled=True):
+    def __init__(self, model_path=None, enabled=True):
         """Initialize YOLO model for object detection
 
         Args:
             model_path: Path to YOLO model weights. Use 'yolo26n.pt' for nano (fast),
                        'yolo26s.pt' for small, 'yolo26m.pt' for medium accuracy (v26).
+                       If None, uses YOLO_MODEL_PATH env var or defaults to 'yolo-models/yolo26m.pt'.
             enabled: Whether YOLO detection is enabled (requires YOLO module)
         """
         self.enabled = enabled
+
+        # Get model path from env var if not provided
+        if model_path is None:
+            model_path = os.environ.get("YOLO_MODEL_PATH", "yolo-models/yolo26m.pt")
 
         if self.enabled:
             print(f"Loading YOLO model: {model_path}")

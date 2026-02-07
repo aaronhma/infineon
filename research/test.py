@@ -226,8 +226,8 @@ def test_yolo():
 
         print("✓ YOLO module imported successfully")
 
-        # Try loading the model
-        model_path = "yolo-models/yolo26m.pt"
+        # Try loading the model (from env var or default)
+        model_path = os.environ.get("YOLO_MODEL_PATH", "yolo-models/yolo26m.pt")
         print(f"Loading model: {model_path}")
 
         model = YOLO(model_path, task="classify")
