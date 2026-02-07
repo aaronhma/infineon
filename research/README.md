@@ -26,13 +26,6 @@ The system uses multiple AI-based indicators to assess intoxication risk:
 - MODERATE RISK - IMPAIRED (Orange): Some indicators present
 - HIGH RISK - INTOXICATED (Red): Multiple indicators detected
 
-### Settings Menu & Camera Zoom
-- Interactive settings menu with keyboard controls
-- Digital zoom from 0.5x to 10x magnification
-- Available zoom levels: 0.5x, 1.0x, 1.5x, 2.0x, 2.5x, 3.0x, 4.0x, 5.0x, 7.0x, 10.0x
-- Real-time zoom indicator overlay
-- Quick zoom shortcuts for instant level changes
-
 ### Driving Speed Simulation
 - Real-time driving speed simulation (0-100 MPH)
 - Random speed fluctuations for realistic driving behavior
@@ -116,22 +109,8 @@ $ uv run python main.py
 ## Keyboard Controls
 
 ### Settings Menu
-- **'s'** - Toggle settings menu on/off
 - **'h'** - Toggle help overlay on/off
 - **'q'** - Quit application
-
-### Zoom Controls
-- **'+'** or **'='** - Zoom in (increase magnification)
-- **'-'** or **'_'** - Zoom out (decrease magnification)
-- **'r'** - Reset zoom to 1.0x (default)
-
-### Quick Zoom Levels
-- **'1'** - Set zoom to 1.0x (default)
-- **'2'** - Set zoom to 2.0x
-- **'3'** - Set zoom to 3.0x
-- **'4'** - Set zoom to 4.0x
-- **'5'** - Set zoom to 5.0x
-- **'0'** - Set zoom to 10.0x (maximum)
 
 ### Speed Test Controls (for testing alerts)
 - **'X'** - Simulate speeding (instantly set to 75 MPH)

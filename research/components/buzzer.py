@@ -114,12 +114,14 @@ class BuzzerController:
         """
         # Define patterns for different types
         patterns = {
-            'alert': (800, 0.5, 0.5),      # 800Hz, 0.5s on, 0.5s off
-            'emergency': (1200, 0.3, 0.3),  # 1200Hz, 0.3s on, 0.3s off (faster)
-            'warning': (600, 0.7, 0.7),     # 600Hz, 0.7s on, 0.7s off (slower)
+            "alert": (800, 0.5, 0.5),  # 800Hz, 0.5s on, 0.5s off
+            "emergency": (1200, 0.3, 0.3),  # 1200Hz, 0.3s on, 0.3s off (faster)
+            "warning": (600, 0.7, 0.7),  # 600Hz, 0.7s on, 0.7s off (slower)
         }
 
-        frequency, duration_on, duration_off = patterns.get(buzzer_type, patterns['alert'])
+        frequency, duration_on, duration_off = patterns.get(
+            buzzer_type, patterns["alert"]
+        )
 
         print(f"[BUZZER] Starting continuous {buzzer_type} buzzer ({frequency}Hz)")
 
@@ -153,7 +155,7 @@ class BuzzerController:
 
         print(f"[BUZZER] Stopped continuous {buzzer_type} buzzer")
 
-    def start_continuous(self, buzzer_type='alert'):
+    def start_continuous(self, buzzer_type="alert"):
         """Start continuous buzzer (for remote activation)
 
         Args:
@@ -165,9 +167,7 @@ class BuzzerController:
 
         self.continuous_active = True
         self.continuous_thread = threading.Thread(
-            target=self._continuous_buzzer_loop,
-            args=(buzzer_type,),
-            daemon=True
+            target=self._continuous_buzzer_loop, args=(buzzer_type,), daemon=True
         )
         self.continuous_thread.start()
         print(f"[BUZZER] Remote continuous buzzer activated ({buzzer_type})")

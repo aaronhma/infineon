@@ -1160,48 +1160,6 @@ class DistractionDetector:
         return frame
 
 
-class Settings:
-    def __init__(self):
-        self.zoom_level = 1.0
-        self.zoom_levels = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.0, 10.0]
-        self.show_help = True
-
-    def increase_zoom(self):
-        """Increase zoom to next level"""
-        current_idx = (
-            self.zoom_levels.index(self.zoom_level)
-            if self.zoom_level in self.zoom_levels
-            else 1
-        )
-        if current_idx < len(self.zoom_levels) - 1:
-            self.zoom_level = self.zoom_levels[current_idx + 1]
-            return True
-        return False
-
-    def decrease_zoom(self):
-        """Decrease zoom to previous level"""
-        current_idx = (
-            self.zoom_levels.index(self.zoom_level)
-            if self.zoom_level in self.zoom_levels
-            else 1
-        )
-        if current_idx > 0:
-            self.zoom_level = self.zoom_levels[current_idx - 1]
-            return True
-        return False
-
-    def set_zoom(self, level):
-        """Set zoom to specific level"""
-        if level in self.zoom_levels:
-            self.zoom_level = level
-            return True
-        return False
-
-    def reset_zoom(self):
-        """Reset zoom to 1x"""
-        self.zoom_level = 1.0
-
-
 class DrivingSimulator:
     def __init__(
         self,
@@ -1723,8 +1681,6 @@ class MusicRecognizer:
         self._recognizing = True
         self.last_recognition = time.time()
 
-        print("\nSHAZAM: Capturing audio for music recognition...")
-
         def _do_recognition():
             try:
                 # Get recent audio (last 5 seconds for recognition)
@@ -1844,30 +1800,6 @@ def draw_distraction_warning(frame, distraction_data):
     return frame
 
 
-def apply_zoom(frame, zoom_level):
-    """Apply digital zoom to frame by cropping and resizing"""
-    if zoom_level == 1.0:
-        return frame
-
-    h, w = frame.shape[:2]
-
-    # Calculate crop dimensions
-    crop_h = int(h / zoom_level)
-    crop_w = int(w / zoom_level)
-
-    # Calculate center crop coordinates
-    start_y = (h - crop_h) // 2
-    start_x = (w - crop_w) // 2
-
-    # Crop the center region
-    cropped = frame[start_y : start_y + crop_h, start_x : start_x + crop_w]
-
-    # Resize back to original dimensions
-    zoomed = cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
-
-    return zoomed
-
-
 def main():
     parser = argparse.ArgumentParser(description="Driver monitoring system")
     parser.add_argument(
@@ -1923,14 +1855,6 @@ def main():
     if ENABLE_SHAZAM:
         print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
     if not headless:
-        print("- Camera zoom control (0.5x - 10x)")
-        if ENABLE_YOLO:
-            print("- YOLO ENABLED")
-        print("\nControls:")
-        print("- Press 's' to open Settings Menu")
-        print("- Press '+/-' to zoom in/out")
-        print("- Press '1-5' or '0' for quick zoom levels")
-        print("\nSpeed Test Controls (simulation mode only):")
         print("- Press 'X' to simulate speeding (75 MPH)")
         print("- Press 'C' to reset speed to normal (45 MPH)")
         print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
@@ -1939,7 +1863,6 @@ def main():
     distraction_detector = DistractionDetector(
         enabled=ENABLE_YOLO
     )  # YOLO-based phone/drinking detection
-    settings = Settings()
     speed_limit_checker = SpeedLimitChecker(search_radius=50)  # Check within 50m radius
     driving_sim = DrivingSimulator(
         gps_reader=gps_reader, speed_limit_checker=speed_limit_checker
@@ -1978,12 +1901,6 @@ def main():
             print("Error: Could not read frame")
             break
 
-        # Apply zoom before processing (skip in headless — no display)
-        if not headless:
-            zoomed_frame = apply_zoom(frame, settings.zoom_level)
-        else:
-            zoomed_frame = frame
-
         # Calculate timestamp in milliseconds
         timestamp_ms = int(frame_count * 33.33)  # Assuming ~30 FPS
         frame_count += 1
@@ -1992,9 +1909,7 @@ def main():
         driving_sim.update_speed()
 
         # Process frame with AI detection
-        processed_frame, detection_data = analyzer.process_frame(
-            zoomed_frame, timestamp_ms
-        )
+        processed_frame, detection_data = analyzer.process_frame(frame, timestamp_ms)
 
         # Extract intox_data for alerts
         intox_data = detection_data["intox_data"] if detection_data else None
@@ -2112,36 +2027,6 @@ def main():
 
             if key == ord("q"):
                 break
-            elif key == ord("h"):
-                settings.show_help = not settings.show_help
-            elif key == ord("+") or key == ord("="):
-                if settings.increase_zoom():
-                    print(f"Zoom: {settings.zoom_level}x")
-            elif key == ord("-") or key == ord("_"):
-                if settings.decrease_zoom():
-                    print(f"Zoom: {settings.zoom_level}x")
-            elif key == ord("r"):
-                settings.reset_zoom()
-                print("Zoom reset to 1.0x")
-            elif key == ord("1"):
-                settings.set_zoom(1.0)
-                print("Zoom: 1.0x")
-            elif key == ord("2"):
-                settings.set_zoom(2.0)
-                print("Zoom: 2.0x")
-            elif key == ord("3"):
-                settings.set_zoom(3.0)
-                print("Zoom: 3.0x")
-            elif key == ord("4"):
-                settings.set_zoom(4.0)
-                print("Zoom: 4.0x")
-            elif key == ord("5"):
-                settings.set_zoom(5.0)
-                print("Zoom: 5.0x")
-            elif key == ord("0"):
-                settings.set_zoom(10.0)
-                print("Zoom: 10.0x")
-
             # Speed control keys (for testing)
             elif (
                 key == 82 or key == 0

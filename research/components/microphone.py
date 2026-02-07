@@ -56,11 +56,13 @@ class MicrophoneController:
             available_devices = []
             for i in range(self.pyaudio.get_device_count()):
                 device_info = self.pyaudio.get_device_info_by_index(i)
-                if device_info.get('maxInputChannels', 0) > 0:
+                if device_info.get("maxInputChannels", 0) > 0:
                     available_devices.append((i, device_info))
-                    print(f"  [{i}] {device_info.get('name', 'Unknown')} "
-                          f"({device_info.get('maxInputChannels', 0)} channels, "
-                          f"{int(device_info.get('defaultSampleRate', 0))} Hz)")
+                    print(
+                        f"  [{i}] {device_info.get('name', 'Unknown')} "
+                        f"({device_info.get('maxInputChannels', 0)} channels, "
+                        f"{int(device_info.get('defaultSampleRate', 0))} Hz)"
+                    )
 
             # Find available input device if not specified
             if device_index is None:
@@ -73,12 +75,16 @@ class MicrophoneController:
 
             # Get device info
             device_info = self.pyaudio.get_device_info_by_index(device_index)
-            device_name = device_info.get('name', 'Unknown')
+            device_name = device_info.get("name", "Unknown")
 
             # Use device's default sample rate if available (fixes Raspberry Pi compatibility)
-            device_sample_rate = int(device_info.get('defaultSampleRate', self.sample_rate))
+            device_sample_rate = int(
+                device_info.get("defaultSampleRate", self.sample_rate)
+            )
             if device_sample_rate != self.sample_rate:
-                print(f"\n  Note: Using device's native sample rate {device_sample_rate} Hz instead of {self.sample_rate} Hz")
+                print(
+                    f"\n  Note: Using device's native sample rate {device_sample_rate} Hz instead of {self.sample_rate} Hz"
+                )
                 self.sample_rate = device_sample_rate
                 # Update buffer size for new sample rate
                 buffer_chunks = int(10 * self.sample_rate / self.chunk_size)
@@ -99,17 +105,16 @@ class MicrophoneController:
                 input=True,
                 input_device_index=device_index,
                 frames_per_buffer=self.chunk_size,
-                stream_callback=self._audio_callback
+                stream_callback=self._audio_callback,
             )
 
             self.use_fake = False
             print(f"\n✓ Microphone initialized successfully")
-            print(f"  Note: On macOS, you may need to grant microphone permissions")
-            print(f"  Go to: System Preferences → Security & Privacy → Microphone")
 
         except Exception as e:
             print(f"\n✗ Microphone unavailable ({e}), using simulated mode")
             import traceback
+
             traceback.print_exc()
             self.use_fake = True
 
@@ -145,7 +150,7 @@ class MicrophoneController:
 
         for i in range(self.pyaudio.get_device_count()):
             device_info = self.pyaudio.get_device_info_by_index(i)
-            if device_info.get('maxInputChannels', 0) > 0:
+            if device_info.get("maxInputChannels", 0) > 0:
                 return i
 
         return None
@@ -163,10 +168,10 @@ class MicrophoneController:
 
         for i in range(self.pyaudio.get_device_count()):
             device_info = self.pyaudio.get_device_info_by_index(i)
-            channels = device_info.get('maxInputChannels', 0)
+            channels = device_info.get("maxInputChannels", 0)
 
             if channels > 0:
-                name = device_info.get('name', 'Unknown')
+                name = device_info.get("name", "Unknown")
                 devices.append((i, name, channels))
 
         return devices
@@ -178,6 +183,7 @@ class MicrophoneController:
                 self.audio_buffer.append(in_data)
 
         import pyaudio
+
         return (None, pyaudio.paContinue)
 
     def _recording_loop(self):
@@ -186,7 +192,7 @@ class MicrophoneController:
             if self.use_fake:
                 # Simulate audio data in fake mode
                 with self._lock:
-                    fake_data = b'\x00' * (self.chunk_size * 2)  # 16-bit samples
+                    fake_data = b"\x00" * (self.chunk_size * 2)  # 16-bit samples
                     self.audio_buffer.append(fake_data)
                 time.sleep(self.chunk_size / self.sample_rate)
             else:
@@ -208,7 +214,7 @@ class MicrophoneController:
             # Get last N chunks from buffer
             recent_chunks = list(self.audio_buffer)[-chunks_needed:]
 
-        return b''.join(recent_chunks)
+        return b"".join(recent_chunks)
 
     def get_audio_wav(self, duration=5):
         """Get recent audio data as WAV format bytes
@@ -223,7 +229,7 @@ class MicrophoneController:
 
         # Create WAV file in memory
         wav_buffer = BytesIO()
-        with wave.open(wav_buffer, 'wb') as wav_file:
+        with wave.open(wav_buffer, "wb") as wav_file:
             wav_file.setnchannels(self.channels)
             wav_file.setsampwidth(2)  # 16-bit = 2 bytes
             wav_file.setframerate(self.sample_rate)
@@ -241,7 +247,7 @@ class MicrophoneController:
         """
         audio_data = self.get_audio_chunk(duration)
 
-        with wave.open(filename, 'wb') as wav_file:
+        with wave.open(filename, "wb") as wav_file:
             wav_file.setnchannels(self.channels)
             wav_file.setsampwidth(2)  # 16-bit = 2 bytes
             wav_file.setframerate(self.sample_rate)
@@ -285,6 +291,7 @@ class MicrophoneController:
 
         # Convert bytes to numpy array of int16
         import numpy as np
+
         audio_data = np.frombuffer(recent_chunk, dtype=np.int16)
 
         # Calculate RMS (root mean square) amplitude
@@ -319,7 +326,15 @@ class MicrophoneController:
                 bar = "█" * filled + "░" * (bar_length - filled)
                 percentage = level * 100
 
-                status = "LOUD" if level > 0.5 else "GOOD" if level > 0.1 else "QUIET" if level > 0.01 else "SILENT"
+                status = (
+                    "LOUD"
+                    if level > 0.5
+                    else "GOOD"
+                    if level > 0.1
+                    else "QUIET"
+                    if level > 0.01
+                    else "SILENT"
+                )
                 print(f"  [{bar}] {percentage:5.1f}% - {status}", end="\r")
 
             time.sleep(0.1)
@@ -336,6 +351,7 @@ if __name__ == "__main__":
         print("\nAvailable audio input devices:")
         try:
             import pyaudio
+
             pa = pyaudio.PyAudio()
             mic.pyaudio = pa
             devices = mic.list_devices()
@@ -355,7 +371,7 @@ if __name__ == "__main__":
         for i in range(10):
             time.sleep(1)
             buffer_sec = mic.buffer_duration
-            print(f"  {i+1}s - Buffer: {buffer_sec:.1f}s")
+            print(f"  {i + 1}s - Buffer: {buffer_sec:.1f}s")
 
         # Save a 5-second clip
         output_file = "test_recording.wav"
