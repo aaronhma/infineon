@@ -91,7 +91,7 @@ struct TripDetailView: View {
           }
 
           LabeledContent("Session ID") {
-            Text(trip.sessionId.uuidString.prefix(8))
+            Text(trip.sessionId.uuidString)
               .font(.caption)
               .foregroundStyle(.secondary)
           }

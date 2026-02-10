@@ -93,6 +93,24 @@ struct VehicleAccessSheet: View {
                 Text("You can only remove your own access.")
               }
             }
+
+            Section {
+              LabeledContent(
+                "Name",
+                value: vehicle.name ?? "Unknown Name"
+              )
+              LabeledContent("ID", value: vehicle.id)
+              if let description = vehicle.description {
+                LabeledContent(
+                  "Description",
+                  value: description
+                )
+              }
+            } header: {
+              Text("Debug")
+            } footer: {
+              Text("Currently chosen vehicle info. Connected to server.")
+            }
           }
         }
       }

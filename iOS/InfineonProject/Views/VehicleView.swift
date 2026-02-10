@@ -46,13 +46,10 @@ struct VehicleView: View {
   var body: some View {
     NavigationStack {
       List {
-        // Vehicle image section
-        Section {
-          AnimatedVehicleView()
-            .frame(height: 200)
-            .listRowBackground(Color.clear)
-            .listRowInsets(EdgeInsets())
-        }
+        AnimatedVehicleView()
+          .frame(height: 200)
+          .listRowBackground(Color.clear)
+          .listRowInsets(EdgeInsets())
 
         // Driver alert
         if let data = vehicle.realtimeData {
@@ -60,52 +57,48 @@ struct VehicleView: View {
         }
 
         // Face Detection Section
-        Section {
-          if vehicle.unidentifiedFacesCount > 0 {
-            Button {
-              showingUnidentifiedFaces = true
-            } label: {
-              Label {
-                VStack(alignment: .leading) {
-                  Text(
-                    "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
-                  )
-                  Text("Tap to identify drivers")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "face.smiling")
-                  .foregroundStyle(.orange)
-              }
-            }
-            .tint(.primary)
-          }
-
-          NavigationLink(value: VehicleOptions.faceDetections) {
+        if vehicle.unidentifiedFacesCount > 0 {
+          Button {
+            showingUnidentifiedFaces = true
+          } label: {
             Label {
               VStack(alignment: .leading) {
-                Text("Face Detections")
-                Text("View all driver snapshots")
+                Text(
+                  "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
+                )
+                Text("Tap to identify drivers")
                   .font(.caption)
                   .foregroundStyle(.secondary)
               }
             } icon: {
-              SettingsBoxView(
-                icon: "person.crop.rectangle.stack.fill",
-                color: .blue
-              )
-              .stableMatchedTransition(id: VehicleOptions.faceDetections, in: namespace)
+              Image(systemName: "face.smiling")
+                .foregroundStyle(.orange)
             }
           }
           .tint(.primary)
-        } header: {
-          Text("Driver Monitoring")
         }
+
+        NavigationLink(value: VehicleOptions.faceDetections) {
+          Label {
+            VStack(alignment: .leading) {
+              Text("Face Detections")
+              Text("View all driver snapshots")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          } icon: {
+            SettingsBoxView(
+              icon: "person.crop.rectangle.stack.fill",
+              color: .blue
+            )
+            .stableMatchedTransition(id: VehicleOptions.faceDetections, in: namespace)
+          }
+        }
+        .tint(.primary)
 
         // Live Data Section
         if let data = vehicle.realtimeData {
-          Section("Live Data") {
+          Group {
             NavigationLink(value: VehicleOptions.liveCamera) {
               Label {
                 VStack(alignment: .leading) {
@@ -347,25 +340,8 @@ struct VehicleView: View {
             }
           }
         }
-
-        Section {
-          LabeledContent(
-            "Name",
-            value: vehicle.name
-          )
-          LabeledContent("ID", value: vehicle.vehicle.id)
-          if let description = vehicle.vehicle.description {
-            LabeledContent(
-              "Description",
-              value: description
-            )
-          }
-        } header: {
-          Text("Debug")
-        } footer: {
-          Text("Currently chosen vehicle info. Connected to server.")
-        }
       }
+      .listStyle(.plain)
       .navigationDestination(for: VehicleOptions.self) { route in
         switch route {
         case .faceDetections:

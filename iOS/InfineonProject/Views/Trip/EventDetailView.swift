@@ -168,7 +168,7 @@ struct EventDetailView: View {
         }
 
         LabeledContent("Event ID") {
-          Text(event.id.uuidString.prefix(8) + "...")
+          Text(event.id.uuidString)
             .font(.caption)
             .foregroundStyle(.secondary)
         }

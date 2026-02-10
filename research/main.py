@@ -1844,7 +1844,13 @@ def main():
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     mode_label = "HEADLESS" if headless else "GUI"
+
+    # Get camera properties
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
     print(f"Camera opened successfully! (mode: {mode_label})")
+    print(f"Camera resolution: {width}x{height}")
 
     if ENABLE_YOLO:
         print("- YOLO ENABLED")
@@ -1893,7 +1899,16 @@ def main():
 
     frame_count = 0
 
+    # FPS tracking
+    fps_frame_count = 0
+    fps_start_time = time.time()
+    last_fps_print = time.time()
+    process_times = deque(maxlen=100)  # Track last 100 processing times
+
     while not shutdown_requested:
+        # Track frame start time for processing FPS
+        frame_start_time = time.time()
+
         # Capture frame-by-frame
         ret, frame = cap.read()
 
@@ -1904,6 +1919,7 @@ def main():
         # Calculate timestamp in milliseconds
         timestamp_ms = int(frame_count * 33.33)  # Assuming ~30 FPS
         frame_count += 1
+        fps_frame_count += 1
 
         # Update driving simulation
         driving_sim.update_speed()
@@ -2013,6 +2029,28 @@ def main():
         # This is more efficient than drawing twice
         processed_frame = distraction_detector.draw_detections(processed_frame)
         processed_frame = draw_distraction_warning(processed_frame, distraction_data)
+
+        # Track processing time
+        frame_end_time = time.time()
+        process_times.append(frame_end_time - frame_start_time)
+
+        # Print FPS stats every 5 seconds
+        current_time = time.time()
+        if current_time - last_fps_print >= 5.0:
+            elapsed = current_time - fps_start_time
+            capture_fps = fps_frame_count / elapsed if elapsed > 0 else 0
+            avg_process_time = sum(process_times) / len(process_times) if process_times else 0
+            process_fps = 1.0 / avg_process_time if avg_process_time > 0 else 0
+
+            print(
+                f"\n[STATS] Camera: {capture_fps:.1f} FPS | Processing: {process_fps:.1f} FPS "
+                f"({avg_process_time*1000:.1f}ms/frame) | Resolution: {width}x{height}\n"
+            )
+
+            # Reset counters
+            fps_frame_count = 0
+            fps_start_time = current_time
+            last_fps_print = current_time
 
         # Stream annotated frame to connected clients
         if streamer:

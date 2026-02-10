@@ -534,7 +534,7 @@ struct FaceDetectionDetailView: View {
           HStack {
             Label("Session", systemImage: "number")
             Spacer()
-            Text(sessionId.uuidString.prefix(8) + "...")
+            Text(sessionId.uuidString)
               .font(.caption)
               .foregroundStyle(.secondary)
           }
