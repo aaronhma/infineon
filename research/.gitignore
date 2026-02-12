@@ -3,3 +3,5 @@
 __pycache__
 .venv
 audio_samples/
+test_out.mp4
+test_dark_video.mp4

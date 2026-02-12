@@ -960,10 +960,13 @@ class SupabaseUploader:
 class DistractionDetector:
     """YOLO-based detector for phone usage and drinking detection"""
 
-    # COCO class IDs for objects we care about
+    # COCO class IDs for driver monitoring
     CELL_PHONE = 67
     BOTTLE = 39
     CUP = 41
+    PHONE_CLASSES = {67}                     # cell phone
+    DRINK_CLASSES = {39, 40, 41}             # bottle, wine glass, cup
+    DEVICE_CLASSES = {63, 65, 67, 73}        # laptop, remote, cell phone, book
 
     def __init__(self, model_path=None, enabled=True):
         """Initialize YOLO model for object detection
@@ -980,9 +983,14 @@ class DistractionDetector:
         if model_path is None:
             model_path = os.environ.get("YOLO_MODEL_PATH", "yolo-models/yolo26m.pt")
 
+        # Classes relevant to driver monitoring (subset of COCO 80)
+        self.TARGET_CLASSES = [0, 39, 40, 41, 63, 65, 67, 73]
+        #  0=person, 39=bottle, 40=wine glass, 41=cup,
+        # 63=laptop, 65=remote, 67=cell phone, 73=book
+
         if self.enabled:
             print(f"Loading YOLO model: {model_path}")
-            self.model = YOLO(model_path, task="classify")
+            self.model = YOLO(model_path)
             self.confidence_threshold = 0.25  # Lower threshold for better detection
             print("YOLO model loaded successfully")
         else:
@@ -1075,8 +1083,11 @@ class DistractionDetector:
                 "drinking_frames": 0,
             }
 
-        # Run YOLO inference
-        results = self.model(frame, verbose=False, conf=self.confidence_threshold)
+        # Run YOLO inference (filter to driver-relevant classes only)
+        results = self.model(
+            frame, verbose=False, conf=self.confidence_threshold,
+            classes=self.TARGET_CLASSES,
+        )
 
         current_phone = None
         current_bottle = None
@@ -1096,14 +1107,12 @@ class DistractionDetector:
                 # Get class name for debugging
                 class_name = self.model.names[cls]
 
-                if cls == self.CELL_PHONE:
+                if cls in self.PHONE_CLASSES or cls in self.DEVICE_CLASSES:
                     current_phone = bbox
-                    print(f"YOLO: PHONE (class {cls}: {class_name}) conf={conf:.2f}")
-                elif cls in (self.BOTTLE, self.CUP):
+                    print(f"YOLO: DEVICE (class {cls}: {class_name}) conf={conf:.2f}")
+                elif cls in self.DRINK_CLASSES:
                     current_bottle = bbox
-                    print(
-                        f"YOLO: BOTTLE/CUP (class {cls}: {class_name}) conf={conf:.2f}"
-                    )
+                    print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
                 # Debug: show other common objects being detected
                 elif conf > 0.4:
                     print(

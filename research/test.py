@@ -230,7 +230,7 @@ def test_yolo():
         model_path = os.environ.get("YOLO_MODEL_PATH", "yolo-models/yolo26m.pt")
         print(f"Loading model: {model_path}")
 
-        model = YOLO(model_path, task="classify")
+        model = YOLO(model_path)
         print("✓ YOLO model loaded successfully")
 
         # Test inference on a dummy image
