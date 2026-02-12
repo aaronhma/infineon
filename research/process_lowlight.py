@@ -11,6 +11,7 @@ Pipeline:
 
 Usage:
     python process_lowlight.py input.mp4 -o output.mp4
+    python process_lowlight.py input.mp4 -o output.mp4 --ultra-dark
     python process_lowlight.py input.mp4 -o output.mp4 --no-yolo
     python process_lowlight.py input.mp4 -o output.mp4 --side-by-side
     python process_lowlight.py input.mp4 -o output.mp4 --gamma 3.0 --clahe-clip 4.0
@@ -57,15 +58,26 @@ def _dist(a, b):
 # ── Low-light enhancement ─────────────────────────────────────────────────────
 
 class LowLightEnhancer:
-    """Split enhancement: gamma-only on full res, gamma+CLAHE on detection res."""
+    """Split enhancement: gamma-only on full res, gamma+CLAHE on detection res.
 
-    def __init__(self, gamma=2.0, clahe_clip=3.0, clahe_grid=8, auto_brightness=True):
+    With ultra_dark=True:
+      - Auto-gamma range extends to 6.0 for near-black footage
+      - CLAHE is also applied to the output frame (not just detection)
+      - Light bilateral denoise on detection frame after boosting
+    """
+
+    def __init__(self, gamma=2.0, clahe_clip=3.0, clahe_grid=8,
+                 auto_brightness=True, ultra_dark=False):
         self.auto_brightness = auto_brightness
+        self.ultra_dark = ultra_dark
         self._clahe = cv2.createCLAHE(clipLimit=clahe_clip, tileGridSize=(clahe_grid, clahe_grid))
 
         # Pre-build gamma LUTs for every value auto_gamma can return
         self._lut_cache = {}
-        for g in [1.0, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0]:
+        gammas = [1.0, 1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5, 4.0]
+        if ultra_dark:
+            gammas += [4.5, 5.0, 5.5, 6.0]
+        for g in gammas:
             self._lut_cache[g] = self._build_lut(g)
         self._default_lut = self._lut_cache.get(gamma, self._build_lut(gamma))
         self._last_lut = self._default_lut
@@ -83,36 +95,67 @@ class LowLightEnhancer:
         cy, cx = h // 2, w // 2
         s = 50
         mean_b = frame[cy - s : cy + s, cx - s : cx + s].mean()
-        if mean_b < 8:
-            g = 4.0
-        elif mean_b < 25:
-            g = 3.0
-        elif mean_b < 50:
-            g = 2.5
-        elif mean_b < 80:
-            g = 2.0
-        elif mean_b < 120:
-            g = 1.5
+        if self.ultra_dark:
+            # Much more aggressive gamma for near-black footage
+            if mean_b < 3:
+                g = 6.0
+            elif mean_b < 6:
+                g = 5.5
+            elif mean_b < 10:
+                g = 5.0
+            elif mean_b < 18:
+                g = 4.5
+            elif mean_b < 30:
+                g = 4.0
+            elif mean_b < 50:
+                g = 3.5
+            elif mean_b < 80:
+                g = 3.0
+            elif mean_b < 120:
+                g = 2.0
+            else:
+                g = 1.5
         else:
-            g = 1.0
+            if mean_b < 8:
+                g = 4.0
+            elif mean_b < 25:
+                g = 3.0
+            elif mean_b < 50:
+                g = 2.5
+            elif mean_b < 80:
+                g = 2.0
+            elif mean_b < 120:
+                g = 1.5
+            else:
+                g = 1.0
         lut = self._lut_cache.get(g, self._default_lut)
         self._last_lut = lut
         return lut
 
-    def enhance_output(self, frame: np.ndarray) -> np.ndarray:
-        """Gamma-only on full res (~1ms). Stores LUT for detection frame."""
-        lut = self._pick_lut(frame)
-        return cv2.LUT(frame, lut)
-
-    def enhance_detect(self, small: np.ndarray) -> np.ndarray:
-        """Gamma + CLAHE on already-downscaled frame (~2-3ms at 640px)."""
-        # Gamma (reuse the LUT chosen for this frame)
-        small = cv2.LUT(small, self._last_lut)
-        # CLAHE on L channel
-        lab = cv2.cvtColor(small, cv2.COLOR_BGR2LAB)
+    def _apply_clahe(self, frame: np.ndarray) -> np.ndarray:
+        """CLAHE on L channel."""
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
         l = self._clahe.apply(l)
         return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
+
+    def enhance_output(self, frame: np.ndarray) -> np.ndarray:
+        """Gamma on full res. Ultra-dark also applies CLAHE to output."""
+        lut = self._pick_lut(frame)
+        frame = cv2.LUT(frame, lut)
+        if self.ultra_dark:
+            frame = self._apply_clahe(frame)
+        return frame
+
+    def enhance_detect(self, small: np.ndarray) -> np.ndarray:
+        """Gamma + CLAHE on already-downscaled frame. Ultra-dark adds denoise."""
+        small = cv2.LUT(small, self._last_lut)
+        small = self._apply_clahe(small)
+        if self.ultra_dark:
+            # Light bilateral denoise — suppresses noise from aggressive gamma
+            # without blurring edges (~2ms at 640px)
+            small = cv2.bilateralFilter(small, 5, 40, 40)
+        return small
 
 
 # ── Face analyzer ─────────────────────────────────────────────────────────────
@@ -120,14 +163,14 @@ class LowLightEnhancer:
 class FaceAnalyzer:
     """MediaPipe face landmarks + EAR drowsiness. Returns normalized [0-1] coords."""
 
-    def __init__(self):
+    def __init__(self, face_conf=0.3, presence_conf=0.3, tracking_conf=0.3):
         opts = vision.FaceLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path="face_landmarker.task"),
             running_mode=vision.RunningMode.VIDEO,
             num_faces=5,
-            min_face_detection_confidence=0.3,
-            min_face_presence_confidence=0.3,
-            min_tracking_confidence=0.3,
+            min_face_detection_confidence=face_conf,
+            min_face_presence_confidence=presence_conf,
+            min_tracking_confidence=tracking_conf,
         )
         self.landmarker = vision.FaceLandmarker.create_from_options(opts)
 
@@ -224,7 +267,7 @@ class DistractionDetector:
     DEVICE_CLASSES = {63, 65, 67, 73}        # laptop, remote, cell phone, book
     ALL_TARGET = [0, 39, 40, 41, 63, 65, 67, 73]
 
-    def __init__(self, model_path=None, enabled=True):
+    def __init__(self, model_path=None, enabled=True, conf=0.25):
         self.enabled = enabled
         self.model = None
 
@@ -234,8 +277,8 @@ class DistractionDetector:
             from ultralytics import YOLO
             print(f"Loading YOLO: {model_path}")
             self.model = YOLO(model_path)
-            self.conf = 0.25
-            print("YOLO loaded")
+            self.conf = conf
+            print(f"YOLO loaded (conf={conf})")
 
         self.phone_detected = False
         self.drinking_detected = False
@@ -389,11 +432,13 @@ def draw_banner(frame, det):
         cv2.putText(frame, "WARNING: DRINKING DETECTED", (w // 2 - 220, h - 20), FONT, 1.8, COLOR_WHITE, 2)
 
 
-def draw_hud(frame, idx, total, fps, enhanced):
+def draw_hud(frame, idx, total, fps, enhanced, ultra_dark=False):
     h, w = frame.shape[:2]
     pct = idx / total * 100 if total else 0
     txt = f"{idx}/{total} ({pct:.0f}%)  {fps:.0f} FPS"
-    if enhanced:
+    if ultra_dark:
+        txt += "  ULTRA-DARK"
+    elif enhanced:
         txt += "  LOW-LIGHT"
     frame[0:28, 0:w] = (0, 0, 0)
     cv2.putText(frame, txt, (8, 20), FONT, 1.2, COLOR_CYAN, 1)
@@ -450,8 +495,11 @@ def main():
     p.add_argument("-o", "--output", default=None, help="Output MP4 path")
     p.add_argument("--no-yolo", action="store_true", help="Disable YOLO distraction detection")
     p.add_argument("--no-enhance", action="store_true", help="Skip low-light enhancement")
-    p.add_argument("--gamma", type=float, default=2.0, help="Gamma correction (default: 2.0)")
-    p.add_argument("--clahe-clip", type=float, default=3.0, help="CLAHE clip limit (default: 3.0)")
+    p.add_argument("--ultra-dark", action="store_true",
+                    help="Ultra-dark mode: aggressive gamma (up to 6.0), CLAHE on output, "
+                         "bilateral denoise on detect, lower AI confidence")
+    p.add_argument("--gamma", type=float, default=None, help="Gamma correction (default: 2.0, ultra-dark: 4.0)")
+    p.add_argument("--clahe-clip", type=float, default=None, help="CLAHE clip limit (default: 3.0, ultra-dark: 5.0)")
     p.add_argument("--no-auto-brightness", action="store_true", help="Disable auto gamma per frame")
     p.add_argument("--side-by-side", action="store_true", help="Original + enhanced side by side")
     p.add_argument("--detect-width", type=int, default=DETECT_WIDTH, help="AI detection width (default: 640)")
@@ -497,16 +545,25 @@ def main():
         writer = CV2Writer(output_path, out_w, H, fps_in)
         print("Encoder: cv2 mp4v (ffmpeg not found, output will be larger)")
 
+    ultra_dark = args.ultra_dark
+    gamma = args.gamma if args.gamma is not None else (4.0 if ultra_dark else 2.0)
+    clahe_clip = args.clahe_clip if args.clahe_clip is not None else (5.0 if ultra_dark else 3.0)
+
     enhancer = LowLightEnhancer(
-        gamma=args.gamma, clahe_clip=args.clahe_clip,
+        gamma=gamma, clahe_clip=clahe_clip,
         auto_brightness=not args.no_auto_brightness,
+        ultra_dark=ultra_dark,
     )
-    analyzer = FaceAnalyzer()
+    analyzer = FaceAnalyzer(
+        face_conf=0.2 if ultra_dark else 0.3,
+        presence_conf=0.2 if ultra_dark else 0.3,
+        tracking_conf=0.2 if ultra_dark else 0.3,
+    )
 
     enable_yolo = not args.no_yolo
     if enable_yolo:
         try:
-            detector = DistractionDetector(enabled=True)
+            detector = DistractionDetector(enabled=True, conf=0.15 if ultra_dark else 0.25)
         except Exception as e:
             print(f"YOLO unavailable: {e}")
             detector = DistractionDetector(enabled=False)
@@ -517,8 +574,14 @@ def main():
     do_enhance = not args.no_enhance
 
     print()
-    if do_enhance:
-        print(f"Enhancement: ON  (gamma={args.gamma}, clahe={args.clahe_clip}, "
+    if ultra_dark:
+        print(f"Mode: ULTRA-DARK")
+        print(f"  gamma={gamma}, clahe={clahe_clip}, "
+              f"auto={'on' if not args.no_auto_brightness else 'off'}")
+        print(f"  Output: gamma + CLAHE  |  Detect: gamma + CLAHE + bilateral denoise")
+        print(f"  Face conf: 0.2  |  YOLO conf: 0.15")
+    elif do_enhance:
+        print(f"Enhancement: ON  (gamma={gamma}, clahe={clahe_clip}, "
               f"auto={'on' if not args.no_auto_brightness else 'off'})")
         print(f"  Full-res: gamma only (~1ms)  |  Detect-res: gamma+CLAHE (~3ms)")
     else:
@@ -566,7 +629,7 @@ def main():
         draw_banner(frame, detector)
 
         avg_t = sum(times) / len(times) if times else 0.033
-        draw_hud(frame, idx, total, 1.0 / avg_t if avg_t > 0 else 0, do_enhance)
+        draw_hud(frame, idx, total, 1.0 / avg_t if avg_t > 0 else 0, do_enhance, ultra_dark)
 
         if args.side_by_side:
             cv2.putText(original, "ORIGINAL", (10, 30), FONT, 1.6, COLOR_WHITE, 2)
