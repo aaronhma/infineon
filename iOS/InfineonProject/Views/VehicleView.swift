@@ -46,7 +46,7 @@ struct VehicleView: View {
   var body: some View {
     NavigationStack {
       List {
-        AnimatedVehicleView()
+        VehicleAnimationView(speed: vehicle.realtimeData?.speedMph ?? 0)
           .frame(height: 200)
           .listRowBackground(Color.clear)
           .listRowInsets(EdgeInsets())
@@ -594,22 +594,6 @@ struct VehicleView: View {
     let location1 = CLLocation(latitude: coord1.latitude, longitude: coord1.longitude)
     let location2 = CLLocation(latitude: coord2.latitude, longitude: coord2.longitude)
     return location1.distance(from: location2) < thresholdMeters
-  }
-}
-
-// MARK: - Animated Vehicle View
-
-struct AnimatedVehicleView: View {
-  @State private var rotation: Angle = .zero
-  @State private var scale: CGFloat = 1.0
-  @State private var offset: CGSize = .zero
-
-  var body: some View {
-    ZStack {
-      Image("modelY")
-        .resizable()
-        .aspectRatio(contentMode: .fit)
-    }
   }
 }
 
