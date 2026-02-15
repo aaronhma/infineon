@@ -35,6 +35,21 @@ struct VehicleView: View {
   @State private var cachedBuzzerActive: Bool?
   @State private var cachedBuzzerType: String?
 
+  // Currently playing song
+  @State private var currentSong: String? = "Why'd You Only Call Me When You're High?"
+  @State private var currentArtist: String? = "Arctic Monkeys"
+
+  // Scroll tracking
+  @State private var scrollOffset: CGFloat = 0
+
+  private var scrollBlurAmount: CGFloat {
+    max(0, min(scrollOffset / 30.0, 10))
+  }
+
+  private var scrollDimAmount: Double {
+    max(0, min(Double(scrollOffset) / 200.0, 0.5))
+  }
+
   enum VehicleOptions: Hashable {
     case faceDetections
     case liveCamera
@@ -45,303 +60,387 @@ struct VehicleView: View {
 
   var body: some View {
     NavigationStack {
-      List {
+      ZStack(alignment: .top) {
         VehicleAnimationView(speed: vehicle.realtimeData?.speedMph ?? 0)
-          .frame(height: 200)
-          .listRowBackground(Color.clear)
-          .listRowInsets(EdgeInsets())
+          .frame(height: 350)
+          .blur(radius: scrollBlurAmount)
+          .opacity(1.0 - scrollDimAmount)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+          .overlay(alignment: .topLeading) {
+            VStack(alignment: .leading) {
+              Text(vehicle.name)
+                .font(.largeTitle)
+                .bold()
 
-        // Driver alert
-        if let data = vehicle.realtimeData {
-          driverAlertSection(data: data)
-        }
-
-        // Face Detection Section
-        if vehicle.unidentifiedFacesCount > 0 {
-          Button {
-            showingUnidentifiedFaces = true
-          } label: {
-            Label {
-              VStack(alignment: .leading) {
-                Text(
-                  "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
-                )
-                Text("Tap to identify drivers")
-                  .font(.caption)
+              if let data = vehicle.realtimeData {
+                Text(data.updatedAt, style: .relative)
                   .foregroundStyle(.secondary)
               }
-            } icon: {
-              Image(systemName: "face.smiling")
-                .foregroundStyle(.orange)
             }
+            .blur(radius: scrollBlurAmount)
+            .opacity(1.0 - scrollDimAmount)
+            .padding(.horizontal)
           }
-          .tint(.primary)
-        }
 
-        NavigationLink(value: VehicleOptions.faceDetections) {
-          Label {
-            VStack(alignment: .leading) {
-              Text("Face Detections")
-              Text("View all driver snapshots")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-          } icon: {
-            SettingsBoxView(
-              icon: "person.crop.rectangle.stack.fill",
-              color: .blue
-            )
-            .stableMatchedTransition(id: VehicleOptions.faceDetections, in: namespace)
-          }
-        }
-        .tint(.primary)
+        ScrollView {
+          VStack(spacing: 0) {
+            Color.clear.frame(height: 290)
 
-        // Live Data Section
-        if let data = vehicle.realtimeData {
-          Group {
-            NavigationLink(value: VehicleOptions.liveCamera) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text("Live Camera")
-                  Text("View real-time camera feed")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                SettingsBoxView(
-                  icon: "video.fill",
-                  color: .green
-                )
-                .stableMatchedTransition(id: VehicleOptions.liveCamera, in: namespace)
-              }
-            }
-
-            NavigationLink(value: VehicleOptions.alert) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text("Alert")
-                  Text("Remote buzzer control")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                SettingsBoxView(
-                  icon: "bell.fill",
-                  color: .red
-                )
-                .stableMatchedTransition(id: VehicleOptions.alert, in: namespace)
-              }
-            }
-            .task {
-              await fetchBuzzerStatus()
-            }
-
-            NavigationLink(value: VehicleOptions.shazamHistory) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text("Shazam History")
-                  Text("View detected songs")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                SettingsBoxView(
-                  icon: "music.note.list",
-                  color: .purple
-                )
-                .stableMatchedTransition(id: VehicleOptions.shazamHistory, in: namespace)
-              }
-            }
-
-            NavigationLink(value: VehicleOptions.liveLocation) {
-              Label {
-                // Primary: Street name, fallback: "Live Location"
-                if let streetName = vehicleStreetName {
-                  Text(streetName)
-                } else if data.latitude != nil && data.longitude != nil {
-                  Text("Live Location")
-                } else {
-                  Text("Location Unavailable")
-                }
-
-                // Secondary: Travel time, fallback: coordinates, fallback: "No GPS data"
-                if let travelTime = vehicleTravelTime {
-                  Text(travelTime)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                } else if let lat = data.latitude, let lon = data.longitude {
-                  Text("\(lat, specifier: "%.4f"), \(lon, specifier: "%.4f")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                } else {
-                  Text("No GPS data")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                SettingsBoxView(
-                  icon: "location.fill",
-                  color: .blue
-                )
-                .stableMatchedTransition(id: VehicleOptions.liveLocation, in: namespace)
-              }
-            }
-            .task {
-              await fetchVehicleLocationPreview(data: data)
-            }
-            .onChange(of: previewLocationManager.userLocation) { _, newLocation in
-              if let userCoord = newLocation,
-                let lat = data.latitude,
-                let lon = data.longitude
-              {
-                Task {
-                  await calculatePreviewTravelTime(
-                    from: userCoord,
-                    to: CLLocationCoordinate2D(latitude: lat, longitude: lon)
-                  )
-                }
-              }
-            }
-
-            LabeledContent("Speed") {
-              HStack {
-                Text("\(data.speedMph) mph")
-                  .foregroundStyle(
-                    data.isSpeeding ? .red : .primary
-                  )
-                if data.isSpeeding {
-                  Image(
-                    systemName: "exclamationmark.triangle.fill"
-                  )
-                  .foregroundStyle(.red)
-                }
-              }
-            }
-
-            LabeledContent(
-              "Speed Limit",
-              value: "\(data.speedLimitMph) mph"
-            )
-
-            LabeledContent("Heading") {
-              HStack {
-                Image(systemName: "location.north.fill")
-                  .rotationEffect(
-                    .degrees(
-                      Double(data.headingDegrees)
-                    )
-                  )
-                  .foregroundStyle(.blue)
-                Text(
-                  "\(data.headingDegrees)° \(data.compassDirection)"
-                )
-              }
-            }
-
-            LabeledContent("Status") {
-              HStack {
-                Circle()
-                  .fill(data.isMoving ? .green : .gray)
-                  .frame(width: 8, height: 8)
-                Text(data.isMoving ? "Moving" : "Parked")
-              }
-            }
-
-            LabeledContent("Driver Status") {
-              DriverStatusBadge(status: data.driverStatus)
-            }
-
-            LabeledContent("Risk Score") {
-              Text("\(data.intoxicationScore)/6")
-                .foregroundStyle(
-                  intoxicationColor(
-                    for: data.intoxicationScore
-                  )
-                )
-            }
-
-            // GPS Satellites
-            if let satellites = data.satellites {
-              LabeledContent("GPS Satellites") {
-                HStack {
-                  Image(systemName: "location.fill")
-                    .foregroundStyle(satellites > 0 ? .green : .gray)
-                  Text("\(satellites)")
-                    .foregroundStyle(satellites > 0 ? .primary : .secondary)
-                }
-              }
-            }
-
-            // Distraction indicators
-            if data.isPhoneDetected == true || data.isDrinkingDetected == true {
-              LabeledContent("Distraction") {
-                HStack(spacing: 8) {
-                  if data.isPhoneDetected == true {
-                    Label("Phone", systemImage: "iphone.gen3")
-                      .font(.caption)
-                      .padding(.horizontal, 6)
-                      .padding(.vertical, 2)
-                      .background(Color.red.opacity(0.2))
-                      .foregroundStyle(.red)
-                      .clipShape(.capsule)
+            VStack(alignment: .leading, spacing: 15) {
+              // Currently playing song
+              if let currentSong {
+                VStack(spacing: 0) {
+                  HStack {
+                    Text(currentSong)
+                      .font(.subheadline)
+                      .lineLimit(1)
+                    //                      if let currentArtist {
+                    //                          Text(currentArtist)
+                    //                              .font(.subheadline)
+                    //                              .lineLimit(1)
+                    //                      }
+                    Spacer()
+                    SettingsBoxView(icon: "music.note", color: .pink)
                   }
-                  if data.isDrinkingDetected == true {
-                    Label("Drinking", systemImage: "cup.and.saucer.fill")
-                      .font(.caption)
-                      .padding(.horizontal, 6)
-                      .padding(.vertical, 2)
-                      .background(Color.orange.opacity(0.2))
+                  .padding(.horizontal)
+                  .padding(.vertical, 12)
+
+                  HStack(spacing: 4) {
+                    HStack(spacing: 0) {
+                      Button("Previous", systemImage: "backward.end.fill") {}
+                        .frame(maxWidth: .infinity)
+                      Button("Pause", systemImage: "pause.fill") {}
+                        .frame(maxWidth: .infinity)
+                      Button("Next", systemImage: "forward.end.fill") {}
+                        .frame(maxWidth: .infinity)
+                    }
+                    .padding(.vertical, 12)
+                    .background(Color(.tertiarySystemBackground))
+                    .clipShape(.rect(cornerRadius: 8))
+
+                    HStack(spacing: 0) {
+                      Button("Previous Source", systemImage: "chevron.left") {}
+                        .frame(maxWidth: .infinity)
+                      Button("Volume", systemImage: "speaker.wave.2.fill") {}
+                        .frame(maxWidth: .infinity)
+                      Button("Next Source", systemImage: "chevron.right") {}
+                        .frame(maxWidth: .infinity)
+                    }
+                    .padding(.vertical, 12)
+                    .background(Color(.tertiarySystemBackground))
+                    .clipShape(.rect(cornerRadius: 8))
+                  }
+                  .labelStyle(.iconOnly)
+                  .buttonStyle(.plain)
+                  .foregroundStyle(.secondary)
+                  .padding(.horizontal, 8)
+                  .padding(.bottom, 8)
+                }
+                .background(Color(.secondarySystemBackground))
+                .clipShape(.rect(cornerRadius: 12))
+              }
+
+              // Driver alert
+              if let data = vehicle.realtimeData {
+                driverAlertSection(data: data)
+              }
+
+              // Face Detection Section
+              if vehicle.unidentifiedFacesCount > 0 {
+                Button {
+                  showingUnidentifiedFaces = true
+                } label: {
+                  Label {
+                    VStack(alignment: .leading) {
+                      Text(
+                        "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
+                      )
+                      Text("Tap to identify drivers")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                  } icon: {
+                    Image(systemName: "face.smiling")
                       .foregroundStyle(.orange)
-                      .clipShape(.capsule)
+                  }
+                }
+                .tint(.primary)
+              }
+
+              NavigationLink(value: VehicleOptions.faceDetections) {
+                Label {
+                  VStack(alignment: .leading) {
+                    Text("Face Detections")
+                    Text("View all driver snapshots")
+                      .font(.caption)
+                      .foregroundStyle(.secondary)
+                  }
+                } icon: {
+                  SettingsBoxView(
+                    icon: "person.crop.rectangle.stack.fill",
+                    color: .blue
+                  )
+                  .stableMatchedTransition(id: VehicleOptions.faceDetections, in: namespace)
+                }
+              }
+              .tint(.primary)
+
+              // Live Data Section
+              if let data = vehicle.realtimeData {
+                Group {
+                  NavigationLink(value: VehicleOptions.liveCamera) {
+                    Label {
+                      VStack(alignment: .leading) {
+                        Text("Live Camera")
+                        Text("View real-time camera feed")
+                          .font(.caption)
+                          .foregroundStyle(.secondary)
+                      }
+                    } icon: {
+                      SettingsBoxView(
+                        icon: "video.fill",
+                        color: .green
+                      )
+                      .stableMatchedTransition(id: VehicleOptions.liveCamera, in: namespace)
+                    }
+                  }
+                  .tint(.primary)
+
+                  NavigationLink(value: VehicleOptions.alert) {
+                    Label {
+                      VStack(alignment: .leading) {
+                        Text("Alert")
+                        Text("Remote buzzer control")
+                          .font(.caption)
+                          .foregroundStyle(.secondary)
+                      }
+                    } icon: {
+                      SettingsBoxView(
+                        icon: "bell.fill",
+                        color: .red
+                      )
+                      .stableMatchedTransition(id: VehicleOptions.alert, in: namespace)
+                    }
+                  }
+                  .tint(.primary)
+                  .task {
+                    await fetchBuzzerStatus()
+                  }
+
+                  NavigationLink(value: VehicleOptions.shazamHistory) {
+                    Label {
+                      VStack(alignment: .leading) {
+                        Text("Shazam History")
+                        Text("View detected songs")
+                          .font(.caption)
+                          .foregroundStyle(.secondary)
+                      }
+                    } icon: {
+                      SettingsBoxView(
+                        icon: "music.note.list",
+                        color: .purple
+                      )
+                      .stableMatchedTransition(id: VehicleOptions.shazamHistory, in: namespace)
+                    }
+                  }
+                  .tint(.primary)
+
+                  NavigationLink(value: VehicleOptions.liveLocation) {
+                    Label {
+                      VStack(alignment: .leading) {
+                        // Primary: Street name, fallback: "Live Location"
+                        if let streetName = vehicleStreetName {
+                          Text(streetName)
+                        } else if data.latitude != nil && data.longitude != nil {
+                          Text("Live Location")
+                        } else {
+                          Text("Location Unavailable")
+                        }
+
+                        // Secondary: Travel time, fallback: coordinates, fallback: "No GPS data"
+                        if let travelTime = vehicleTravelTime {
+                          Text(travelTime)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        } else if let lat = data.latitude, let lon = data.longitude {
+                          Text("\(lat, specifier: "%.4f"), \(lon, specifier: "%.4f")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        } else {
+                          Text("No GPS data")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                      }
+                    } icon: {
+                      SettingsBoxView(
+                        icon: "location.fill",
+                        color: .blue
+                      )
+                      .stableMatchedTransition(id: VehicleOptions.liveLocation, in: namespace)
+                    }
+                  }
+                  .tint(.primary)
+                  .task {
+                    await fetchVehicleLocationPreview(data: data)
+                  }
+                  .onChange(of: previewLocationManager.userLocation) { _, newLocation in
+                    if let userCoord = newLocation,
+                      let lat = data.latitude,
+                      let lon = data.longitude
+                    {
+                      Task {
+                        await calculatePreviewTravelTime(
+                          from: userCoord,
+                          to: CLLocationCoordinate2D(latitude: lat, longitude: lon)
+                        )
+                      }
+                    }
+                  }
+
+                  LabeledContent("Speed") {
+                    HStack {
+                      Text(
+                        "\(Text("\(data.speedMph)").font(.title2).foregroundStyle(.primary))/\(data.speedLimitMph)MPH"
+                      )
+                      .contentTransition(.numericText(value: 0))
+                      .foregroundStyle(
+                        data.isSpeeding ? .red : .secondary
+                      )
+
+                      if data.isSpeeding {
+                        Image(
+                          systemName: "exclamationmark.triangle.fill"
+                        )
+                        .foregroundStyle(.red)
+                      }
+                    }
+                  }
+
+                  LabeledContent("Heading") {
+                    HStack {
+                      Image(systemName: "location.north.fill")
+                        .rotationEffect(
+                          .degrees(
+                            Double(data.headingDegrees)
+                          )
+                        )
+                        .foregroundStyle(.blue)
+                      Text(
+                        "\(data.headingDegrees)° \(data.compassDirection)"
+                      )
+                    }
+                  }
+
+                  LabeledContent("Status") {
+                    HStack {
+                      Circle()
+                        .fill(data.isMoving ? .green : .gray)
+                        .frame(width: 8, height: 8)
+                      Text(data.isMoving ? "Moving" : "Parked")
+                    }
+                  }
+
+                  LabeledContent("Driver Status") {
+                    DriverStatusBadge(status: data.driverStatus)
+                  }
+
+                  LabeledContent("Risk Score") {
+                    Text("\(data.intoxicationScore)/6")
+                      .foregroundStyle(
+                        intoxicationColor(
+                          for: data.intoxicationScore
+                        )
+                      )
+                  }
+
+                  // GPS Satellites
+                  if let satellites = data.satellites {
+                    LabeledContent("GPS Satellites") {
+                      HStack {
+                        Image(systemName: "location.fill")
+                          .foregroundStyle(satellites > 0 ? .green : .gray)
+                        Text("\(satellites)")
+                          .foregroundStyle(satellites > 0 ? .primary : .secondary)
+                      }
+                    }
+                  }
+
+                  // Distraction indicators
+                  if data.isPhoneDetected == true || data.isDrinkingDetected == true {
+                    LabeledContent("Distraction") {
+                      HStack(spacing: 8) {
+                        if data.isPhoneDetected == true {
+                          Label("Phone", systemImage: "iphone.gen3")
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.2))
+                            .foregroundStyle(.red)
+                            .clipShape(.capsule)
+                        }
+                        if data.isDrinkingDetected == true {
+                          Label("Drinking", systemImage: "cup.and.saucer.fill")
+                            .font(.caption)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.2))
+                            .foregroundStyle(.orange)
+                            .clipShape(.capsule)
+                        }
+                      }
+                    }
+                  }
+                }
+                .onAppear {
+                  Task {
+                    do {
+                      currentLiveActivity = try Activity<VehicleLiveActivityAttributes>
+                        .request(
+                          attributes: VehicleLiveActivityAttributes(
+                            name: vehicle.name,
+                            speedLimit: 65
+                          ),
+                          content: .init(
+                            state: .init(
+                              speed: data.speedMph, riskScore: data.intoxicationScore,
+                              driverStatus: data.driverStatus),
+                            staleDate: .now
+                              .addingTimeInterval(
+                                60 * 60
+                              ))
+                        )
+                    } catch {
+                      print(error.localizedDescription)
+                    }
+                  }
+                }
+                .onChange(of: data.speedMph) {
+                  Task {
+                    if let currentLiveActivity {
+                      await currentLiveActivity.update(
+                        ActivityContent(
+                          state: .init(
+                            speed: data.speedMph, riskScore: data.intoxicationScore,
+                            driverStatus: data.driverStatus),
+                          staleDate: .now
+                            .addingTimeInterval(60 * 60)))
+                    }
                   }
                 }
               }
             }
-
-            LabeledContent("Last Updated") {
-              Text(data.updatedAt, style: .relative)
-                .foregroundStyle(.secondary)
-            }
+            .padding([.horizontal, .bottom])
+            .frame(maxWidth: .infinity)
           }
-          .onAppear {
-            Task {
-              do {
-                currentLiveActivity = try Activity<VehicleLiveActivityAttributes>
-                  .request(
-                    attributes: VehicleLiveActivityAttributes(
-                      name: vehicle.name,
-                      speedLimit: 65
-                    ),
-                    content: .init(
-                      state: .init(
-                        speed: data.speedMph, riskScore: data.intoxicationScore,
-                        driverStatus: data.driverStatus),
-                      staleDate: .now
-                        .addingTimeInterval(
-                          60 * 60
-                        ))
-                  )
-              } catch {
-                print(error.localizedDescription)
-              }
-            }
-          }
-          .onChange(of: data.speedMph) {
-            Task {
-              if let currentLiveActivity {
-                await currentLiveActivity.update(
-                  ActivityContent(
-                    state: .init(
-                      speed: data.speedMph, riskScore: data.intoxicationScore,
-                      driverStatus: data.driverStatus),
-                    staleDate: .now
-                      .addingTimeInterval(60 * 60)))
-              }
-            }
-          }
+        }
+        .scrollIndicators(.hidden)
+        .onScrollGeometryChange(for: CGFloat.self) { geo in
+          geo.contentOffset.y
+        } action: { _, newValue in
+          scrollOffset = newValue
         }
       }
-      .listStyle(.plain)
       .navigationDestination(for: VehicleOptions.self) { route in
         switch route {
         case .faceDetections:
@@ -378,7 +477,7 @@ struct VehicleView: View {
           .navigationTransition(.zoom(sourceID: VehicleOptions.liveLocation, in: namespace))
         }
       }
-      .navigationTitle(vehicle.name)
+      .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarTrailing) {
           Button {
@@ -407,75 +506,79 @@ struct VehicleView: View {
     if data.isPhoneDetected == true
       || data.driverStatus.lowercased() == "distracted_phone"
     {
-      Section {
-        Label {
-          VStack(alignment: .leading) {
-            Text("Phone Detected!")
-              .bold()
-            Text("Driver is looking at phone - dangerous!")
-              .font(.caption)
-          }
-        } icon: {
-          Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-            .foregroundStyle(.red)
+      Label {
+        VStack(alignment: .leading) {
+          Text("Phone Detected!")
+            .bold()
+          Text("Driver is looking at phone - dangerous!")
+            .font(.caption)
         }
+      } icon: {
+        Image(systemName: "iphone.gen3.radiowaves.left.and.right")
+          .foregroundStyle(.red)
       }
-      .listRowBackground(Color.red.opacity(0.15))
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.red.opacity(0.15), in: .rect(cornerRadius: 10))
+      .padding(.horizontal)
     }
     // Drinking alert
     else if data.isDrinkingDetected == true
       || data.driverStatus.lowercased() == "distracted_drinking"
     {
-      Section {
-        Label {
-          VStack(alignment: .leading) {
-            Text("Drinking Detected")
-              .bold()
-            Text("Driver is drinking - stay focused")
-              .font(.caption)
-          }
-        } icon: {
-          Image(systemName: "cup.and.saucer.fill")
-            .foregroundStyle(.orange)
+      Label {
+        VStack(alignment: .leading) {
+          Text("Drinking Detected")
+            .bold()
+          Text("Driver is drinking - stay focused")
+            .font(.caption)
         }
+      } icon: {
+        Image(systemName: "cup.and.saucer.fill")
+          .foregroundStyle(.orange)
       }
-      .listRowBackground(Color.orange.opacity(0.1))
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.orange.opacity(0.1), in: .rect(cornerRadius: 10))
+      .padding(.horizontal)
     }
     // Impaired alert
     else if data.intoxicationScore >= 4
       || data.driverStatus.lowercased() == "impaired"
     {
-      Section {
-        Label {
-          VStack(alignment: .leading) {
-            Text("Driver May Be Impaired")
-              .bold()
-            Text("Intoxication score: \(data.intoxicationScore)/6")
-              .font(.caption)
-          }
-        } icon: {
-          Image(systemName: "exclamationmark.triangle.fill")
-            .foregroundStyle(.red)
+      Label {
+        VStack(alignment: .leading) {
+          Text("Driver May Be Impaired")
+            .bold()
+          Text("Intoxication score: \(data.intoxicationScore)/6")
+            .font(.caption)
         }
+      } icon: {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .foregroundStyle(.red)
       }
-      .listRowBackground(Color.red.opacity(0.1))
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.red.opacity(0.1), in: .rect(cornerRadius: 10))
+      .padding(.horizontal)
     }
     // Drowsy alert
     else if data.intoxicationScore >= 2 || data.driverStatus.lowercased() == "drowsy" {
-      Section {
-        Label {
-          VStack(alignment: .leading) {
-            Text("Driver May Be Drowsy")
-              .bold()
-            Text("Consider taking a break")
-              .font(.caption)
-          }
-        } icon: {
-          Image(systemName: "moon.fill")
-            .foregroundStyle(.orange)
+      Label {
+        VStack(alignment: .leading) {
+          Text("Driver May Be Drowsy")
+            .bold()
+          Text("Consider taking a break")
+            .font(.caption)
         }
+      } icon: {
+        Image(systemName: "moon.fill")
+          .foregroundStyle(.orange)
       }
-      .listRowBackground(Color.orange.opacity(0.1))
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.orange.opacity(0.1), in: .rect(cornerRadius: 10))
+      .padding(.horizontal)
     }
   }
 
