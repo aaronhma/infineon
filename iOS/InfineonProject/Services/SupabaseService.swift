@@ -860,6 +860,42 @@ class SupabaseService {
       .execute()
   }
 
+  // MARK: - Vehicle Update Methods
+
+  /// Updates a vehicle's name and/or description
+  func updateVehicle(
+    vehicleId: String,
+    name: String? = nil,
+    description: String? = nil
+  ) async throws {
+    var updateData: [String: AnyJSON] = [:]
+
+    if let name {
+      updateData["name"] = .string(name)
+    }
+    if let description {
+      updateData["description"] = .string(description)
+    }
+
+    guard !updateData.isEmpty else { return }
+
+    let updatedVehicle: Vehicle =
+      try await client
+      .from("vehicles")
+      .update(updateData)
+      .eq("id", value: vehicleId)
+      .select()
+      .single()
+      .execute()
+      .value
+
+    await MainActor.run {
+      if let index = self.vehicles.firstIndex(where: { $0.id == vehicleId }) {
+        self.vehicles[index] = updatedVehicle
+      }
+    }
+  }
+
   // MARK: - Face Detection Methods
 
   func fetchFaceDetections(for vehicleId: String, limit: Int = 50) async throws -> [FaceDetection] {

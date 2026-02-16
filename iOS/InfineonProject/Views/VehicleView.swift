@@ -86,19 +86,26 @@ struct VehicleView: View {
           VStack(spacing: 0) {
             Color.clear.frame(height: 290)
 
-            VStack(alignment: .leading, spacing: 15) {
+            VStack(alignment: .leading, spacing: 25) {
               // Currently playing song
               if let currentSong {
                 VStack(spacing: 0) {
                   HStack {
-                    Text(currentSong)
-                      .font(.subheadline)
-                      .lineLimit(1)
-                    //                      if let currentArtist {
-                    //                          Text(currentArtist)
-                    //                              .font(.subheadline)
-                    //                              .lineLimit(1)
-                    //                      }
+                    VStack(alignment: .leading) {
+                      MarqueeView {
+                        Text(currentSong)
+                          .font(.subheadline)
+                          .lineLimit(1)
+                      }
+                      if let currentArtist {
+                        MarqueeView {
+                          Text(currentArtist)
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        }
+                      }
+                    }
                     Spacer()
                     SettingsBoxView(icon: "music.note", color: .pink)
                   }
@@ -107,24 +114,36 @@ struct VehicleView: View {
 
                   HStack(spacing: 4) {
                     HStack(spacing: 0) {
-                      Button("Previous", systemImage: "backward.end.fill") {}
-                        .frame(maxWidth: .infinity)
-                      Button("Pause", systemImage: "pause.fill") {}
-                        .frame(maxWidth: .infinity)
-                      Button("Next", systemImage: "forward.end.fill") {}
-                        .frame(maxWidth: .infinity)
+                      Button("Previous", systemImage: "backward.end.fill") {
+                        Haptics.impact()
+                      }
+                      .frame(maxWidth: .infinity)
+                      Button("Pause", systemImage: "pause.fill") {
+                        Haptics.impact()
+                      }
+                      .frame(maxWidth: .infinity)
+                      Button("Next", systemImage: "forward.end.fill") {
+                        Haptics.impact()
+                      }
+                      .frame(maxWidth: .infinity)
                     }
                     .padding(.vertical, 12)
                     .background(Color(.tertiarySystemBackground))
                     .clipShape(.rect(cornerRadius: 8))
 
                     HStack(spacing: 0) {
-                      Button("Previous Source", systemImage: "chevron.left") {}
-                        .frame(maxWidth: .infinity)
-                      Button("Volume", systemImage: "speaker.wave.2.fill") {}
-                        .frame(maxWidth: .infinity)
-                      Button("Next Source", systemImage: "chevron.right") {}
-                        .frame(maxWidth: .infinity)
+                      Button("Previous Source", systemImage: "chevron.left") {
+                        Haptics.impact()
+                      }
+                      .frame(maxWidth: .infinity)
+                      Button("Volume", systemImage: "speaker.wave.2.fill") {
+                        Haptics.impact()
+                      }
+                      .frame(maxWidth: .infinity)
+                      Button("Next Source", systemImage: "chevron.right") {
+                        Haptics.impact()
+                      }
+                      .frame(maxWidth: .infinity)
                     }
                     .padding(.vertical, 12)
                     .background(Color(.tertiarySystemBackground))
@@ -135,6 +154,18 @@ struct VehicleView: View {
                   .foregroundStyle(.secondary)
                   .padding(.horizontal, 8)
                   .padding(.bottom, 8)
+
+                  NavigationLink(value: VehicleOptions.shazamHistory) {
+                    AaronButtonView(text: "All Songs") {}
+                      .buttonStyle(.plain)
+                      .stableMatchedTransition(id: VehicleOptions.shazamHistory, in: namespace)
+
+                    //                        SettingsBoxView(
+                    //                          icon: "music.note.list",
+                    //                          color: .purple
+                    //                        )
+                  }
+                  .padding()
                 }
                 .background(Color(.secondarySystemBackground))
                 .clipShape(.rect(cornerRadius: 12))
@@ -155,9 +186,6 @@ struct VehicleView: View {
                       Text(
                         "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
                       )
-                      Text("Tap to identify drivers")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     }
                   } icon: {
                     Image(systemName: "face.smiling")
@@ -171,9 +199,6 @@ struct VehicleView: View {
                 Label {
                   VStack(alignment: .leading) {
                     Text("Face Detections")
-                    Text("View all driver snapshots")
-                      .font(.caption)
-                      .foregroundStyle(.secondary)
                   }
                 } icon: {
                   SettingsBoxView(
@@ -192,9 +217,6 @@ struct VehicleView: View {
                     Label {
                       VStack(alignment: .leading) {
                         Text("Live Camera")
-                        Text("View real-time camera feed")
-                          .font(.caption)
-                          .foregroundStyle(.secondary)
                       }
                     } icon: {
                       SettingsBoxView(
@@ -210,9 +232,6 @@ struct VehicleView: View {
                     Label {
                       VStack(alignment: .leading) {
                         Text("Alert")
-                        Text("Remote buzzer control")
-                          .font(.caption)
-                          .foregroundStyle(.secondary)
                       }
                     } icon: {
                       SettingsBoxView(
@@ -226,24 +245,6 @@ struct VehicleView: View {
                   .task {
                     await fetchBuzzerStatus()
                   }
-
-                  NavigationLink(value: VehicleOptions.shazamHistory) {
-                    Label {
-                      VStack(alignment: .leading) {
-                        Text("Shazam History")
-                        Text("View detected songs")
-                          .font(.caption)
-                          .foregroundStyle(.secondary)
-                      }
-                    } icon: {
-                      SettingsBoxView(
-                        icon: "music.note.list",
-                        color: .purple
-                      )
-                      .stableMatchedTransition(id: VehicleOptions.shazamHistory, in: namespace)
-                    }
-                  }
-                  .tint(.primary)
 
                   NavigationLink(value: VehicleOptions.liveLocation) {
                     Label {

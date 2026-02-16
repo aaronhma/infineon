@@ -32,6 +32,7 @@ struct V2AccountView: View {
 
   enum SettingsOptions: Hashable {
     case profile
+    case vehicleSettings
     case notifications
     case licensing
   }
@@ -329,6 +330,15 @@ struct V2AccountView: View {
 
         // Settings Section
         Section {
+          NavigationLink(value: SettingsOptions.vehicleSettings) {
+            Label {
+              Text("Vehicle Settings")
+            } icon: {
+              SettingsBoxView(icon: "car.fill", color: .blue)
+                .stableMatchedTransition(id: SettingsOptions.vehicleSettings, in: namespace)
+            }
+          }
+
           NavigationLink(value: SettingsOptions.notifications) {
             Label {
               Text("Notifications")
@@ -404,6 +414,9 @@ struct V2AccountView: View {
         case .profile:
           EditProfileView()
             .navigationTransition(.zoom(sourceID: SettingsOptions.profile, in: namespace))
+        case .vehicleSettings:
+          VehicleSettingsView(vehicle: appData.watchingProfile!.vehicle)
+            .navigationTransition(.zoom(sourceID: SettingsOptions.vehicleSettings, in: namespace))
         case .notifications:
           NotificationSettingsView()
             .navigationTransition(.zoom(sourceID: SettingsOptions.notifications, in: namespace))
@@ -742,6 +755,147 @@ struct EditProfileView: View {
       )
 
       await MainActor.run {
+        isSaving = false
+        dismiss()
+      }
+    } catch {
+      await MainActor.run {
+        errorMessage = error.localizedDescription
+        isSaving = false
+      }
+    }
+  }
+}
+
+// MARK: - Vehicle Settings View
+
+struct VehicleSettingsView: View {
+  @Environment(V2AppData.self) private var appData
+  @Environment(\.dismiss) private var dismiss
+
+  let vehicle: Vehicle
+
+  @State private var vehicleName = ""
+  @State private var vehicleDescription = ""
+  @State private var isSaving = false
+  @State private var errorMessage: String?
+
+  private var isOwner: Bool {
+    supabase.currentUser?.id == vehicle.ownerId
+  }
+
+  var body: some View {
+    List {
+      Section {
+        LabeledContent("Vehicle ID") {
+          Text(vehicle.id)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+
+        LabeledContent("Invite Code") {
+          Text(vehicle.inviteCode)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        }
+      }
+
+      if isOwner {
+        Section("Vehicle Name") {
+          TextField("Vehicle name", text: $vehicleName)
+        }
+
+        Section("Description") {
+          TextField("Vehicle description", text: $vehicleDescription)
+        }
+
+        if let errorMessage {
+          Section {
+            Text(errorMessage)
+              .foregroundStyle(.red)
+          }
+        }
+      } else {
+        Section("Vehicle Info") {
+          LabeledContent("Name") {
+            Text(vehicle.name ?? "Unnamed")
+              .foregroundStyle(.secondary)
+          }
+
+          LabeledContent("Description") {
+            Text(vehicle.description ?? "No description")
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Section {
+          Text("Only the vehicle owner can edit these settings.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+      }
+    }
+    .navigationTitle("Vehicle Settings")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbar {
+      if isOwner {
+        ToolbarItem(placement: .confirmationAction) {
+          if isSaving {
+            ProgressView()
+          } else {
+            Button("Save") {
+              Task {
+                await saveVehicleSettings()
+              }
+            }
+            .disabled(vehicleName.isEmpty)
+          }
+        }
+      }
+    }
+    .onAppear {
+      vehicleName = vehicle.name ?? ""
+      vehicleDescription = vehicle.description ?? ""
+    }
+    .onDisappear {
+      hideKeyboard()
+    }
+    .overlay {
+      if isSaving {
+        Color.black.opacity(0.3)
+          .ignoresSafeArea()
+          .overlay {
+            ProgressView("Saving...")
+              .padding()
+              .background(.regularMaterial, in: .rect(cornerRadius: 12))
+          }
+      }
+    }
+  }
+
+  private func saveVehicleSettings() async {
+    isSaving = true
+    errorMessage = nil
+
+    do {
+      try await supabase.updateVehicle(
+        vehicleId: vehicle.id,
+        name: vehicleName,
+        description: vehicleDescription.isEmpty ? nil : vehicleDescription
+      )
+
+      // Update the profile in appData so the UI reflects the change
+      await MainActor.run {
+        if var profile = appData.watchingProfile {
+          let updatedVehicle = supabase.vehicles.first { $0.id == vehicle.id }
+          if let updatedVehicle {
+            profile.vehicle = updatedVehicle
+            profile.name = updatedVehicle.name ?? profile.name
+            appData.watchingProfile = profile
+          }
+        }
         isSaving = false
         dismiss()
       }
