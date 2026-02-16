@@ -15,21 +15,17 @@ struct V2MainView: View {
   var body: some View {
     ZStack {
       VStack(spacing: 0) {
-        if let profile = appData.watchingProfile, !appData.animateProfile {
-          Group {
-            switch appData.activeTab {
-            case .home:
+        Group {
+          switch appData.activeTab {
+          case .vehicle:
+            if let profile = appData.watchingProfile {
               VehicleView(vehicle: profile)
-            case .new:
-              HomeView(vehicle: profile)
-            case .account:
-              V2AccountView()
             }
+          case .account:
+            V2AccountView()
           }
-          .frame(maxHeight: .infinity)
-        } else {
-          Spacer(minLength: 0)
         }
+        .frame(maxHeight: .infinity)
 
         if appData.watchingProfile != nil {
           V2LaunchUITabView()
@@ -37,13 +33,7 @@ struct V2MainView: View {
       }
       .coordinateSpace(.named("MAINVIEW"))
 
-      if appData.hideMainView {
-        Rectangle()
-          .fill(colorScheme == .dark ? .black : .white)
-          .ignoresSafeArea()
-      }
-
-      ZStack {
+      Group {
         if appData.showProfileView {
           V2ProfileSelectView()
         }

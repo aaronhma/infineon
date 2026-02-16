@@ -54,6 +54,7 @@ struct VehicleView: View {
     case faceDetections
     case liveCamera
     case alert
+    case trips
     case shazamHistory
     case liveLocation
   }
@@ -74,6 +75,10 @@ struct VehicleView: View {
 
               if let data = vehicle.realtimeData {
                 Text(data.updatedAt, style: .relative)
+                  .foregroundStyle(.secondary)
+
+                Text(data.isMoving ? "\(data.speedMph) MPH" : "Parked")
+                  .contentTransition(.numericText(value: 0))
                   .foregroundStyle(.secondary)
               }
             }
@@ -210,6 +215,21 @@ struct VehicleView: View {
               }
               .tint(.primary)
 
+              NavigationLink(value: VehicleOptions.trips) {
+                Label {
+                  VStack(alignment: .leading) {
+                    Text("Trips")
+                  }
+                } icon: {
+                  SettingsBoxView(
+                    icon: "airplane.up.right",
+                    color: .indigo
+                  )
+                  .stableMatchedTransition(id: VehicleOptions.trips, in: namespace)
+                }
+              }
+              .tint(.primary)
+
               // Live Data Section
               if let data = vehicle.realtimeData {
                 Group {
@@ -333,15 +353,6 @@ struct VehicleView: View {
                     }
                   }
 
-                  LabeledContent("Status") {
-                    HStack {
-                      Circle()
-                        .fill(data.isMoving ? .green : .gray)
-                        .frame(width: 8, height: 8)
-                      Text(data.isMoving ? "Moving" : "Parked")
-                    }
-                  }
-
                   LabeledContent("Driver Status") {
                     DriverStatusBadge(status: data.driverStatus)
                   }
@@ -458,6 +469,9 @@ struct VehicleView: View {
             initialBuzzerType: cachedBuzzerType
           )
           .navigationTransition(.zoom(sourceID: VehicleOptions.alert, in: namespace))
+        case .trips:
+          HomeView(vehicle: vehicle)
+            .navigationTransition(.zoom(sourceID: VehicleOptions.trips, in: namespace))
         case .shazamHistory:
           ShazamHistoryView(vehicleId: vehicle.vehicle.id)
             .navigationTransition(.zoom(sourceID: VehicleOptions.shazamHistory, in: namespace))
@@ -503,6 +517,23 @@ struct VehicleView: View {
 
   @ViewBuilder
   private func driverAlertSection(data: VehicleRealtime) -> some View {
+    // Speeding alert
+    if data.isSpeeding {
+      Label {
+        VStack(alignment: .leading) {
+          Text("Speeding!")
+            .bold()
+          Text("\(data.speedMph) MPH in a \(data.speedLimitMph) MPH zone")
+            .font(.caption)
+        }
+      } icon: {
+        SettingsBoxView(icon: "speedometer", color: .red)
+      }
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(Color.red.opacity(0.15), in: .rect(cornerRadius: 10))
+    }
+
     // Phone distraction alert (highest priority)
     if data.isPhoneDetected == true
       || data.driverStatus.lowercased() == "distracted_phone"
@@ -515,13 +546,11 @@ struct VehicleView: View {
             .font(.caption)
         }
       } icon: {
-        Image(systemName: "iphone.gen3.radiowaves.left.and.right")
-          .foregroundStyle(.red)
+        SettingsBoxView(icon: "iphone.gen3.radiowaves.left.and.right", color: .red)
       }
       .padding()
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.red.opacity(0.15), in: .rect(cornerRadius: 10))
-      .padding(.horizontal)
     }
     // Drinking alert
     else if data.isDrinkingDetected == true
@@ -535,13 +564,11 @@ struct VehicleView: View {
             .font(.caption)
         }
       } icon: {
-        Image(systemName: "cup.and.saucer.fill")
-          .foregroundStyle(.orange)
+        SettingsBoxView(icon: "cup.and.saucer.fill", color: .orange)
       }
       .padding()
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.orange.opacity(0.1), in: .rect(cornerRadius: 10))
-      .padding(.horizontal)
     }
     // Impaired alert
     else if data.intoxicationScore >= 4
@@ -555,13 +582,11 @@ struct VehicleView: View {
             .font(.caption)
         }
       } icon: {
-        Image(systemName: "exclamationmark.triangle.fill")
-          .foregroundStyle(.red)
+        SettingsBoxView(icon: "exclamationmark.triangle.fill", color: .red)
       }
       .padding()
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.red.opacity(0.1), in: .rect(cornerRadius: 10))
-      .padding(.horizontal)
     }
     // Drowsy alert
     else if data.intoxicationScore >= 2 || data.driverStatus.lowercased() == "drowsy" {
@@ -573,13 +598,11 @@ struct VehicleView: View {
             .font(.caption)
         }
       } icon: {
-        Image(systemName: "moon.fill")
-          .foregroundStyle(.orange)
+        SettingsBoxView(icon: "moon.fill", color: .orange)
       }
       .padding()
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(Color.orange.opacity(0.1), in: .rect(cornerRadius: 10))
-      .padding(.horizontal)
     }
   }
 
@@ -1439,18 +1462,14 @@ struct VehicleLiveCameraView: View {
             HStack {
               Label("Speed", systemImage: "speedometer")
               Spacer()
-              Text("\(data.speedMph) mph")
-                .foregroundStyle(data.isSpeeding ? .red : .primary)
-                .bold()
-            }
-
-            Divider()
-
-            // Speed limit
-            HStack {
-              Label("Speed Limit", systemImage: "mph")
-              Spacer()
-              Text("\(data.speedLimitMph) mph")
+              Text(
+                "\(Text("\(data.speedMph)").foregroundStyle(.primary))/\(data.speedLimitMph)MPH"
+              )
+              .bold()
+              .contentTransition(.numericText(value: 0))
+              .foregroundStyle(
+                data.isSpeeding ? .red : .secondary
+              )
             }
 
             Divider()

@@ -9,16 +9,13 @@ import AaronUI
 import SwiftUI
 
 enum V2Tab: String, CaseIterable {
-  case home = "Vehicle"
-  case new = "Trips"
+  case vehicle = "Vehicle"
   case account = "Account"
 
   var icon: String {
     switch self {
-    case .home:
+    case .vehicle:
       "car.side.fill"
-    case .new:
-      "airplane.up.forward"
     case .account:
       "__profileImage__"
     }
@@ -60,7 +57,7 @@ var mockProfiles: [V2Profile] = [
 @Observable
 class V2AppData {
   var isSplashFinished = false
-  var activeTab = V2Tab.home
+  var activeTab = V2Tab.vehicle
   var hideMainView = false
   var showProfileView = false
   var tabProfileRect: CGRect = .zero
