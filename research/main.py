@@ -612,6 +612,32 @@ class SupabaseUploader:
         except Exception as e:
             print(f"Error ending trip: {e}")
 
+    def reset_vehicle_realtime(self):
+        """Reset vehicle_realtime to parked/idle state (called on session end)"""
+        try:
+            record = {
+                "vehicle_id": self.vehicle_id,
+                "updated_at": datetime.now(PST).isoformat(),
+                "speed_mph": 0,
+                "heading_degrees": 0,
+                "compass_direction": "N",
+                "is_speeding": False,
+                "is_moving": False,
+                "driver_status": "unknown",
+                "intoxication_score": 0,
+                "satellites": 0,
+                "is_phone_detected": False,
+                "is_drinking_detected": False,
+                "current_song_title": None,
+                "current_song_artist": None,
+                "current_song_detected_at": None,
+                "buzzer_active": False,
+            }
+            self.client.table("vehicle_realtime").upsert(record).execute()
+            print(f"Vehicle realtime reset to parked state for {self.vehicle_id}")
+        except Exception as e:
+            print(f"Error resetting vehicle realtime: {e}")
+
     def increment_face_detection_count(self):
         """Increment face detection count for current trip"""
         self.trip_face_detections += 1
@@ -2096,6 +2122,7 @@ def main():
     if music_recognizer:
         music_recognizer.stop()
     supabase_uploader.end_trip()
+    supabase_uploader.reset_vehicle_realtime()
     buzzer.stop()
     gps_reader.stop()
     cap.release()
