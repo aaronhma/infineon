@@ -19,6 +19,13 @@ final class CachedVehicle {
   var inviteCode: String = ""
   var ownerId: UUID?
 
+  // Feature toggles
+  var enableYolo: Bool = true
+  var enableStream: Bool = true
+  var enableShazam: Bool = true
+  var enableMicrophone: Bool = true
+  var enableCamera: Bool = true
+
   init() {}
 
   init(from vehicle: Vehicle) {
@@ -29,6 +36,11 @@ final class CachedVehicle {
     self.vehicleDescription = vehicle.description
     self.inviteCode = vehicle.inviteCode
     self.ownerId = vehicle.ownerId
+    self.enableYolo = vehicle.enableYolo
+    self.enableStream = vehicle.enableStream
+    self.enableShazam = vehicle.enableShazam
+    self.enableMicrophone = vehicle.enableMicrophone
+    self.enableCamera = vehicle.enableCamera
   }
 
   func toVehicle() -> Vehicle {
@@ -39,7 +51,12 @@ final class CachedVehicle {
       name: name,
       description: vehicleDescription,
       inviteCode: inviteCode,
-      ownerId: ownerId
+      ownerId: ownerId,
+      enableYolo: enableYolo,
+      enableStream: enableStream,
+      enableShazam: enableShazam,
+      enableMicrophone: enableMicrophone,
+      enableCamera: enableCamera
     )
   }
 
@@ -50,6 +67,11 @@ final class CachedVehicle {
     self.vehicleDescription = vehicle.description
     self.inviteCode = vehicle.inviteCode
     self.ownerId = vehicle.ownerId
+    self.enableYolo = vehicle.enableYolo
+    self.enableStream = vehicle.enableStream
+    self.enableShazam = vehicle.enableShazam
+    self.enableMicrophone = vehicle.enableMicrophone
+    self.enableCamera = vehicle.enableCamera
   }
 }
 

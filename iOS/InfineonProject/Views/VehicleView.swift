@@ -1505,6 +1505,10 @@ struct VehicleLiveCameraView: View {
   @State private var isStreaming = false
   @State private var error: String?
   @State private var pollTask: Task<Void, Never>?
+  @State private var fallbackPollTask: Task<Void, Never>?
+  @State private var isFetchingFrame = false
+  @State private var consecutiveErrors = 0
+  @State private var lastFrameDate = Date.now
   @State private var vehicleData: VehicleRealtime?
   @State private var dataTask: Task<Void, Never>?
 
@@ -1656,29 +1660,49 @@ struct VehicleLiveCameraView: View {
   private func startPolling() {
     stopPolling()
     isStreaming = true
+    consecutiveErrors = 0
 
+    // Primary: broadcast-driven fetches with auto-reconnect
     pollTask = Task {
-      var consecutiveErrors = 0
+      while !Task.isCancelled {
+        let channel = await supabase.client.realtimeV2.channel("live-frames:\(vehicleId)")
+        let broadcastStream = await channel.broadcast(event: "new_frame")
+        await channel.subscribe()
 
-      // Subscribe to Realtime Broadcast for instant frame notifications
-      let channel = await supabase.client.realtimeV2.channel("live-frames:\(vehicleId)")
-      let broadcastStream = await channel.broadcast(event: "new_frame")
-      await channel.subscribe()
+        await fetchLatestFrame()
 
-      // Fetch the first frame immediately
-      await fetchFrame(&consecutiveErrors)
+        for await _ in broadcastStream {
+          guard !Task.isCancelled else { break }
+          await fetchLatestFrame()
+        }
 
-      // Then fetch on each broadcast notification (event-driven, no polling delay)
-      for await _ in broadcastStream {
+        await supabase.client.realtimeV2.removeChannel(channel)
+
+        // Broadcast stream ended (channel disconnected) — reconnect after a brief pause
         guard !Task.isCancelled else { break }
-        await fetchFrame(&consecutiveErrors)
+        try? await Task.sleep(for: .seconds(1))
       }
+    }
 
-      await supabase.client.realtimeV2.removeChannel(channel)
+    // Fallback: periodic polling in case broadcast stalls silently
+    fallbackPollTask = Task {
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(2))
+        guard !Task.isCancelled else { break }
+        // Only poll if no frame arrived recently
+        if Date.now.timeIntervalSince(lastFrameDate) > 1.5 {
+          await fetchLatestFrame()
+        }
+      }
     }
   }
 
-  private func fetchFrame(_ consecutiveErrors: inout Int) async {
+  private func fetchLatestFrame() async {
+    // Skip if already fetching — prevents queue buildup and lag
+    guard !isFetchingFrame else { return }
+    isFetchingFrame = true
+    defer { isFetchingFrame = false }
+
     do {
       let data = try await supabase.client.storage
         .from("live-frames")
@@ -1687,6 +1711,7 @@ struct VehicleLiveCameraView: View {
       if let image = UIImage(data: data) {
         currentFrame = image
         consecutiveErrors = 0
+        lastFrameDate = .now
       }
     } catch {
       consecutiveErrors += 1
@@ -1700,6 +1725,8 @@ struct VehicleLiveCameraView: View {
   private func stopPolling() {
     pollTask?.cancel()
     pollTask = nil
+    fallbackPollTask?.cancel()
+    fallbackPollTask = nil
     isStreaming = false
   }
 

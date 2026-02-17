@@ -20,6 +20,13 @@ struct Vehicle: Codable, Identifiable {
   let inviteCode: String
   let ownerId: UUID?
 
+  // Feature toggles
+  var enableYolo: Bool
+  var enableStream: Bool
+  var enableShazam: Bool
+  var enableMicrophone: Bool
+  var enableCamera: Bool
+
   enum CodingKeys: String, CodingKey {
     case id
     case createdAt = "created_at"
@@ -27,6 +34,55 @@ struct Vehicle: Codable, Identifiable {
     case name, description
     case inviteCode = "invite_code"
     case ownerId = "owner_id"
+    case enableYolo = "enable_yolo"
+    case enableStream = "enable_stream"
+    case enableShazam = "enable_shazam"
+    case enableMicrophone = "enable_microphone"
+    case enableCamera = "enable_camera"
+  }
+
+  init(
+    id: String,
+    createdAt: Date,
+    updatedAt: Date,
+    name: String?,
+    description: String?,
+    inviteCode: String,
+    ownerId: UUID?,
+    enableYolo: Bool = true,
+    enableStream: Bool = true,
+    enableShazam: Bool = true,
+    enableMicrophone: Bool = true,
+    enableCamera: Bool = true
+  ) {
+    self.id = id
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+    self.name = name
+    self.description = description
+    self.inviteCode = inviteCode
+    self.ownerId = ownerId
+    self.enableYolo = enableYolo
+    self.enableStream = enableStream
+    self.enableShazam = enableShazam
+    self.enableMicrophone = enableMicrophone
+    self.enableCamera = enableCamera
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    id = try container.decode(String.self, forKey: .id)
+    createdAt = try container.decode(Date.self, forKey: .createdAt)
+    updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    name = try container.decodeIfPresent(String.self, forKey: .name)
+    description = try container.decodeIfPresent(String.self, forKey: .description)
+    inviteCode = try container.decode(String.self, forKey: .inviteCode)
+    ownerId = try container.decodeIfPresent(UUID.self, forKey: .ownerId)
+    enableYolo = try container.decodeIfPresent(Bool.self, forKey: .enableYolo) ?? true
+    enableStream = try container.decodeIfPresent(Bool.self, forKey: .enableStream) ?? true
+    enableShazam = try container.decodeIfPresent(Bool.self, forKey: .enableShazam) ?? true
+    enableMicrophone = try container.decodeIfPresent(Bool.self, forKey: .enableMicrophone) ?? true
+    enableCamera = try container.decodeIfPresent(Bool.self, forKey: .enableCamera) ?? true
   }
 }
 
@@ -1005,7 +1061,12 @@ class SupabaseService {
   func updateVehicle(
     vehicleId: String,
     name: String? = nil,
-    description: String? = nil
+    description: String? = nil,
+    enableYolo: Bool? = nil,
+    enableStream: Bool? = nil,
+    enableShazam: Bool? = nil,
+    enableMicrophone: Bool? = nil,
+    enableCamera: Bool? = nil
   ) async throws {
     var updateData: [String: AnyJSON] = [:]
 
@@ -1014,6 +1075,21 @@ class SupabaseService {
     }
     if let description {
       updateData["description"] = .string(description)
+    }
+    if let enableYolo {
+      updateData["enable_yolo"] = .bool(enableYolo)
+    }
+    if let enableStream {
+      updateData["enable_stream"] = .bool(enableStream)
+    }
+    if let enableShazam {
+      updateData["enable_shazam"] = .bool(enableShazam)
+    }
+    if let enableMicrophone {
+      updateData["enable_microphone"] = .bool(enableMicrophone)
+    }
+    if let enableCamera {
+      updateData["enable_camera"] = .bool(enableCamera)
     }
 
     guard !updateData.isEmpty else { return }

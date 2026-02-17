@@ -46,33 +46,33 @@ FONT_FAST = cv2.FONT_HERSHEY_PLAIN
 # Load environment variables from .env file
 load_dotenv()
 
-# Check if YOLO should be enabled (defaults to True)
-ENABLE_YOLO = os.environ.get("ENABLE_YOLO", "true").lower() in ("true", "1", "yes")
+# Try to import YOLO (check availability regardless of settings)
+YOLO_AVAILABLE = False
+try:
+    from ultralytics import YOLO
 
-# Conditionally import YOLO
-if ENABLE_YOLO:
-    try:
-        from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except ImportError as e:
+    print(f"Note: YOLO not available ({e})")
 
-        print("YOLO model enabled")
-    except ImportError as e:
-        print(f"Warning: Could not import YOLO: {e}")
-        print("Disabling YOLO detection")
-        ENABLE_YOLO = False
-else:
-    print("YOLO model disabled via ENABLE_YOLO environment variable")
+# .env values serve as fallbacks when Supabase feature settings aren't reachable
+_ENV_ENABLE_YOLO = os.environ.get("ENABLE_YOLO", "true").lower() in ("true", "1", "yes")
+_ENV_ENABLE_STREAM = os.environ.get("ENABLE_STREAM", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
+_ENV_ENABLE_SHAZAM = os.environ.get("ENABLE_SHAZAM", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
-# Check if video streaming should be enabled (defaults to False)
-ENABLE_STREAM = os.environ.get("ENABLE_STREAM", "false").lower() in ("true", "1", "yes")
+# Stream / Shazam parameters (always from .env)
 STREAM_QUALITY = int(os.environ.get("STREAM_QUALITY", "50"))
 STREAM_FPS = int(os.environ.get("STREAM_FPS", "3"))
 STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
-
-# Check if Shazam music recognition should be enabled (defaults to False)
-ENABLE_SHAZAM = os.environ.get("ENABLE_SHAZAM", "true").lower() in ("true", "1", "yes")
-SHAZAM_INTERVAL = int(
-    os.environ.get("SHAZAM_INTERVAL", "20")
-)  # Seconds between recognitions
+SHAZAM_INTERVAL = int(os.environ.get("SHAZAM_INTERVAL", "20"))
 SHAZAM_DEBUG = os.environ.get("SHAZAM_DEBUG", "false").lower() in ("true", "1", "yes")
 
 
@@ -283,6 +283,9 @@ class SupabaseUploader:
         # Register vehicle on startup
         self._register_vehicle()
 
+        # Fetch feature settings from Supabase (overrides .env)
+        self._fetch_feature_settings()
+
         # Load driver profiles
         self._load_driver_profiles()
 
@@ -345,6 +348,52 @@ class SupabaseUploader:
         except Exception as e:
             print(f"Error registering vehicle: {e}")
             raise
+
+    def _fetch_feature_settings(self):
+        """Fetch feature toggle settings from the Supabase vehicles table.
+
+        These settings are controlled from the iOS app's Vehicle Settings page.
+        Falls back to .env values if the fetch fails.
+        """
+        try:
+            response = (
+                self.client.table("vehicles")
+                .select(
+                    "enable_yolo, enable_stream, enable_shazam, "
+                    "enable_microphone, enable_camera"
+                )
+                .eq("id", self.vehicle_id)
+                .execute()
+            )
+
+            if response.data:
+                row = response.data[0]
+                self.feature_settings = {
+                    "enable_yolo": row.get("enable_yolo", True) and YOLO_AVAILABLE,
+                    "enable_stream": row.get("enable_stream", True),
+                    "enable_shazam": row.get("enable_shazam", True),
+                    "enable_microphone": row.get("enable_microphone", True),
+                    "enable_camera": row.get("enable_camera", True),
+                }
+                print("Feature settings (from Supabase):")
+                for key, val in self.feature_settings.items():
+                    print(f"  {key}: {val}")
+                return
+
+        except Exception as e:
+            print(f"Warning: Could not fetch feature settings: {e}")
+
+        # Fallback to .env values
+        self.feature_settings = {
+            "enable_yolo": _ENV_ENABLE_YOLO and YOLO_AVAILABLE,
+            "enable_stream": _ENV_ENABLE_STREAM,
+            "enable_shazam": _ENV_ENABLE_SHAZAM,
+            "enable_microphone": True,
+            "enable_camera": True,
+        }
+        print("Feature settings (from .env fallback):")
+        for key, val in self.feature_settings.items():
+            print(f"  {key}: {val}")
 
     def _load_driver_profiles(self):
         """Load all driver profiles for this vehicle"""
@@ -1867,44 +1916,8 @@ def main():
     gps_reader = GPSReader()
     gps_reader.start()
 
-    # Open the default camera
-    cap = cv2.VideoCapture(args.camera)
-
-    if not cap.isOpened():
-        print("Error: Could not open camera")
-        gps_reader.stop()
-        return
-
-    # Minimize internal buffer so we always get the latest frame
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-    mode_label = "HEADLESS" if headless else "GUI"
-
-    # Get camera properties
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    print(f"Camera opened successfully! (mode: {mode_label})")
-    print(f"Camera resolution: {width}x{height}")
-
-    if ENABLE_YOLO:
-        print("- YOLO ENABLED")
-    else:
-        print("- YOLO DISABLED")
-    if ENABLE_STREAM:
-        print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
-    if ENABLE_SHAZAM:
-        print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
-    if not headless:
-        print("- Press 'X' to simulate speeding (75 MPH)")
-        print("- Press 'C' to reset speed to normal (45 MPH)")
-        print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
-
-    analyzer = FaceAnalyzer()
-    distraction_detector = DistractionDetector(
-        enabled=ENABLE_YOLO
-    )  # YOLO-based phone/drinking detection
-    speed_limit_checker = SpeedLimitChecker(search_radius=50)  # Check within 50m radius
+    # Initialize buzzer and Supabase first (fetches feature settings from DB)
+    speed_limit_checker = SpeedLimitChecker(search_radius=50)
     driving_sim = DrivingSimulator(
         gps_reader=gps_reader, speed_limit_checker=speed_limit_checker
     )
@@ -1912,9 +1925,56 @@ def main():
     buzzer.start()
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
 
-    # Video streaming (Supabase Storage)
+    # Feature settings from Supabase (falls back to .env)
+    settings = supabase_uploader.feature_settings
+    enable_yolo = settings["enable_yolo"]
+    enable_stream = settings["enable_stream"]
+    enable_shazam = settings["enable_shazam"] and settings["enable_microphone"]
+    enable_camera = settings["enable_camera"]
+
+    # Open camera if enabled
+    cap = None
+    analyzer = None
+    distraction_detector = None
+    width, height = 0, 0
+
+    if enable_camera:
+        cap = cv2.VideoCapture(args.camera)
+        if not cap.isOpened():
+            print("Error: Could not open camera — continuing without it")
+            cap = None
+        else:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            print(f"Camera opened: {width}x{height}")
+            analyzer = FaceAnalyzer()
+            distraction_detector = DistractionDetector(enabled=enable_yolo)
+    else:
+        print("Camera disabled via Supabase settings")
+
+    mode_label = "HEADLESS" if headless else "GUI"
+    print(f"Mode: {mode_label}")
+
+    if cap:
+        if enable_yolo:
+            print("- YOLO ENABLED")
+        else:
+            print("- YOLO DISABLED")
+    else:
+        print("- Camera OFF (face detection, YOLO, streaming unavailable)")
+    if enable_stream and cap:
+        print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
+    if enable_shazam:
+        print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
+    if not headless and cap:
+        print("- Press 'X' to simulate speeding (75 MPH)")
+        print("- Press 'C' to reset speed to normal (45 MPH)")
+        print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
+
+    # Video streaming (requires camera)
     streamer = None
-    if ENABLE_STREAM:
+    if enable_stream and cap:
         streamer = VideoStreamer(
             supabase_client=supabase_uploader.client,
             vehicle_id=supabase_uploader.vehicle_id,
@@ -1924,9 +1984,9 @@ def main():
         )
         streamer.start()
 
-    # Music recognition (Shazam)
+    # Music recognition (requires microphone)
     music_recognizer = None
-    if ENABLE_SHAZAM:
+    if enable_shazam:
         music_recognizer = MusicRecognizer(
             recognition_interval=SHAZAM_INTERVAL, debug_save_audio=SHAZAM_DEBUG
         )
@@ -1941,43 +2001,55 @@ def main():
     process_times = deque(maxlen=100)  # Track last 100 processing times
 
     while not shutdown_requested:
-        # Track frame start time for processing FPS
         frame_start_time = time.time()
 
-        # Capture frame-by-frame
-        ret, frame = cap.read()
-
-        if not ret:
-            print("Error: Could not read frame")
-            break
-
-        # Calculate timestamp in milliseconds
-        timestamp_ms = int(frame_count * 33.33)  # Assuming ~30 FPS
-        frame_count += 1
-        fps_frame_count += 1
-
-        # Update driving simulation
+        # Update driving simulation (GPS / speed)
         driving_sim.update_speed()
 
-        # Process frame with AI detection
-        processed_frame, detection_data = analyzer.process_frame(frame, timestamp_ms)
+        # Defaults when camera is off
+        processed_frame = None
+        detection_data = None
+        intox_data = None
+        distraction_data = {
+            "phone_detected": False,
+            "drinking_detected": False,
+            "phone_bbox": None,
+            "bottle_bbox": None,
+            "phone_frames": 0,
+            "drinking_frames": 0,
+        }
 
-        # Extract intox_data for alerts
-        intox_data = detection_data["intox_data"] if detection_data else None
+        # --- Camera-dependent processing ---
+        if cap is not None:
+            ret, frame = cap.read()
+            if not ret:
+                print("Error: Could not read frame")
+                break
 
-        # Run YOLO distraction detection (phone/drinking)
-        face_bbox = detection_data["face_bbox"] if detection_data else None
-        distraction_data = distraction_detector.detect(processed_frame, face_bbox)
+            timestamp_ms = int(frame_count * 33.33)
+            frame_count += 1
+            fps_frame_count += 1
 
-        # Check for drowsy/intoxicated driver and play alert
-        if intox_data and intox_data["score"] >= 4:
-            buzzer.play_drowsy_alert()
+            # Face detection
+            processed_frame, detection_data = analyzer.process_frame(
+                frame, timestamp_ms
+            )
+            intox_data = detection_data["intox_data"] if detection_data else None
 
-        # Check for distraction (phone/drinking) and play alert
-        if distraction_data["phone_detected"]:
-            buzzer.play_distraction_alert()
+            # YOLO distraction detection
+            face_bbox = detection_data["face_bbox"] if detection_data else None
+            distraction_data = distraction_detector.detect(processed_frame, face_bbox)
 
-        # Determine driver status for realtime update
+            # Buzzer alerts
+            if intox_data and intox_data["score"] >= 4:
+                buzzer.play_drowsy_alert()
+            if distraction_data["phone_detected"]:
+                buzzer.play_distraction_alert()
+        else:
+            # Camera off — throttle loop to ~10 Hz
+            time.sleep(0.1)
+
+        # --- Always: driver status ---
         if distraction_data["phone_detected"]:
             driver_status = "distracted_phone"
             intox_score = intox_data["score"] if intox_data else 0
@@ -1996,7 +2068,7 @@ def main():
             driver_status = "unknown"
             intox_score = 0
 
-        # Update vehicle realtime data (every 500ms)
+        # --- Always: realtime + trip + buzzer ---
         supabase_uploader.update_vehicle_realtime(
             speed_mph=driving_sim.get_speed(),
             heading_degrees=driving_sim.get_heading(),
@@ -2011,7 +2083,6 @@ def main():
             is_drinking_detected=distraction_data["drinking_detected"],
         )
 
-        # Update trip statistics
         is_drowsy = intox_data["drowsy"] if intox_data else False
         is_excessive_blinking = (
             intox_data["excessive_blinking"] if intox_data else False
@@ -2026,95 +2097,94 @@ def main():
             is_unstable_eyes=is_unstable_eyes,
         )
 
-        # Upload face detection to Supabase (every 2s when face detected)
-        if detection_data and supabase_uploader.should_upload():
-            driving_data = {
-                "speed": driving_sim.get_speed(),
-                "heading": driving_sim.get_heading(),
-                "direction": driving_sim.get_compass_direction(),
-                "is_speeding": driving_sim.is_speeding(),
-            }
-            supabase_uploader.upload_face_detection(
-                face_image=detection_data["face_crop"],
-                face_bbox=detection_data["face_bbox"],
-                left_eye_state=detection_data["left_eye_state"],
-                left_eye_ear=detection_data["left_eye_ear"],
-                right_eye_state=detection_data["right_eye_state"],
-                right_eye_ear=detection_data["right_eye_ear"],
-                intox_data=detection_data["intox_data"],
-                driving_data=driving_data,
-                distraction_data=distraction_data,
-            )
-            supabase_uploader.increment_face_detection_count()
-
-        # Check for identified driver (every 5s when face detected)
-        if detection_data:
-            supabase_uploader.check_current_driver()
-
-        # Check for remote buzzer commands (every 2s)
         supabase_uploader.check_buzzer_commands()
 
-        # Attempt music recognition periodically
+        # --- Camera-dependent uploads ---
+        if cap is not None:
+            if detection_data and supabase_uploader.should_upload():
+                driving_data = {
+                    "speed": driving_sim.get_speed(),
+                    "heading": driving_sim.get_heading(),
+                    "direction": driving_sim.get_compass_direction(),
+                    "is_speeding": driving_sim.is_speeding(),
+                }
+                supabase_uploader.upload_face_detection(
+                    face_image=detection_data["face_crop"],
+                    face_bbox=detection_data["face_bbox"],
+                    left_eye_state=detection_data["left_eye_state"],
+                    left_eye_ear=detection_data["left_eye_ear"],
+                    right_eye_state=detection_data["right_eye_state"],
+                    right_eye_ear=detection_data["right_eye_ear"],
+                    intox_data=detection_data["intox_data"],
+                    driving_data=driving_data,
+                    distraction_data=distraction_data,
+                )
+                supabase_uploader.increment_face_detection_count()
+
+            if detection_data:
+                supabase_uploader.check_current_driver()
+
+        # Music recognition (independent of camera)
         if music_recognizer:
             music_recognizer.recognize_song(
                 callback=supabase_uploader.upload_music_detection
             )
 
-        # Draw distraction overlays once (used for both streaming and GUI)
-        # This is more efficient than drawing twice
-        processed_frame = distraction_detector.draw_detections(processed_frame)
-        processed_frame = draw_distraction_warning(processed_frame, distraction_data)
-
-        # Track processing time
-        frame_end_time = time.time()
-        process_times.append(frame_end_time - frame_start_time)
-
-        # Print FPS stats every 5 seconds
-        current_time = time.time()
-        if current_time - last_fps_print >= 5.0:
-            elapsed = current_time - fps_start_time
-            capture_fps = fps_frame_count / elapsed if elapsed > 0 else 0
-            avg_process_time = sum(process_times) / len(process_times) if process_times else 0
-            process_fps = 1.0 / avg_process_time if avg_process_time > 0 else 0
-
-            print(
-                f"\n[STATS] Camera: {capture_fps:.1f} FPS | Processing: {process_fps:.1f} FPS "
-                f"({avg_process_time*1000:.1f}ms/frame) | Resolution: {width}x{height}\n"
+        # --- Drawing / streaming / GUI (camera only) ---
+        if cap is not None and processed_frame is not None:
+            processed_frame = distraction_detector.draw_detections(processed_frame)
+            processed_frame = draw_distraction_warning(
+                processed_frame, distraction_data
             )
 
-            # Reset counters
-            fps_frame_count = 0
-            fps_start_time = current_time
-            last_fps_print = current_time
+            # Track processing time
+            frame_end_time = time.time()
+            process_times.append(frame_end_time - frame_start_time)
 
-        # Stream annotated frame to connected clients
-        if streamer:
-            streamer.update_frame(processed_frame)
+            # Print FPS stats every 5 seconds
+            current_time = time.time()
+            if current_time - last_fps_print >= 5.0:
+                elapsed = current_time - fps_start_time
+                capture_fps = fps_frame_count / elapsed if elapsed > 0 else 0
+                avg_process_time = (
+                    sum(process_times) / len(process_times) if process_times else 0
+                )
+                process_fps = 1.0 / avg_process_time if avg_process_time > 0 else 0
 
-        if not headless:
-            # Display the frame
-            cv2.imshow("Infineon Project - Winter 2026", processed_frame)
+                print(
+                    f"\n[STATS] Camera: {capture_fps:.1f} FPS | "
+                    f"Processing: {process_fps:.1f} FPS "
+                    f"({avg_process_time*1000:.1f}ms/frame) | "
+                    f"Resolution: {width}x{height}\n"
+                )
 
-            # Handle keyboard input
-            key = cv2.waitKey(1) & 0xFF
+                fps_frame_count = 0
+                fps_start_time = current_time
+                last_fps_print = current_time
 
-            if key == ord("q"):
-                break
-            # Speed control keys (for testing)
-            elif (
-                key == 82 or key == 0
-            ):  # Up arrow (different codes on different systems)
-                driving_sim.manual_speed_increase(10)
-                print(f"Speed increased to: {driving_sim.get_speed()} MPH")
-            elif key == 84 or key == 1:  # Down arrow
-                driving_sim.manual_speed_decrease(10)
-                print(f"Speed decreased to: {driving_sim.get_speed()} MPH")
-            elif key == ord("x"):
-                driving_sim.set_speeding_mode()
-                print(f"SPEEDING MODE: Speed set to {driving_sim.get_speed()} MPH")
-            elif key == ord("c"):
-                driving_sim.reset_speed()
-                print(f"Speed reset to: {driving_sim.get_speed()} MPH")
+            if streamer:
+                streamer.update_frame(processed_frame)
+
+            if not headless:
+                cv2.imshow("Infineon Project - Winter 2026", processed_frame)
+                key = cv2.waitKey(1) & 0xFF
+
+                if key == ord("q"):
+                    break
+                elif key == 82 or key == 0:
+                    driving_sim.manual_speed_increase(10)
+                    print(f"Speed increased to: {driving_sim.get_speed()} MPH")
+                elif key == 84 or key == 1:
+                    driving_sim.manual_speed_decrease(10)
+                    print(f"Speed decreased to: {driving_sim.get_speed()} MPH")
+                elif key == ord("x"):
+                    driving_sim.set_speeding_mode()
+                    print(
+                        f"SPEEDING MODE: Speed set to {driving_sim.get_speed()} MPH"
+                    )
+                elif key == ord("c"):
+                    driving_sim.reset_speed()
+                    print(f"Speed reset to: {driving_sim.get_speed()} MPH")
 
     # End trip and release resources
     if streamer:
@@ -2125,8 +2195,9 @@ def main():
     supabase_uploader.reset_vehicle_realtime()
     buzzer.stop()
     gps_reader.stop()
-    cap.release()
-    if not headless:
+    if cap is not None:
+        cap.release()
+    if not headless and cap is not None:
         cv2.destroyAllWindows()
 
 
