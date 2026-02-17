@@ -6,6 +6,7 @@
 //
 
 import Supabase
+import SwiftData
 import SwiftUI
 
 // MARK: - Models
@@ -491,6 +492,9 @@ class SupabaseService {
   // Realtime channel
   private var realtimeChannel: RealtimeChannelV2?
 
+  // Cache
+  private var modelContext: ModelContext?
+
   init() {
     self.client = SupabaseClient(
       supabaseURL: URL(string: Constants.Supabase.supabaseURL)!,
@@ -504,6 +508,135 @@ class SupabaseService {
     // Listen for auth state changes
     Task {
       await listenToAuthChanges()
+    }
+  }
+
+  // MARK: - Cache Methods
+
+  func configureCache(modelContext: ModelContext) {
+    self.modelContext = modelContext
+  }
+
+  /// Loads cached vehicles and realtime data from SwiftData into the in-memory arrays.
+  func loadCachedData() {
+    loadCachedVehicles()
+    loadCachedVehicleRealtimeData()
+  }
+
+  private func loadCachedVehicles() {
+    guard let modelContext else { return }
+    do {
+      let descriptor = FetchDescriptor<CachedVehicle>(
+        sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+      )
+      let cached = try modelContext.fetch(descriptor)
+      if !cached.isEmpty {
+        self.vehicles = cached.map { $0.toVehicle() }
+      }
+    } catch {
+      print("Error loading cached vehicles: \(error)")
+    }
+  }
+
+  private func saveCachedVehicles(_ vehicles: [Vehicle]) {
+    guard let modelContext else { return }
+    do {
+      let descriptor = FetchDescriptor<CachedVehicle>()
+      let existing = try modelContext.fetch(descriptor)
+      let existingById = Dictionary(
+        uniqueKeysWithValues: existing.map { ($0.id, $0) }
+      )
+
+      let currentIds = Set(vehicles.map(\.id))
+
+      // Delete cached vehicles no longer in the list
+      for cached in existing where !currentIds.contains(cached.id) {
+        modelContext.delete(cached)
+      }
+
+      // Insert or update
+      for vehicle in vehicles {
+        if let cached = existingById[vehicle.id] {
+          cached.update(from: vehicle)
+        } else {
+          modelContext.insert(CachedVehicle(from: vehicle))
+        }
+      }
+
+      try modelContext.save()
+    } catch {
+      print("Error saving cached vehicles: \(error)")
+    }
+  }
+
+  private func loadCachedVehicleRealtimeData() {
+    guard let modelContext else { return }
+    do {
+      let descriptor = FetchDescriptor<CachedVehicleRealtime>()
+      let cached = try modelContext.fetch(descriptor)
+      for item in cached {
+        self.vehicleRealtimeData[item.vehicleId] = item.toVehicleRealtime()
+      }
+    } catch {
+      print("Error loading cached realtime data: \(error)")
+    }
+  }
+
+  private func saveCachedVehicleRealtime(_ data: VehicleRealtime) {
+    guard let modelContext else { return }
+    do {
+      let vehicleId = data.vehicleId
+      var descriptor = FetchDescriptor<CachedVehicleRealtime>(
+        predicate: #Predicate { $0.vehicleId == vehicleId }
+      )
+      descriptor.fetchLimit = 1
+      let existing = try modelContext.fetch(descriptor)
+
+      if let cached = existing.first {
+        cached.update(from: data)
+      } else {
+        modelContext.insert(CachedVehicleRealtime(from: data))
+      }
+
+      try modelContext.save()
+    } catch {
+      print("Error saving cached realtime data: \(error)")
+    }
+  }
+
+  private func deleteCachedVehicle(_ vehicleId: String) {
+    guard let modelContext else { return }
+    do {
+      var vehicleDescriptor = FetchDescriptor<CachedVehicle>(
+        predicate: #Predicate { $0.id == vehicleId }
+      )
+      vehicleDescriptor.fetchLimit = 1
+      for v in try modelContext.fetch(vehicleDescriptor) {
+        modelContext.delete(v)
+      }
+
+      var realtimeDescriptor = FetchDescriptor<CachedVehicleRealtime>(
+        predicate: #Predicate { $0.vehicleId == vehicleId }
+      )
+      realtimeDescriptor.fetchLimit = 1
+      for r in try modelContext.fetch(realtimeDescriptor) {
+        modelContext.delete(r)
+      }
+
+      try modelContext.save()
+    } catch {
+      print("Error deleting cached vehicle: \(error)")
+    }
+  }
+
+  private func deleteAllCachedData() {
+    guard let modelContext else { return }
+    do {
+      try modelContext.delete(model: CachedVehicle.self)
+      try modelContext.delete(model: CachedVehicleRealtime.self)
+      try modelContext.save()
+    } catch {
+      print("Error clearing cache: \(error)")
     }
   }
 
@@ -577,6 +710,7 @@ class SupabaseService {
           self.userProfile = nil
           self.vehicles = []
           self.vehicleRealtimeData = [:]
+          self.deleteAllCachedData()
           self.unsubscribeFromRealtime()
 
         default:
@@ -602,6 +736,7 @@ class SupabaseService {
       self.userProfile = nil
       self.vehicles = []
       self.vehicleRealtimeData = [:]
+      self.deleteAllCachedData()
     }
   }
 
@@ -769,6 +904,7 @@ class SupabaseService {
       if vehicleIds.isEmpty {
         await MainActor.run {
           self.vehicles = []
+          self.saveCachedVehicles([])
         }
         return
       }
@@ -784,6 +920,7 @@ class SupabaseService {
 
       await MainActor.run {
         self.vehicles = vehicleList
+        self.saveCachedVehicles(vehicleList)
       }
 
     } catch {
@@ -804,6 +941,7 @@ class SupabaseService {
 
       await MainActor.run {
         self.vehicleRealtimeData[vehicleId] = realtimeData
+        self.saveCachedVehicleRealtime(realtimeData)
       }
     } catch {
       print("Error loading vehicle realtime data: \(error)")
@@ -838,6 +976,7 @@ class SupabaseService {
     await MainActor.run {
       self.vehicles.removeAll { $0.id == vehicleId }
       self.vehicleRealtimeData.removeValue(forKey: vehicleId)
+      self.deleteCachedVehicle(vehicleId)
     }
   }
 
@@ -893,6 +1032,7 @@ class SupabaseService {
       if let index = self.vehicles.firstIndex(where: { $0.id == vehicleId }) {
         self.vehicles[index] = updatedVehicle
       }
+      self.saveCachedVehicles(self.vehicles)
     }
   }
 
@@ -1294,6 +1434,7 @@ class SupabaseService {
         await MainActor.run {
           if self.vehicles.contains(where: { $0.id == data.vehicleId }) {
             self.vehicleRealtimeData[data.vehicleId] = data
+            self.saveCachedVehicleRealtime(data)
           }
         }
       case .update(let action):
@@ -1302,10 +1443,10 @@ class SupabaseService {
         await MainActor.run {
           if self.vehicles.contains(where: { $0.id == data.vehicleId }) {
             self.vehicleRealtimeData[data.vehicleId] = data
+            self.saveCachedVehicleRealtime(data)
           }
         }
       case .delete:
-        // Handle delete if needed
         break
       }
     } catch {

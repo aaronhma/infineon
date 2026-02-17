@@ -360,9 +360,9 @@ struct V2ProfileSelectView: View {
               .snappy(duration: 0.3, extraBounce: 0),
               value: animateToMainView
             )
-            .opacity(
-              animateToMainView && appData.activeTab != .account ? 0.6 : 1
-            )
+            //            .opacity(
+            //              animateToMainView && appData.activeTab != .account ? 0.6 : 1
+            //            )
             .modifier(
               AnimatedPositionModifier(
                 source: sourcePosition, center: centerPosition, destination: destinationPosition,

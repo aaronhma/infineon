@@ -11,6 +11,8 @@ import Supabase
 import SwiftUI
 
 struct V2AccountView: View {
+  @Environment(\.dismiss) private var dismiss
+
   @Environment(V2AppData.self) private var appData
 
   @Namespace private var namespace
@@ -298,6 +300,7 @@ struct V2AccountView: View {
             appData.showProfileView = true
             appData.hideMainView = true
             appData.fromTabBar = true
+            dismiss()
           }
         }
         .listRowSeparator(.hidden)
@@ -404,6 +407,13 @@ struct V2AccountView: View {
               }
             }
             Button("Cancel", role: .cancel) {}
+          }
+        }
+      }
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          CloseButton {
+            dismiss()
           }
         }
       }

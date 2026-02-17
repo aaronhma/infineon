@@ -20,6 +20,7 @@ struct VehicleView: View {
 
   @State private var showingUnidentifiedFaces = false
   @State private var showingVehicleAccessSheet = false
+  @State private var showingAccountSheet = false
 
   @State var currentLiveActivity: Activity<VehicleLiveActivityAttributes>?
 
@@ -494,12 +495,21 @@ struct VehicleView: View {
       }
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
-        ToolbarItem(placement: .topBarTrailing) {
+        ToolbarItem(placement: .topBarLeading) {
           Button {
             Haptics.impact()
             showingVehicleAccessSheet.toggle()
           } label: {
             Image(systemName: "person.2.fill")
+          }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+          Button {
+            Haptics.impact()
+            showingAccountSheet.toggle()
+          } label: {
+            ProfileToolbarImage()
           }
         }
       }
@@ -510,6 +520,9 @@ struct VehicleView: View {
     }
     .sheet(isPresented: $showingUnidentifiedFaces) {
       UnidentifiedFacesView(vehicle: vehicle.vehicle)
+    }
+    .sheet(isPresented: $showingAccountSheet) {
+      V2AccountView()
     }
   }
 
@@ -767,6 +780,42 @@ struct DriverStatusBadge: View {
       .background(statusColor.opacity(0.2))
       .foregroundStyle(statusColor)
       .clipShape(.capsule)
+  }
+}
+
+// MARK: - Profile Toolbar Image
+
+struct ProfileToolbarImage: View {
+  var body: some View {
+    if let avatarPath = supabase.userProfile?.avatarPath,
+      let avatarURL = supabase.getUserAvatarURL(path: avatarPath)
+    {
+      AsyncImage(url: avatarURL) { phase in
+        switch phase {
+        case .success(let image):
+          image
+            .resizable()
+            .scaledToFill()
+            .frame(width: 30, height: 30)
+            .clipShape(.circle)
+        default:
+          defaultImage
+        }
+      }
+    } else {
+      defaultImage
+    }
+  }
+
+  private var defaultImage: some View {
+    Circle()
+      .fill(.gray.gradient)
+      .frame(width: 30, height: 30)
+      .overlay {
+        Image(systemName: "person.fill")
+          .font(.caption)
+          .foregroundStyle(.white)
+      }
   }
 }
 

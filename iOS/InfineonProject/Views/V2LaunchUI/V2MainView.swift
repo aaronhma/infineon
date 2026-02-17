@@ -16,19 +16,15 @@ struct V2MainView: View {
     ZStack {
       VStack(spacing: 0) {
         Group {
-          switch appData.activeTab {
-          case .vehicle:
-            if let profile = appData.watchingProfile {
-              VehicleView(vehicle: profile)
-            }
-          case .account:
-            V2AccountView()
+          if let profile = appData.watchingProfile {
+            VehicleView(vehicle: profile)
           }
         }
         .frame(maxHeight: .infinity)
-
-        if appData.watchingProfile != nil {
-          V2LaunchUITabView()
+        .overlay(alignment: .bottom) {
+          if appData.watchingProfile != nil {
+            V2LaunchUITabView()
+          }
         }
       }
       .coordinateSpace(.named("MAINVIEW"))
@@ -44,7 +40,14 @@ struct V2MainView: View {
         ProgressView()
           .controlSize(.extraLarge)
           .task {
-            await supabase.loadVehicles()
+            // Load cached data for instant display
+            supabase.loadCachedData()
+
+            if supabase.vehicles.isEmpty {
+              // No cache available — wait for network
+              await supabase.loadVehicles()
+            }
+
             appData.isSplashFinished = true
 
             // Check if there's a pending vehicle from quick action
@@ -66,6 +69,11 @@ struct V2MainView: View {
             } else {
               appData.showProfileView = appData.isSplashFinished
               appData.hideMainView = appData.showProfileView
+            }
+
+            // Refresh from network in the background
+            Task {
+              await supabase.loadVehicles()
             }
           }
       }
