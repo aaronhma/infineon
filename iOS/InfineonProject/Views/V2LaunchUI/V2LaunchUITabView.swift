@@ -95,7 +95,7 @@ struct V2LaunchUITabView: View {
     .onTapGesture {
       Haptics.impact()
 
-      withAnimation(.snappy(duration: 0.1)) {
+      withAnimation(.bouncy) {
         appData.showProfileView = true
         appData.hideMainView = true
         appData.fromTabBar = true

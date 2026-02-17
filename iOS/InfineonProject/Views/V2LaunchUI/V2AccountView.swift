@@ -34,7 +34,6 @@ struct V2AccountView: View {
 
   enum SettingsOptions: Hashable {
     case profile
-    case vehicleSettings
     case notifications
     case licensing
   }
@@ -296,6 +295,8 @@ struct V2AccountView: View {
         }
         .listRowBackground(Color.clear)
         .onTapGesture {
+          Haptics.impact()
+
           withAnimation(.snappy(duration: 0.1)) {
             appData.showProfileView = true
             appData.hideMainView = true
@@ -333,15 +334,6 @@ struct V2AccountView: View {
 
         // Settings Section
         Section {
-          NavigationLink(value: SettingsOptions.vehicleSettings) {
-            Label {
-              Text("Vehicle Settings")
-            } icon: {
-              SettingsBoxView(icon: "car.fill", color: .blue)
-                .stableMatchedTransition(id: SettingsOptions.vehicleSettings, in: namespace)
-            }
-          }
-
           NavigationLink(value: SettingsOptions.notifications) {
             Label {
               Text("Notifications")
@@ -424,9 +416,6 @@ struct V2AccountView: View {
         case .profile:
           EditProfileView()
             .navigationTransition(.zoom(sourceID: SettingsOptions.profile, in: namespace))
-        case .vehicleSettings:
-          VehicleSettingsView(vehicle: appData.watchingProfile!.vehicle)
-            .navigationTransition(.zoom(sourceID: SettingsOptions.vehicleSettings, in: namespace))
         case .notifications:
           NotificationSettingsView()
             .navigationTransition(.zoom(sourceID: SettingsOptions.notifications, in: namespace))

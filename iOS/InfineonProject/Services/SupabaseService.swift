@@ -1018,18 +1018,19 @@ class SupabaseService {
 
     guard !updateData.isEmpty else { return }
 
-    let updatedVehicle: Vehicle =
+    let updatedVehicles: [Vehicle] =
       try await client
       .from("vehicles")
       .update(updateData)
       .eq("id", value: vehicleId)
       .select()
-      .single()
       .execute()
       .value
 
     await MainActor.run {
-      if let index = self.vehicles.firstIndex(where: { $0.id == vehicleId }) {
+      if let updatedVehicle = updatedVehicles.first,
+        let index = self.vehicles.firstIndex(where: { $0.id == vehicleId })
+      {
         self.vehicles[index] = updatedVehicle
       }
       self.saveCachedVehicles(self.vehicles)

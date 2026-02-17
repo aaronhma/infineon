@@ -58,6 +58,7 @@ struct VehicleView: View {
     case trips
     case shazamHistory
     case liveLocation
+    case vehicleSettings
   }
 
   var body: some View {
@@ -196,9 +197,14 @@ struct VehicleView: View {
                   } icon: {
                     Image(systemName: "face.smiling")
                       .foregroundStyle(.orange)
+                      .stableMatchedTransition(id: "unidentifiedFacesSheet", in: namespace)
                   }
                 }
                 .tint(.primary)
+                .contentShape(.rect)
+                .buttonStyle(
+                  FluidZoomTransitionStyle(
+                    id: "unidentifiedFacesSheet", namespace: namespace, shape: .rect))
               }
 
               NavigationLink(value: VehicleOptions.faceDetections) {
@@ -319,6 +325,16 @@ struct VehicleView: View {
                       }
                     }
                   }
+
+                  NavigationLink(value: VehicleOptions.vehicleSettings) {
+                    Label {
+                      Text("Vehicle Settings")
+                    } icon: {
+                      SettingsBoxView(icon: "car.fill", color: .blue)
+                        .stableMatchedTransition(id: VehicleOptions.vehicleSettings, in: namespace)
+                    }
+                  }
+                  .tint(.primary)
 
                   LabeledContent("Speed") {
                     HStack {
@@ -491,6 +507,9 @@ struct VehicleView: View {
             }
           }
           .navigationTransition(.zoom(sourceID: VehicleOptions.liveLocation, in: namespace))
+        case .vehicleSettings:
+          VehicleSettingsView(vehicle: vehicle.vehicle)
+            .navigationTransition(.zoom(sourceID: VehicleOptions.vehicleSettings, in: namespace))
         }
       }
       .navigationBarTitleDisplayMode(.inline)
@@ -501,7 +520,12 @@ struct VehicleView: View {
             showingVehicleAccessSheet.toggle()
           } label: {
             Image(systemName: "person.2.fill")
+              .stableMatchedTransition(id: "accessSheet", in: namespace)
           }
+          .contentShape(.capsule)
+          .possibleGlassEffect(in: .capsule)
+          .buttonStyle(
+            FluidZoomTransitionStyle(id: "accessSheet", namespace: namespace, shape: .capsule))
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -510,19 +534,27 @@ struct VehicleView: View {
             showingAccountSheet.toggle()
           } label: {
             ProfileToolbarImage()
+              .stableMatchedTransition(id: "settingsSheet", in: namespace)
           }
+          .contentShape(.capsule)
+          .possibleGlassEffect(in: .capsule)
+          .buttonStyle(
+            FluidZoomTransitionStyle(id: "settingsSheet", namespace: namespace, shape: .capsule))
         }
       }
       //      .dynamicIslandToast(isPresented: .constant(vehicleStreetName != nil), toast: .init(symbol: "xmark.circle.fill", symbolForegroundStyle: (.green, .white), title: "Distracted Driving", message: "Driver was alerted"))
     }
     .sheet(isPresented: $showingVehicleAccessSheet) {
       VehicleAccessSheet(vehicle: vehicle.vehicle)
+        .navigationTransition(.zoom(sourceID: "accessSheet", in: namespace))
     }
     .sheet(isPresented: $showingUnidentifiedFaces) {
       UnidentifiedFacesView(vehicle: vehicle.vehicle)
+        .navigationTransition(.zoom(sourceID: "unidentifiedFacesSheet", in: namespace))
     }
     .sheet(isPresented: $showingAccountSheet) {
       V2AccountView()
+        .navigationTransition(.zoom(sourceID: "settingsSheet", in: namespace))
     }
   }
 
