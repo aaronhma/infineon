@@ -8,6 +8,7 @@ import time
 import urllib.request
 import uuid
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 # PST timezone (UTC-8)
@@ -74,6 +75,59 @@ STREAM_FPS = int(os.environ.get("STREAM_FPS", "3"))
 STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
 SHAZAM_INTERVAL = int(os.environ.get("SHAZAM_INTERVAL", "20"))
 SHAZAM_DEBUG = os.environ.get("SHAZAM_DEBUG", "false").lower() in ("true", "1", "yes")
+
+
+class ThreadedCamera:
+    """Threaded camera capture for non-blocking frame reads.
+
+    Reads frames in a dedicated background thread so the main processing
+    loop never blocks waiting for the next camera frame from the sensor.
+    This decouples capture rate from processing rate.
+    """
+
+    def __init__(self, camera_index=0):
+        self.cap = cv2.VideoCapture(camera_index)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self._frame = None
+        self._ret = False
+        self._lock = threading.Lock()
+        self._running = False
+        self._thread = None
+
+    def isOpened(self):
+        return self.cap.isOpened()
+
+    def start(self):
+        """Read first frame synchronously, then start background capture."""
+        self._ret, self._frame = self.cap.read()
+        self._running = True
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def _capture_loop(self):
+        while self._running:
+            ret, frame = self.cap.read()
+            with self._lock:
+                self._ret = ret
+                self._frame = frame
+
+    def read(self):
+        """Return the latest frame instantly (non-blocking)."""
+        with self._lock:
+            return self._ret, self._frame
+
+    def get(self, prop):
+        return self.cap.get(prop)
+
+    def set(self, prop, val):
+        return self.cap.set(prop, val)
+
+    def release(self):
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=2)
+        self.cap.release()
 
 
 class VideoStreamer:
@@ -248,6 +302,9 @@ class SupabaseUploader:
         self.upload_cooldown = 2.0  # Minimum seconds between face uploads
         self.realtime_cooldown = 0.5  # Update realtime every 500ms
         self.driver_check_cooldown = 5.0  # Check for driver identification every 5s
+
+        # Shared thread pool for all background I/O (replaces per-call Thread spawns)
+        self._executor = ThreadPoolExecutor(max_workers=4)
 
         # Background thread guards to prevent blocking the main loop
         self._realtime_busy = False
@@ -616,7 +673,7 @@ class SupabaseUploader:
             finally:
                 self._trip_sync_busy = False
 
-        threading.Thread(target=_do_sync, daemon=True).start()
+        self._executor.submit(_do_sync)
 
     def end_trip(self):
         """End the current trip (called on session end)"""
@@ -738,7 +795,7 @@ class SupabaseUploader:
             finally:
                 self._driver_check_busy = False
 
-        threading.Thread(target=_do_check, daemon=True).start()
+        self._executor.submit(_do_check)
         return self.current_driver_name
 
     def get_current_driver(self):
@@ -805,7 +862,7 @@ class SupabaseUploader:
             finally:
                 self._buzzer_check_busy = False
 
-        threading.Thread(target=_do_check, daemon=True).start()
+        self._executor.submit(_do_check)
 
     def upload_music_detection(self, song_info: dict):
         """Upload detected music to Supabase (non-blocking)
@@ -869,7 +926,7 @@ class SupabaseUploader:
             finally:
                 self._music_upload_busy = False
 
-        threading.Thread(target=_do_upload, daemon=True).start()
+        self._executor.submit(_do_upload)
 
     def update_vehicle_realtime(
         self,
@@ -924,7 +981,7 @@ class SupabaseUploader:
             finally:
                 self._realtime_busy = False
 
-        threading.Thread(target=_do_update, daemon=True).start()
+        self._executor.submit(_do_update)
 
     def should_upload(self):
         """Check if enough time has passed since last upload"""
@@ -1029,7 +1086,7 @@ class SupabaseUploader:
             finally:
                 self._upload_busy = False
 
-        threading.Thread(target=_do_upload, daemon=True).start()
+        self._executor.submit(_do_upload)
 
 
 class DistractionDetector:
@@ -1082,6 +1139,18 @@ class DistractionDetector:
         self.phone_frames = 0
         self.drinking_frames = 0
         self.detection_threshold = 2  # Frames needed to confirm detection
+
+        # Async YOLO processing — runs inference in a background thread
+        # so the main loop is never blocked by model forward pass
+        if self.enabled:
+            self._yolo_executor = ThreadPoolExecutor(max_workers=1)
+        else:
+            self._yolo_executor = None
+        self._yolo_future = None
+
+        # YOLO performance tracking
+        self._yolo_times = deque(maxlen=50)
+        self._yolo_completions = 0
 
     def _boxes_overlap(self, box1, box2, overlap_threshold=0.1):
         """Check if two bounding boxes overlap significantly"""
@@ -1138,11 +1207,15 @@ class DistractionDetector:
         return dx < extended_width and dy < extended_height
 
     def detect(self, frame, face_bbox=None):
-        """Run YOLO detection on frame
+        """Run YOLO detection on frame (non-blocking async).
+
+        Submits inference to a background thread and returns cached results
+        instantly so the main loop is never blocked by the YOLO model.
+        Smoothing state is updated only when new YOLO results arrive.
 
         Args:
             frame: BGR image from OpenCV
-            face_bbox: Optional face bounding box dict with x_min, y_min, x_max, y_max
+            face_bbox: Optional face bounding box dict (currently unused)
 
         Returns:
             dict with detection results
@@ -1158,16 +1231,71 @@ class DistractionDetector:
                 "drinking_frames": 0,
             }
 
-        # Run YOLO inference (filter to driver-relevant classes only)
+        # Check for completed async YOLO result
+        new_phone = None
+        new_bottle = None
+        has_result = False
+
+        if self._yolo_future is not None:
+            if self._yolo_future.done():
+                try:
+                    new_phone, new_bottle = self._yolo_future.result()
+                except Exception:
+                    pass
+                self._yolo_future = None
+                has_result = True
+
+        # Submit new YOLO inference if not busy (copy frame for thread safety)
+        if self._yolo_future is None:
+            self._yolo_future = self._yolo_executor.submit(
+                self._run_yolo_inference, frame.copy()
+            )
+
+        # Update smoothing only when we have new YOLO results
+        if has_result:
+            if new_phone is not None:
+                self.phone_bbox = new_phone
+                self.phone_frames += 1
+            else:
+                self.phone_frames = max(0, self.phone_frames - 1)
+                if self.phone_frames == 0:
+                    self.phone_bbox = None
+
+            if new_bottle is not None:
+                self.bottle_bbox = new_bottle
+                self.drinking_frames += 1
+            else:
+                self.drinking_frames = max(0, self.drinking_frames - 1)
+                if self.drinking_frames == 0:
+                    self.bottle_bbox = None
+
+            self.phone_detected = self.phone_frames >= self.detection_threshold
+            self.drinking_detected = self.drinking_frames >= self.detection_threshold
+
+        return {
+            "phone_detected": self.phone_detected,
+            "drinking_detected": self.drinking_detected,
+            "phone_bbox": self.phone_bbox,
+            "bottle_bbox": self.bottle_bbox,
+            "phone_frames": self.phone_frames,
+            "drinking_frames": self.drinking_frames,
+        }
+
+    def _run_yolo_inference(self, frame):
+        """Run YOLO model inference in background thread.
+
+        Returns:
+            tuple: (phone_bbox, bottle_bbox) — each is (x1,y1,x2,y2) or None
+        """
+        t0 = time.time()
+        current_phone = None
+        current_bottle = None
+
         results = self.model(
             frame, verbose=False, conf=self.confidence_threshold,
             classes=self.TARGET_CLASSES,
         )
 
-        current_phone = None
-        current_bottle = None
-
-        # Process detections
         for result in results:
             boxes = result.boxes
             if boxes is None:
@@ -1179,7 +1307,6 @@ class DistractionDetector:
                 xyxy = box.xyxy[0].cpu().numpy()
                 bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
 
-                # Get class name for debugging
                 class_name = self.model.names[cls]
 
                 if cls in self.PHONE_CLASSES or cls in self.DEVICE_CLASSES:
@@ -1188,42 +1315,31 @@ class DistractionDetector:
                 elif cls in self.DRINK_CLASSES:
                     current_bottle = bbox
                     print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
-                # Debug: show other common objects being detected
                 elif conf > 0.4:
                     print(
                         f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
                     )
 
-        # Update phone detection with smoothing
-        if current_phone is not None:
-            self.phone_bbox = current_phone
-            self.phone_frames += 1
-        else:
-            self.phone_frames = max(0, self.phone_frames - 1)
-            if self.phone_frames == 0:
-                self.phone_bbox = None
+        self._yolo_times.append(time.time() - t0)
+        self._yolo_completions += 1
+        return current_phone, current_bottle
 
-        # Update drinking detection with smoothing
-        if current_bottle is not None:
-            self.bottle_bbox = current_bottle
-            self.drinking_frames += 1
-        else:
-            self.drinking_frames = max(0, self.drinking_frames - 1)
-            if self.drinking_frames == 0:
-                self.bottle_bbox = None
+    def get_yolo_stats(self):
+        """Return (avg_ms, fps, completions) for recent YOLO inferences."""
+        if not self._yolo_times:
+            return 0.0, 0.0, self._yolo_completions
+        avg = sum(self._yolo_times) / len(self._yolo_times)
+        fps = 1.0 / avg if avg > 0 else 0.0
+        return avg * 1000, fps, self._yolo_completions
 
-        # Confirm detections based on frame threshold
-        self.phone_detected = self.phone_frames >= self.detection_threshold
-        self.drinking_detected = self.drinking_frames >= self.detection_threshold
+    def reset_yolo_stats(self):
+        """Reset the completion counter (called after each stats print)."""
+        self._yolo_completions = 0
 
-        return {
-            "phone_detected": self.phone_detected,
-            "drinking_detected": self.drinking_detected,
-            "phone_bbox": self.phone_bbox,
-            "bottle_bbox": self.bottle_bbox,
-            "phone_frames": self.phone_frames,
-            "drinking_frames": self.drinking_frames,
-        }
+    def shutdown(self):
+        """Shutdown the YOLO executor and wait for pending work."""
+        if self._yolo_executor is not None:
+            self._yolo_executor.shutdown(wait=False)
 
     def draw_detections(self, frame):
         """Draw detection boxes on frame (optimized)"""
@@ -1939,15 +2055,15 @@ def main():
     width, height = 0, 0
 
     if enable_camera:
-        cap = cv2.VideoCapture(args.camera)
+        cap = ThreadedCamera(args.camera)
         if not cap.isOpened():
             print("Error: Could not open camera — continuing without it")
             cap = None
         else:
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            print(f"Camera opened: {width}x{height}")
+            cap.start()
+            print(f"Camera opened: {width}x{height} (threaded capture)")
             analyzer = FaceAnalyzer()
             distraction_detector = DistractionDetector(enabled=enable_yolo)
     else:
@@ -1998,7 +2114,9 @@ def main():
     fps_frame_count = 0
     fps_start_time = time.time()
     last_fps_print = time.time()
-    process_times = deque(maxlen=100)  # Track last 100 processing times
+    process_times = deque(maxlen=100)  # Track last 100 total frame times
+    mediapipe_times = deque(maxlen=100)
+    draw_times = deque(maxlen=100)
 
     while not shutdown_requested:
         frame_start_time = time.time()
@@ -2030,15 +2148,17 @@ def main():
             frame_count += 1
             fps_frame_count += 1
 
-            # Face detection
+            # YOLO distraction detection (async — submits to background thread,
+            # returns cached result instantly; uses raw frame before drawings)
+            distraction_data = distraction_detector.detect(frame)
+
+            # Face detection + annotation drawing (MediaPipe)
+            t_mp = time.time()
             processed_frame, detection_data = analyzer.process_frame(
                 frame, timestamp_ms
             )
+            mediapipe_times.append(time.time() - t_mp)
             intox_data = detection_data["intox_data"] if detection_data else None
-
-            # YOLO distraction detection
-            face_bbox = detection_data["face_bbox"] if detection_data else None
-            distraction_data = distraction_detector.detect(processed_frame, face_bbox)
 
             # Buzzer alerts
             if intox_data and intox_data["score"] >= 4:
@@ -2132,12 +2252,14 @@ def main():
 
         # --- Drawing / streaming / GUI (camera only) ---
         if cap is not None and processed_frame is not None:
+            t_draw = time.time()
             processed_frame = distraction_detector.draw_detections(processed_frame)
             processed_frame = draw_distraction_warning(
                 processed_frame, distraction_data
             )
+            draw_times.append(time.time() - t_draw)
 
-            # Track processing time
+            # Track total frame processing time
             frame_end_time = time.time()
             process_times.append(frame_end_time - frame_start_time)
 
@@ -2146,18 +2268,44 @@ def main():
             if current_time - last_fps_print >= 5.0:
                 elapsed = current_time - fps_start_time
                 capture_fps = fps_frame_count / elapsed if elapsed > 0 else 0
-                avg_process_time = (
+                avg_total = (
                     sum(process_times) / len(process_times) if process_times else 0
                 )
-                process_fps = 1.0 / avg_process_time if avg_process_time > 0 else 0
+                loop_fps = 1.0 / avg_total if avg_total > 0 else 0
+                avg_mp = (
+                    sum(mediapipe_times) / len(mediapipe_times)
+                    if mediapipe_times
+                    else 0
+                )
+                avg_draw = (
+                    sum(draw_times) / len(draw_times) if draw_times else 0
+                )
+
+                # YOLO stats from the async executor
+                yolo_ms, yolo_fps, yolo_runs = (
+                    distraction_detector.get_yolo_stats()
+                    if distraction_detector
+                    else (0, 0, 0)
+                )
+                yolo_label = (
+                    f"YOLO: {yolo_fps:.1f} FPS ({yolo_ms:.1f}ms, "
+                    f"{yolo_runs} runs)"
+                    if distraction_detector and distraction_detector.enabled
+                    else "YOLO: OFF"
+                )
 
                 print(
-                    f"\n[STATS] Camera: {capture_fps:.1f} FPS | "
-                    f"Processing: {process_fps:.1f} FPS "
-                    f"({avg_process_time*1000:.1f}ms/frame) | "
+                    f"\n[STATS] Loop: {loop_fps:.1f} FPS "
+                    f"({avg_total*1000:.1f}ms/frame) | "
+                    f"Camera: {capture_fps:.1f} FPS | "
+                    f"{yolo_label}\n"
+                    f"        MediaPipe: {avg_mp*1000:.1f}ms | "
+                    f"Draw: {avg_draw*1000:.1f}ms | "
                     f"Resolution: {width}x{height}\n"
                 )
 
+                if distraction_detector:
+                    distraction_detector.reset_yolo_stats()
                 fps_frame_count = 0
                 fps_start_time = current_time
                 last_fps_print = current_time
@@ -2191,6 +2339,8 @@ def main():
         streamer.stop()
     if music_recognizer:
         music_recognizer.stop()
+    if distraction_detector:
+        distraction_detector.shutdown()
     supabase_uploader.end_trip()
     supabase_uploader.reset_vehicle_realtime()
     buzzer.stop()
