@@ -24,6 +24,28 @@ from ..training.train import build_model
 from .to_onnx import export_to_onnx
 
 
+def _ensure_inline_onnx(onnx_path: str) -> None:
+    """Reload and save ONNX model with all weights inline (no external data).
+
+    ONNX can split large models into .onnx + .onnx.data files.
+    onnxruntime quantization breaks when external data references
+    become stale, so we force everything inline.
+    """
+    import onnx
+
+    data_path = Path(onnx_path + ".data")
+    if not data_path.exists():
+        return
+
+    print("  Converting external data to inline format...")
+    model = onnx.load(onnx_path, load_external_data=True)
+    onnx.save(model, onnx_path, save_as_external_data=False)
+
+    # Remove the now-unused external data file
+    if data_path.exists():
+        data_path.unlink()
+
+
 class CalibrationDataReader:
     """Provides calibration data for static INT8 quantization.
 
@@ -246,7 +268,18 @@ def main():
 
     # First export FP32 ONNX as base
     fp32_path = f"models/checkpoints/{task}_fp32.onnx"
+
+    # Clean up stale external data files from previous exports (e.g. teacher model)
+    # to prevent shape mismatches during quantization
+    stale_data = Path(fp32_path + ".data")
+    if stale_data.exists():
+        stale_data.unlink()
+        print(f"Removed stale external data: {stale_data}")
+
     export_to_onnx(model, task, input_size, fp32_path, fp16=False)
+
+    # Ensure all weights are inline (not external data) for quantization compatibility
+    _ensure_inline_onnx(fp32_path)
 
     fp32_size = Path(fp32_path).stat().st_size / (1024 * 1024)
     print(f"\nFP32 baseline: {fp32_size:.1f} MB")

@@ -32,6 +32,11 @@ def export_to_onnx(
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
+    # Clean up stale external data files from previous exports
+    stale_data = Path(str(output_path) + ".data")
+    if stale_data.exists():
+        stale_data.unlink()
+
     dummy_input = torch.randn(1, 3, input_size, input_size)
 
     # Define output names based on task
