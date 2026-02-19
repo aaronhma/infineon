@@ -137,14 +137,14 @@ class DriverAwarenessSystem:
     ):
         self.config = config or SafetyConfig()
 
-        # Load ONNX models
+        # Load ONNX models (INT8 may fail on some platforms, fall back to FP32)
         self.eye_session = None
         self.activity_session = None
 
         if eye_model_path:
-            self.eye_session = self._load_onnx(eye_model_path)
+            self.eye_session = self._load_onnx_safe(eye_model_path)
         if activity_model_path:
-            self.activity_session = self._load_onnx(activity_model_path)
+            self.activity_session = self._load_onnx_safe(activity_model_path)
 
         # Temporal state tracking
         self._eye_history: deque[str] = deque(maxlen=self.config.history_size)
@@ -160,6 +160,21 @@ class DriverAwarenessSystem:
         # ImageNet normalization constants (precomputed for speed)
         self._mean = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape(1, 1, 3)
         self._std = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape(1, 1, 3)
+
+    def _load_onnx_safe(self, path: str):
+        """Load ONNX model, falling back to FP32 if INT8 ops aren't supported."""
+        from pathlib import Path
+
+        try:
+            return self._load_onnx(path)
+        except Exception as e:
+            # INT8 quantized models use ConvInteger ops unsupported on some platforms
+            if "int8" in path or "quant" in path:
+                fp32_path = path.replace("_int8_dynamic", "_fp32").replace("_int8_static", "_fp32")
+                if fp32_path != path and Path(fp32_path).exists():
+                    print(f"  INT8 not supported ({e.__class__.__name__}), falling back to FP32: {fp32_path}")
+                    return self._load_onnx(fp32_path)
+            raise
 
     def _load_onnx(self, path: str):
         """Load ONNX model optimized for CPU inference."""
