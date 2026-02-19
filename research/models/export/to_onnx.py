@@ -46,6 +46,10 @@ def export_to_onnx(
         output_names = ["class_logits"]
 
     print(f"Exporting to ONNX (opset {opset_version})...")
+
+    # Use TorchScript exporter (dynamo=False) for clean graphs that
+    # onnxruntime quantization can handle. The dynamo exporter produces
+    # graphs with shape inference issues that break INT8 quantization.
     torch.onnx.export(
         model,
         dummy_input,
@@ -59,6 +63,7 @@ def export_to_onnx(
             "input": {0: "batch_size"},
             "class_logits": {0: "batch_size"},
         },
+        dynamo=False,
     )
 
     # Validate and optimize

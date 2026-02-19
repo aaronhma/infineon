@@ -186,7 +186,8 @@ def export_tflite_int8(
         export_model = model
 
     torch.onnx.export(export_model, dummy, tmp_onnx, opset_version=13,
-                       input_names=["input"], output_names=["output"])
+                       input_names=["input"], output_names=["output"],
+                       dynamo=False)
 
     # Convert ONNX -> TFLite with INT8
     try:
