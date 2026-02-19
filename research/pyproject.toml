@@ -4,6 +4,4 @@ version = "0.0.1"
 description = "Infineon Winter 2026 research project"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "onnxscript>=0.6.2",
-]
+dependencies = []

@@ -1585,6 +1585,54 @@ class DrivingSimulator:
         return self.speed_limit
 
 
+class FallbackFaceDetector:
+    """Lightweight face detector using OpenCV's Haar cascade.
+
+    Used when MediaPipe is unavailable (protobuf conflicts, etc.).
+    Only provides face bounding boxes and crops -- no EAR or intoxication
+    analysis (handled by custom ONNX models via DriverAwarenessSystem).
+    """
+
+    def __init__(self):
+        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        self.detector = cv2.CascadeClassifier(cascade_path)
+        print("FallbackFaceDetector: using OpenCV Haar cascade (MediaPipe unavailable)")
+
+    def process_frame(self, frame, timestamp_ms):
+        h, w, _ = frame.shape
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+
+        detection_data = None
+
+        if len(faces) > 0:
+            # Use the largest face
+            fx, fy, fw, fh = max(faces, key=lambda f: f[2] * f[3])
+            x_min, y_min, x_max, y_max = fx, fy, fx + fw, fy + fh
+
+            cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), COLOR_GREEN, 2)
+
+            # Extract face crop with padding
+            padding = 20
+            crop_x_min = max(0, x_min - padding)
+            crop_y_min = max(0, y_min - padding)
+            crop_x_max = min(w, x_max + padding)
+            crop_y_max = min(h, y_max + padding)
+            face_crop = frame[crop_y_min:crop_y_max, crop_x_min:crop_x_max].copy()
+
+            detection_data = {
+                "intox_data": {"drowsy": False, "excessive_blinking": False, "unstable_eyes": False, "score": 0, "ear": 0.3},
+                "face_crop": face_crop,
+                "face_bbox": {"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max},
+                "left_eye_state": "OPEN",
+                "left_eye_ear": 0.3,
+                "right_eye_state": "OPEN",
+                "right_eye_ear": 0.3,
+            }
+
+        return frame, detection_data
+
+
 class FaceAnalyzer:
     def __init__(self):
         # Initialize MediaPipe Face Landmarker
@@ -2108,7 +2156,12 @@ def main():
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.start()
             print(f"Camera opened: {width}x{height} (threaded capture)")
-            analyzer = FaceAnalyzer()
+            try:
+                analyzer = FaceAnalyzer()
+            except Exception as e:
+                print(f"Warning: MediaPipe FaceAnalyzer failed: {e}")
+                print("Using OpenCV fallback face detector")
+                analyzer = FallbackFaceDetector()
             distraction_detector = DistractionDetector(enabled=enable_yolo)
     else:
         print("Camera disabled via Supabase settings")
