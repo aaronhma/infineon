@@ -82,7 +82,7 @@ uv run python -m models.datasets.prepare_mrl_eyes
 
 # 3. Train eye state teacher (EfficientNet-B0)
 # Todo: currently, it defaults to the statefarm dataset
-# uv run python -m models.training.train --config models/configs/eye_state_teacher.yaml --device cuda # or `cuda` on NVIDIA GPUs
+uv run python -m models.training.train --config models/configs/eye_state_teacher.yaml --device cuda # or `cuda` on NVIDIA GPUs
 
 uv run python -m models.training.train \
       --config models/configs/eye_state_teacher.yaml \
