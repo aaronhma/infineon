@@ -77,26 +77,29 @@ def main():
     print(f"Classes: {classes}")
     print(f"Device: {device}")
 
-    # Find manifest
+    # Find manifest -- task-aware so eye_state doesn't pick up statefarm
+    TASK_DATASETS = {
+        "driver_activity": ["statefarm"],
+        "eye_state": ["mrl_eyes"],
+    }
     manifest = args.manifest
     if not manifest:
         data_dir = Path("models/data/processed")
-        # Look for task-specific manifest first
-        candidates = [
-            data_dir / task / "manifest.csv",
-            data_dir / "statefarm" / "manifest.csv",
-            data_dir / "mrl_eyes" / "manifest.csv",
-        ]
+        # Task-specific dir first, then dataset dirs matching this task
+        candidates = [data_dir / task / "manifest.csv"]
+        for ds_name in TASK_DATASETS.get(task, []):
+            candidates.append(data_dir / ds_name / "manifest.csv")
         for c in candidates:
             if c.exists():
                 manifest = str(c)
                 break
 
     if not manifest:
+        ds_name = TASK_DATASETS.get(task, ["unknown"])[0]
         print("\nError: No dataset manifest found.")
         print("Prepare a dataset first:")
-        print(f"  uv run python -m models.datasets.download --dataset {'statefarm' if task == 'driver_activity' else 'mrl_eyes'}")
-        print(f"  uv run python -m models.datasets.prepare_{'statefarm' if task == 'driver_activity' else 'mrl_eyes'}")
+        print(f"  uv run python -m models.datasets.download --dataset {ds_name}")
+        print(f"  uv run python -m models.datasets.prepare_{ds_name}")
         sys.exit(1)
 
     print(f"Manifest: {manifest}")

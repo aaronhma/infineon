@@ -73,6 +73,34 @@ uv run python -m models.evaluation.benchmark \
     --include-preprocessing
 ```
 
+```bash
+# 1. Download MRL Eyes dataset (~85K eye images)
+uv run python -m models.datasets.download --dataset mrl_eyes
+
+# 2. Prepare manifest (splits by subject to prevent data leakage)
+uv run python -m models.datasets.prepare_mrl_eyes
+
+# 3. Train eye state teacher (EfficientNet-B0)
+uv run python -m models.training.train --config \
+    models/configs/eye_state_teacher.yaml --device mps # or `cuda` on NVIDIA GPUs
+
+# 4. Distill into student (MobileNetV3-Small)
+uv run python -m models.training.distillation \
+    --teacher-checkpoint models/checkpoints/eye_state_teacher_best_acc.pt \
+    --config models/configs/eye_state.yaml --device mps # or `cuda` on NVIDIA GPUs
+
+# 5. Export + quantize student
+uv run python -m models.export.to_quantized \
+    --checkpoint models/checkpoints/eye_state_distilled_best_acc.pt \
+    --config models/configs/eye_state.yaml
+
+# 6. Validate
+uv run python -m models.export.validate_export \
+    --checkpoint models/checkpoints/eye_state_distilled_best_acc.pt \
+    --onnx models/checkpoints/eye_state_distilled_int8_dynamic.onnx \
+    --config models/configs/eye_state.yaml
+```
+
 ## Using in Production (main.py)
 
 ```python

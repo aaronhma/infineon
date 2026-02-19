@@ -92,14 +92,22 @@ class DriverDataset(Dataset):
         return image, sample["label"]
 
     def get_class_weights(self) -> torch.Tensor:
-        """Compute inverse frequency weights for class balancing."""
+        """Compute inverse frequency weights for class balancing.
+
+        Classes with zero samples get weight 0 so they don't distort
+        the loss for classes that do have data (e.g. eyes_partially_closed
+        has no MRL Eye data).
+        """
         counts = np.zeros(len(self.classes))
         for s in self.samples:
             counts[s["label"]] += 1
 
-        # Inverse frequency, normalized
-        weights = 1.0 / (counts + 1e-6)
-        weights = weights / weights.sum() * len(self.classes)
+        nonzero = counts > 0
+        weights = np.zeros_like(counts)
+        weights[nonzero] = 1.0 / counts[nonzero]
+        # Normalize across classes that have samples
+        if weights.sum() > 0:
+            weights = weights / weights.sum() * nonzero.sum()
         return torch.FloatTensor(weights)
 
     def get_sampler(self) -> WeightedRandomSampler:
