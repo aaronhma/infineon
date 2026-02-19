@@ -3,6 +3,7 @@ import json
 import os
 import random
 import signal
+import sys
 import threading
 import time
 import urllib.request
@@ -14,12 +15,53 @@ from datetime import datetime, timedelta, timezone
 # PST timezone (UTC-8)
 PST = timezone(timedelta(hours=-8))
 
-import cv2
+# Force unbuffered stdout so prints appear even if the process crashes
+sys.stdout.reconfigure(line_buffering=True)
+print("Starting main.py...")
 
-# import face_recognition  # Temporarily disabled due to dlib issues
-import numpy as np
-from dotenv import load_dotenv
-from supabase import Client, create_client
+print("  Loading cv2...", end=" ", flush=True)
+try:
+    import cv2
+    print("ok")
+except Exception as e:
+    print(f"FAILED: {e}")
+    sys.exit(1)
+
+print("  Loading numpy...", end=" ", flush=True)
+try:
+    import numpy as np
+    print("ok")
+except Exception as e:
+    print(f"FAILED: {e}")
+    sys.exit(1)
+
+print("  Loading dotenv...", end=" ", flush=True)
+try:
+    from dotenv import load_dotenv
+    print("ok")
+except Exception as e:
+    print(f"FAILED: {e}")
+    sys.exit(1)
+
+print("  Loading supabase...", end=" ", flush=True)
+try:
+    from supabase import Client, create_client
+    print("ok")
+except Exception as e:
+    print(f"FAILED: {e}")
+    sys.exit(1)
+
+print("  Loading components...", end=" ", flush=True)
+try:
+    from components.buzzer import BuzzerController
+    from components.gps import GPSReader
+    from components.microphone import MicrophoneController
+    from components.shazam import ShazamRecognizer
+    from components.speed_limit import SpeedLimitChecker
+    print("ok")
+except Exception as e:
+    print(f"FAILED: {e}")
+    sys.exit(1)
 
 # MediaPipe + scipy are loaded lazily inside FaceAnalyzer.__init__() to avoid
 # segfaults from protobuf conflicts on RPi (a segfault bypasses try/except).
@@ -27,28 +69,35 @@ _MEDIAPIPE_AVAILABLE = None  # determined at runtime in _check_mediapipe()
 
 
 def _check_mediapipe():
-    """Test whether MediaPipe can be imported without crashing."""
+    """Test whether MediaPipe can be imported without segfaulting.
+
+    Runs 'import mediapipe' in a subprocess — if it segfaults the subprocess
+    dies but our process survives.
+    """
     global _MEDIAPIPE_AVAILABLE
     if _MEDIAPIPE_AVAILABLE is not None:
         return _MEDIAPIPE_AVAILABLE
-    import subprocess, sys
+    print("  Checking MediaPipe availability...", end=" ", flush=True)
     try:
+        import subprocess
         result = subprocess.run(
             [sys.executable, "-c", "import mediapipe"],
             capture_output=True, timeout=15,
         )
         _MEDIAPIPE_AVAILABLE = result.returncode == 0
-    except Exception:
+        if not _MEDIAPIPE_AVAILABLE:
+            stderr = result.stderr.decode(errors="replace").strip()
+            print(f"FAILED (exit {result.returncode})")
+            if stderr:
+                print(f"    {stderr[:200]}")
+        else:
+            print("ok")
+    except Exception as e:
         _MEDIAPIPE_AVAILABLE = False
+        print(f"FAILED ({e})")
     if not _MEDIAPIPE_AVAILABLE:
-        print("Warning: MediaPipe not available, will use OpenCV fallback face detector")
+        print("  Will use OpenCV fallback face detector")
     return _MEDIAPIPE_AVAILABLE
-
-from components.buzzer import BuzzerController
-from components.gps import GPSReader
-from components.microphone import MicrophoneController
-from components.shazam import ShazamRecognizer
-from components.speed_limit import SpeedLimitChecker
 
 # Performance optimization constants
 # Pre-computed color tuples for faster drawing (avoids tuple creation overhead)
@@ -68,12 +117,13 @@ load_dotenv()
 
 # Try to import YOLO (check availability regardless of settings)
 YOLO_AVAILABLE = False
+print("  Loading YOLO...", end=" ", flush=True)
 try:
     from ultralytics import YOLO
-
     YOLO_AVAILABLE = True
-except ImportError as e:
-    print(f"Note: YOLO not available ({e})")
+    print("ok")
+except Exception as e:
+    print(f"skipped ({e})")
 
 # .env values serve as fallbacks when Supabase feature settings aren't reachable
 _ENV_ENABLE_YOLO = os.environ.get("ENABLE_YOLO", "true").lower() in ("true", "1", "yes")
@@ -2100,6 +2150,7 @@ def draw_distraction_warning(frame, distraction_data):
 
 
 def main():
+    print("Imports complete. Starting main()...", flush=True)
     parser = argparse.ArgumentParser(description="Driver monitoring system")
     parser.add_argument(
         "--headless",
@@ -2157,27 +2208,31 @@ def main():
     # Disabled by default — set ENABLE_CUSTOM_MODELS=true in .env to use
     driver_system = None
     if _ENV_ENABLE_CUSTOM_MODELS:
+        print("Loading custom ONNX models...", flush=True)
         try:
+            print("  Importing DriverAwarenessSystem...", end=" ", flush=True)
             from models.inference import DriverAwarenessSystem
+            print("ok")
 
             eye_path = _find_model(_EYE_CANDIDATES)
             activity_path = _find_model(_ACTIVITY_CANDIDATES)
             if eye_path or activity_path:
+                print(f"  Loading eye model: {eye_path}", flush=True)
+                print(f"  Loading activity model: {activity_path}", flush=True)
                 driver_system = DriverAwarenessSystem(
                     eye_model_path=eye_path,
                     activity_model_path=activity_path,
                 )
                 health = driver_system.get_health()
-                print(f"Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}")
-                if eye_path:
-                    print(f"  Eye model: {eye_path}")
-                if activity_path:
-                    print(f"  Activity model: {activity_path}")
-        except ImportError:
-            print("Custom models not available (models package not found)")
+                print(f"  Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}")
+            else:
+                print("  No ONNX model files found in models/checkpoints/")
+        except ImportError as e:
+            print(f"FAILED ({e})")
+            print("  Custom models not available (models package not found)")
         except Exception as e:
-            print(f"Warning: Failed to load custom ONNX models: {e}")
-            print("Falling back to MediaPipe + YOLO")
+            print(f"FAILED ({e})")
+            print("  Falling back to MediaPipe + YOLO")
             driver_system = None
     else:
         print("Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)")
@@ -2194,14 +2249,18 @@ def main():
             print(f"Camera opened: {width}x{height} (threaded capture)")
             if _check_mediapipe():
                 try:
+                    print("  Loading MediaPipe FaceAnalyzer...", end=" ", flush=True)
                     analyzer = FaceAnalyzer()
+                    print("ok")
                 except Exception as e:
-                    print(f"Warning: MediaPipe FaceAnalyzer failed: {e}")
-                    print("Using OpenCV fallback face detector")
+                    print(f"FAILED ({e})")
+                    print("  Using OpenCV fallback face detector")
                     analyzer = FallbackFaceDetector()
             else:
                 analyzer = FallbackFaceDetector()
+            print("  Loading DistractionDetector (YOLO)...", end=" ", flush=True)
             distraction_detector = DistractionDetector(enabled=enable_yolo)
+            print("ok")
     else:
         print("Camera disabled via Supabase settings")
 
