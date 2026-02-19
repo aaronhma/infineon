@@ -17,13 +17,21 @@ PST = timezone(timedelta(hours=-8))
 import cv2
 
 # import face_recognition  # Temporarily disabled due to dlib issues
-import mediapipe as mp
 import numpy as np
 from dotenv import load_dotenv
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
-from scipy.spatial import distance
 from supabase import Client, create_client
+
+# MediaPipe + scipy are optional — may fail on RPi due to protobuf conflicts.
+# When unavailable, FallbackFaceDetector (OpenCV Haar cascade) is used instead.
+try:
+    import mediapipe as mp
+    from mediapipe.tasks import python as mp_python
+    from mediapipe.tasks.python import vision as mp_vision
+    from scipy.spatial import distance as sp_distance
+    _MEDIAPIPE_AVAILABLE = True
+except Exception:
+    _MEDIAPIPE_AVAILABLE = False
+    print("Warning: MediaPipe not available, will use OpenCV fallback face detector")
 
 from components.buzzer import BuzzerController
 from components.gps import GPSReader
@@ -1641,16 +1649,16 @@ class FallbackFaceDetector:
 class FaceAnalyzer:
     def __init__(self):
         # Initialize MediaPipe Face Landmarker
-        base_options = python.BaseOptions(model_asset_path="face_landmarker.task")
-        options = vision.FaceLandmarkerOptions(
+        base_options = mp_python.BaseOptions(model_asset_path="face_landmarker.task")
+        options = mp_vision.FaceLandmarkerOptions(
             base_options=base_options,
-            running_mode=vision.RunningMode.VIDEO,
+            running_mode=mp_vision.RunningMode.VIDEO,
             num_faces=5,
             min_face_detection_confidence=0.5,
             min_face_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
-        self.landmarker = vision.FaceLandmarker.create_from_options(options)
+        self.landmarker = mp_vision.FaceLandmarker.create_from_options(options)
 
         # Eye landmarks indices for MediaPipe Face Mesh
         self.LEFT_EYE = [362, 385, 387, 263, 373, 380]
@@ -1670,10 +1678,10 @@ class FaceAnalyzer:
     def calculate_ear(self, eye_landmarks):
         """Calculate Eye Aspect Ratio"""
         # Vertical eye landmarks
-        A = distance.euclidean(eye_landmarks[1], eye_landmarks[5])
-        B = distance.euclidean(eye_landmarks[2], eye_landmarks[4])
+        A = sp_distance.euclidean(eye_landmarks[1], eye_landmarks[5])
+        B = sp_distance.euclidean(eye_landmarks[2], eye_landmarks[4])
         # Horizontal eye landmark
-        C = distance.euclidean(eye_landmarks[0], eye_landmarks[3])
+        C = sp_distance.euclidean(eye_landmarks[0], eye_landmarks[3])
 
         # EAR formula
         ear = (A + B) / (2.0 * C)
@@ -2164,11 +2172,14 @@ def main():
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.start()
             print(f"Camera opened: {width}x{height} (threaded capture)")
-            try:
-                analyzer = FaceAnalyzer()
-            except Exception as e:
-                print(f"Warning: MediaPipe FaceAnalyzer failed: {e}")
-                print("Using OpenCV fallback face detector")
+            if _MEDIAPIPE_AVAILABLE:
+                try:
+                    analyzer = FaceAnalyzer()
+                except Exception as e:
+                    print(f"Warning: MediaPipe FaceAnalyzer failed: {e}")
+                    print("Using OpenCV fallback face detector")
+                    analyzer = FallbackFaceDetector()
+            else:
                 analyzer = FallbackFaceDetector()
             distraction_detector = DistractionDetector(enabled=enable_yolo)
     else:
