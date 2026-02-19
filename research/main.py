@@ -21,17 +21,28 @@ import numpy as np
 from dotenv import load_dotenv
 from supabase import Client, create_client
 
-# MediaPipe + scipy are optional — may fail on RPi due to protobuf conflicts.
-# When unavailable, FallbackFaceDetector (OpenCV Haar cascade) is used instead.
-try:
-    import mediapipe as mp
-    from mediapipe.tasks import python as mp_python
-    from mediapipe.tasks.python import vision as mp_vision
-    from scipy.spatial import distance as sp_distance
-    _MEDIAPIPE_AVAILABLE = True
-except Exception:
-    _MEDIAPIPE_AVAILABLE = False
-    print("Warning: MediaPipe not available, will use OpenCV fallback face detector")
+# MediaPipe + scipy are loaded lazily inside FaceAnalyzer.__init__() to avoid
+# segfaults from protobuf conflicts on RPi (a segfault bypasses try/except).
+_MEDIAPIPE_AVAILABLE = None  # determined at runtime in _check_mediapipe()
+
+
+def _check_mediapipe():
+    """Test whether MediaPipe can be imported without crashing."""
+    global _MEDIAPIPE_AVAILABLE
+    if _MEDIAPIPE_AVAILABLE is not None:
+        return _MEDIAPIPE_AVAILABLE
+    import subprocess, sys
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", "import mediapipe"],
+            capture_output=True, timeout=15,
+        )
+        _MEDIAPIPE_AVAILABLE = result.returncode == 0
+    except Exception:
+        _MEDIAPIPE_AVAILABLE = False
+    if not _MEDIAPIPE_AVAILABLE:
+        print("Warning: MediaPipe not available, will use OpenCV fallback face detector")
+    return _MEDIAPIPE_AVAILABLE
 
 from components.buzzer import BuzzerController
 from components.gps import GPSReader
@@ -1648,17 +1659,26 @@ class FallbackFaceDetector:
 
 class FaceAnalyzer:
     def __init__(self):
+        # Lazy import — keeps mediapipe out of module scope to avoid segfaults
+        import mediapipe as _mp
+        from mediapipe.tasks import python as _mp_python
+        from mediapipe.tasks.python import vision as _mp_vision
+        from scipy.spatial import distance as _sp_distance
+
+        self._mp = _mp
+        self._sp_distance = _sp_distance
+
         # Initialize MediaPipe Face Landmarker
-        base_options = mp_python.BaseOptions(model_asset_path="face_landmarker.task")
-        options = mp_vision.FaceLandmarkerOptions(
+        base_options = _mp_python.BaseOptions(model_asset_path="face_landmarker.task")
+        options = _mp_vision.FaceLandmarkerOptions(
             base_options=base_options,
-            running_mode=mp_vision.RunningMode.VIDEO,
+            running_mode=_mp_vision.RunningMode.VIDEO,
             num_faces=5,
             min_face_detection_confidence=0.5,
             min_face_presence_confidence=0.5,
             min_tracking_confidence=0.5,
         )
-        self.landmarker = mp_vision.FaceLandmarker.create_from_options(options)
+        self.landmarker = _mp_vision.FaceLandmarker.create_from_options(options)
 
         # Eye landmarks indices for MediaPipe Face Mesh
         self.LEFT_EYE = [362, 385, 387, 263, 373, 380]
@@ -1678,10 +1698,10 @@ class FaceAnalyzer:
     def calculate_ear(self, eye_landmarks):
         """Calculate Eye Aspect Ratio"""
         # Vertical eye landmarks
-        A = sp_distance.euclidean(eye_landmarks[1], eye_landmarks[5])
-        B = sp_distance.euclidean(eye_landmarks[2], eye_landmarks[4])
+        A = self._sp_distance.euclidean(eye_landmarks[1], eye_landmarks[5])
+        B = self._sp_distance.euclidean(eye_landmarks[2], eye_landmarks[4])
         # Horizontal eye landmark
-        C = sp_distance.euclidean(eye_landmarks[0], eye_landmarks[3])
+        C = self._sp_distance.euclidean(eye_landmarks[0], eye_landmarks[3])
 
         # EAR formula
         ear = (A + B) / (2.0 * C)
@@ -1757,7 +1777,7 @@ class FaceAnalyzer:
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         # Convert to MediaPipe Image
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+        mp_image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb_frame)
 
         # Detect face landmarks
         results = self.landmarker.detect_for_video(mp_image, timestamp_ms)
@@ -2172,7 +2192,7 @@ def main():
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.start()
             print(f"Camera opened: {width}x{height} (threaded capture)")
-            if _MEDIAPIPE_AVAILABLE:
+            if _check_mediapipe():
                 try:
                     analyzer = FaceAnalyzer()
                 except Exception as e:
