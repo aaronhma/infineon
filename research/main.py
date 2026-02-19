@@ -115,33 +115,39 @@ FONT_FAST = cv2.FONT_HERSHEY_PLAIN
 # Load environment variables from .env file
 load_dotenv()
 
-# Try to import YOLO (check availability regardless of settings)
+# Try to import YOLO — tested in subprocess first to survive segfaults
 YOLO_AVAILABLE = False
-print("  Loading YOLO...", end=" ", flush=True)
+print("  Checking YOLO...", end=" ", flush=True)
 try:
-    from ultralytics import YOLO
-    YOLO_AVAILABLE = True
-    print("ok")
+    _yolo_check = __import__("subprocess").run(
+        [sys.executable, "-c", "from ultralytics import YOLO"],
+        capture_output=True, timeout=30,
+    )
+    if _yolo_check.returncode == 0:
+        from ultralytics import YOLO
+        YOLO_AVAILABLE = True
+        print("ok")
+    else:
+        _yolo_err = _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
+        print(f"skipped ({_yolo_err[:100]})")
 except Exception as e:
     print(f"skipped ({e})")
 
-# .env values serve as fallbacks when Supabase feature settings aren't reachable
-_ENV_ENABLE_YOLO = os.environ.get("ENABLE_YOLO", "true").lower() in ("true", "1", "yes")
-_ENV_ENABLE_STREAM = os.environ.get("ENABLE_STREAM", "false").lower() in (
-    "true",
-    "1",
-    "yes",
-)
-_ENV_ENABLE_SHAZAM = os.environ.get("ENABLE_SHAZAM", "true").lower() in (
-    "true",
-    "1",
-    "yes",
-)
-_ENV_ENABLE_CUSTOM_MODELS = os.environ.get("ENABLE_CUSTOM_MODELS", "false").lower() in (
-    "true",
-    "1",
-    "yes",
-)
+# .env overrides: if explicitly set in .env, these take priority over Supabase.
+# If not set, Supabase value is used. Format: {key: (value, is_explicitly_set)}
+def _parse_env_bool(key, default):
+    """Return (bool_value, was_explicitly_set)."""
+    raw = os.environ.get(key)
+    if raw is None:
+        return default, False
+    return raw.lower() in ("true", "1", "yes"), True
+
+_ENV_ENABLE_YOLO, _ENV_YOLO_SET = _parse_env_bool("ENABLE_YOLO", True)
+_ENV_ENABLE_STREAM, _ENV_STREAM_SET = _parse_env_bool("ENABLE_STREAM", False)
+_ENV_ENABLE_SHAZAM, _ENV_SHAZAM_SET = _parse_env_bool("ENABLE_SHAZAM", True)
+_ENV_ENABLE_CAMERA, _ENV_CAMERA_SET = _parse_env_bool("ENABLE_CAMERA", True)
+_ENV_ENABLE_MICROPHONE, _ENV_MIC_SET = _parse_env_bool("ENABLE_MICROPHONE", True)
+_ENV_ENABLE_CUSTOM_MODELS, _ = _parse_env_bool("ENABLE_CUSTOM_MODELS", False)
 
 # Stream / Shazam parameters (always from .env)
 STREAM_QUALITY = int(os.environ.get("STREAM_QUALITY", "50"))
@@ -501,9 +507,10 @@ class SupabaseUploader:
     def _fetch_feature_settings(self):
         """Fetch feature toggle settings from the Supabase vehicles table.
 
-        These settings are controlled from the iOS app's Vehicle Settings page.
-        Falls back to .env values if the fetch fails.
+        Priority: .env explicit override > Supabase > default.
+        If a key is explicitly set in .env, it always wins.
         """
+        supabase_settings = {}
         try:
             response = (
                 self.client.table("vehicles")
@@ -514,35 +521,40 @@ class SupabaseUploader:
                 .eq("id", self.vehicle_id)
                 .execute()
             )
-
             if response.data:
-                row = response.data[0]
-                self.feature_settings = {
-                    "enable_yolo": row.get("enable_yolo", True) and YOLO_AVAILABLE,
-                    "enable_stream": row.get("enable_stream", True),
-                    "enable_shazam": row.get("enable_shazam", True),
-                    "enable_microphone": row.get("enable_microphone", True),
-                    "enable_camera": row.get("enable_camera", True),
-                }
-                print("Feature settings (from Supabase):")
-                for key, val in self.feature_settings.items():
-                    print(f"  {key}: {val}")
-                return
-
+                supabase_settings = response.data[0]
         except Exception as e:
-            print(f"Warning: Could not fetch feature settings: {e}")
+            print(f"Warning: Could not fetch feature settings from Supabase: {e}")
 
-        # Fallback to .env values
-        self.feature_settings = {
-            "enable_yolo": _ENV_ENABLE_YOLO and YOLO_AVAILABLE,
-            "enable_stream": _ENV_ENABLE_STREAM,
-            "enable_shazam": _ENV_ENABLE_SHAZAM,
-            "enable_microphone": True,
-            "enable_camera": True,
+        # Merge: .env override > Supabase > default
+        # Each tuple: (env_value, env_was_set, supabase_key, default)
+        _toggles = {
+            "enable_yolo":       (_ENV_ENABLE_YOLO,       _ENV_YOLO_SET,   "enable_yolo",       True),
+            "enable_stream":     (_ENV_ENABLE_STREAM,     _ENV_STREAM_SET, "enable_stream",     True),
+            "enable_shazam":     (_ENV_ENABLE_SHAZAM,     _ENV_SHAZAM_SET, "enable_shazam",     True),
+            "enable_microphone": (_ENV_ENABLE_MICROPHONE, _ENV_MIC_SET,    "enable_microphone", True),
+            "enable_camera":     (_ENV_ENABLE_CAMERA,     _ENV_CAMERA_SET, "enable_camera",     True),
         }
-        print("Feature settings (from .env fallback):")
-        for key, val in self.feature_settings.items():
-            print(f"  {key}: {val}")
+
+        self.feature_settings = {}
+        print("Feature settings:")
+        for key, (env_val, env_set, sb_key, default) in _toggles.items():
+            if env_set:
+                val = env_val
+                source = ".env override"
+            elif sb_key in supabase_settings:
+                val = supabase_settings[sb_key]
+                source = "Supabase"
+            else:
+                val = default
+                source = "default"
+
+            # YOLO needs the runtime to actually be available
+            if key == "enable_yolo":
+                val = val and YOLO_AVAILABLE
+
+            self.feature_settings[key] = val
+            print(f"  {key}: {val}  ({source})", flush=True)
 
     def _load_driver_profiles(self):
         """Load all driver profiles for this vehicle"""
