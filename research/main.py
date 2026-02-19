@@ -68,6 +68,11 @@ _ENV_ENABLE_SHAZAM = os.environ.get("ENABLE_SHAZAM", "true").lower() in (
     "1",
     "yes",
 )
+_ENV_ENABLE_CUSTOM_MODELS = os.environ.get("ENABLE_CUSTOM_MODELS", "false").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 
 # Stream / Shazam parameters (always from .env)
 STREAM_QUALITY = int(os.environ.get("STREAM_QUALITY", "50"))
@@ -2121,30 +2126,33 @@ def main():
     width, height = 0, 0
 
     # Custom ONNX model inference (replaces MediaPipe EAR + YOLO)
-    # Imported lazily AFTER MediaPipe to avoid protobuf conflicts
+    # Disabled by default — set ENABLE_CUSTOM_MODELS=true in .env to use
     driver_system = None
-    try:
-        from models.inference import DriverAwarenessSystem
+    if _ENV_ENABLE_CUSTOM_MODELS:
+        try:
+            from models.inference import DriverAwarenessSystem
 
-        eye_path = _find_model(_EYE_CANDIDATES)
-        activity_path = _find_model(_ACTIVITY_CANDIDATES)
-        if eye_path or activity_path:
-            driver_system = DriverAwarenessSystem(
-                eye_model_path=eye_path,
-                activity_model_path=activity_path,
-            )
-            health = driver_system.get_health()
-            print(f"Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}")
-            if eye_path:
-                print(f"  Eye model: {eye_path}")
-            if activity_path:
-                print(f"  Activity model: {activity_path}")
-    except ImportError:
-        print("Custom models not available (models package not found)")
-    except Exception as e:
-        print(f"Warning: Failed to load custom ONNX models: {e}")
-        print("Falling back to MediaPipe + YOLO")
-        driver_system = None
+            eye_path = _find_model(_EYE_CANDIDATES)
+            activity_path = _find_model(_ACTIVITY_CANDIDATES)
+            if eye_path or activity_path:
+                driver_system = DriverAwarenessSystem(
+                    eye_model_path=eye_path,
+                    activity_model_path=activity_path,
+                )
+                health = driver_system.get_health()
+                print(f"Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}")
+                if eye_path:
+                    print(f"  Eye model: {eye_path}")
+                if activity_path:
+                    print(f"  Activity model: {activity_path}")
+        except ImportError:
+            print("Custom models not available (models package not found)")
+        except Exception as e:
+            print(f"Warning: Failed to load custom ONNX models: {e}")
+            print("Falling back to MediaPipe + YOLO")
+            driver_system = None
+    else:
+        print("Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)")
 
     if enable_camera:
         cap = ThreadedCamera(args.camera)
