@@ -41,5 +41,9 @@ loss:
   focal_gamma: 2.0
   label_smoothing: 0.1
 
+datasets:
+  - name: "statefarm"
+    weight: 1.0
+
 checkpointing:
   save_dir: "models/checkpoints"

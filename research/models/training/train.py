@@ -77,17 +77,14 @@ def main():
     print(f"Classes: {classes}")
     print(f"Device: {device}")
 
-    # Find manifest -- task-aware so eye_state doesn't pick up statefarm
-    TASK_DATASETS = {
-        "driver_activity": ["statefarm"],
-        "eye_state": ["mrl_eyes"],
-    }
+    # Find manifest -- read dataset names from config so each task finds the right data
     manifest = args.manifest
     if not manifest:
         data_dir = Path("models/data/processed")
-        # Task-specific dir first, then dataset dirs matching this task
+        # Build candidate list from config's datasets field
+        dataset_names = [ds["name"] for ds in config.get("datasets", [])]
         candidates = [data_dir / task / "manifest.csv"]
-        for ds_name in TASK_DATASETS.get(task, []):
+        for ds_name in dataset_names:
             candidates.append(data_dir / ds_name / "manifest.csv")
         for c in candidates:
             if c.exists():
@@ -95,11 +92,14 @@ def main():
                 break
 
     if not manifest:
-        ds_name = TASK_DATASETS.get(task, ["unknown"])[0]
+        dataset_names = [ds["name"] for ds in config.get("datasets", [])]
         print("\nError: No dataset manifest found.")
         print("Prepare a dataset first:")
-        print(f"  uv run python -m models.datasets.download --dataset {ds_name}")
-        print(f"  uv run python -m models.datasets.prepare_{ds_name}")
+        for ds_name in dataset_names:
+            if ds_name == "custom_supabase":
+                continue
+            print(f"  uv run python -m models.datasets.download --dataset {ds_name}")
+            print(f"  uv run python -m models.datasets.prepare_{ds_name}")
         sys.exit(1)
 
     print(f"Manifest: {manifest}")

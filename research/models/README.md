@@ -81,7 +81,13 @@ uv run python -m models.datasets.download --dataset mrl_eyes
 uv run python -m models.datasets.prepare_mrl_eyes
 
 # 3. Train eye state teacher (EfficientNet-B0)
-uv run python -m models.training.train --config models/configs/eye_state_teacher.yaml --device cuda # or `cuda` on NVIDIA GPUs
+# Todo: currently, it defaults to the statefarm dataset
+# uv run python -m models.training.train --config models/configs/eye_state_teacher.yaml --device cuda # or `cuda` on NVIDIA GPUs
+
+uv run python -m models.training.train \
+      --config models/configs/eye_state_teacher.yaml \
+      --device cuda \
+      --manifest models/data/processed/mrl_eyes/manifest.csv
 
 # 4. Distill into student (MobileNetV3-Small)
 uv run python -m models.training.distillation \

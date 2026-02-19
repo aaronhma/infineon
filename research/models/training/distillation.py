@@ -362,16 +362,13 @@ def main():
     print(f"Teacher loaded from: {args.teacher_checkpoint}")
     print(f"  Teacher val acc: {ckpt.get('val_acc', 'N/A')}")
 
-    # Load data -- task-aware manifest search
-    TASK_DATASETS = {
-        "driver_activity": ["statefarm"],
-        "eye_state": ["mrl_eyes"],
-    }
+    # Load data -- read dataset names from config
     manifest = args.manifest
     if not manifest:
         data_dir = Path("models/data/processed")
+        dataset_names = [ds["name"] for ds in config.get("datasets", [])]
         candidates = [data_dir / task / "manifest.csv"]
-        for ds_name in TASK_DATASETS.get(task, []):
+        for ds_name in dataset_names:
             candidates.append(data_dir / ds_name / "manifest.csv")
         for c in candidates:
             if c.exists():
@@ -379,10 +376,13 @@ def main():
                 break
 
     if not manifest:
-        ds_name = TASK_DATASETS.get(task, ["unknown"])[0]
+        dataset_names = [ds["name"] for ds in config.get("datasets", [])]
         print(f"Error: No manifest found for task '{task}'.")
-        print(f"  uv run python -m models.datasets.download --dataset {ds_name}")
-        print(f"  uv run python -m models.datasets.prepare_{ds_name}")
+        for ds_name in dataset_names:
+            if ds_name == "custom_supabase":
+                continue
+            print(f"  uv run python -m models.datasets.download --dataset {ds_name}")
+            print(f"  uv run python -m models.datasets.prepare_{ds_name}")
         sys.exit(1)
 
     loaders = create_dataloaders(manifest, classes, config)
