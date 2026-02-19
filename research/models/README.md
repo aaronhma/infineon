@@ -34,18 +34,27 @@ This is a safety-critical system. The design prioritizes **never missing a dange
 # 1. Install dependencies
 uv pip install -r models/requirements.txt
 
+# on NVIDIA GPU:
+uv pip uninstall torch torchvision
+
+# run `nvidia-smi` to see your CUDA version
+uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+
 # 2. Download and prepare dataset
 uv run python -m models.datasets.download --dataset statefarm
 uv run python -m models.datasets.prepare_statefarm
 
+# make sure prepare_statefarm script prints out the manifest:
+# `/home/aaronma/Desktop/infineon/research/models/data/processed/statefarm/manifest.csv`
+
 # 3. Train teacher model (larger, more accurate)
 uv run python -m models.training.train \
-    --config models/configs/driver_activity_teacher.yaml --device mps
+    --config models/configs/driver_activity_teacher.yaml --device mps # or `cuda` on NVIDIA GPUs
 
 # 4. Distill into student (smaller, faster, deployed)
 uv run python -m models.training.distillation \
     --teacher-checkpoint models/checkpoints/driver_activity_teacher_best_acc.pt \
-    --config models/configs/driver_activity.yaml --device mps
+    --config models/configs/driver_activity.yaml --device mps # or `cuda` on NVIDIA GPUs
 
 # 5. Export with INT8 quantization for RPi4
 uv run python -m models.export.to_quantized \

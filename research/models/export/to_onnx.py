@@ -35,7 +35,7 @@ def export_to_onnx(
     dummy_input = torch.randn(1, 3, input_size, input_size)
 
     # Define output names based on task
-    if task == "eye_state":
+    if task.removesuffix("_teacher") == "eye_state":
         output_names = ["class_logits", "ear_score"]
     else:
         output_names = ["class_logits"]

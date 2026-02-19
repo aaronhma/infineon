@@ -135,7 +135,7 @@ def _print_kaggle_help(competition: str, rules_url: str, output_dir: Path) -> No
     print()
     print("Setup:")
     print("  1. Get your API key from: https://www.kaggle.com/settings")
-    print("  2. Place kaggle.json at ~/.kaggle/kaggle.json")
+    print("  2. Place the key in at ~/.kaggle/access_token")
     print(f"  3. Accept competition rules at: {rules_url}")
     print("  4. Re-run this command")
     print()

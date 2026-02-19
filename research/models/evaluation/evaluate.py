@@ -33,7 +33,7 @@ def run_evaluation(
         for images, targets in dataloader:
             images = images.to(device)
 
-            if task == "eye_state":
+            if task.removesuffix("_teacher") == "eye_state":
                 logits, _ = model(images)
             else:
                 logits = model(images)
@@ -57,6 +57,7 @@ def main():
 
     config = load_config(args.config)
     task = config["task"]
+    base_task = task.removesuffix("_teacher")
     classes = config["classes"]
     device = detect_device(args.device)
 
@@ -78,7 +79,7 @@ def main():
     if not manifest:
         data_dir = Path("models/data/processed")
         candidates = [
-            data_dir / task / "manifest.csv",
+            data_dir / base_task / "manifest.csv",
             data_dir / "statefarm" / "manifest.csv",
             data_dir / "mrl_eyes" / "manifest.csv",
         ]

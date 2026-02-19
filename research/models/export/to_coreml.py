@@ -38,7 +38,7 @@ def export_to_coreml(
     # Trace the model
     dummy_input = torch.randn(1, 3, input_size, input_size)
 
-    if task == "eye_state":
+    if task.removesuffix("_teacher") == "eye_state":
         # Wrap to return only classification logits for CoreML
         class CoreMLWrapper(torch.nn.Module):
             def __init__(self, model):

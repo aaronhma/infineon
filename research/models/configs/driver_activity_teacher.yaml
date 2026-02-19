@@ -1,7 +1,7 @@
 # Teacher model config: larger backbone for maximum accuracy.
 # Train this first, then distill into the student (driver_activity.yaml).
 
-task: "driver_activity"
+task: "driver_activity_teacher"
 
 classes:
   - "safe_driving"

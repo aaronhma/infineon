@@ -105,7 +105,8 @@ class DistillationTrainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.config = config
-        self.task = task
+        self.task = task  # full name for checkpoint filenames
+        self.base_task = task.removesuffix("_teacher")  # for model branching
         self.device = device
 
         # Freeze teacher -- never updated
@@ -213,13 +214,13 @@ class DistillationTrainer:
 
             # Get teacher predictions (no grad)
             with torch.no_grad():
-                if self.task == "eye_state":
+                if self.base_task == "eye_state":
                     teacher_logits, _ = self.teacher(images)
                 else:
                     teacher_logits = self.teacher(images)
 
             # Get student predictions
-            if self.task == "eye_state":
+            if self.base_task == "eye_state":
                 student_logits, _ = self.student(images)
             else:
                 student_logits = self.student(images)
@@ -258,7 +259,7 @@ class DistillationTrainer:
             images = images.to(self.device)
             targets = targets.to(self.device)
 
-            if self.task == "eye_state":
+            if self.base_task == "eye_state":
                 student_logits, _ = self.student(images)
                 teacher_logits, _ = self.teacher(images)
             else:
@@ -331,10 +332,11 @@ def main():
     print(f"  Teacher val acc: {ckpt.get('val_acc', 'N/A')}")
 
     # Load data
+    base_task = task.removesuffix("_teacher")
     manifest = args.manifest
     if not manifest:
         data_dir = Path("models/data/processed")
-        for name in [task, "statefarm", "mrl_eyes"]:
+        for name in [base_task, "statefarm", "mrl_eyes"]:
             candidate = data_dir / name / "manifest.csv"
             if candidate.exists():
                 manifest = str(candidate)
