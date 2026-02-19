@@ -40,7 +40,7 @@ def validate_onnx(
 
         # PyTorch output
         with torch.no_grad():
-            if task.removesuffix("_teacher") == "eye_state":
+            if task == "eye_state":
                 pt_logits, pt_ear = model(dummy)
                 pt_logits = pt_logits.numpy()
                 pt_ear = pt_ear.numpy()
@@ -55,7 +55,7 @@ def validate_onnx(
         max_diff = np.max(np.abs(pt_logits - onnx_logits))
         passed = max_diff < tolerance
 
-        if task.removesuffix("_teacher") == "eye_state" and len(onnx_outputs) > 1:
+        if task == "eye_state" and len(onnx_outputs) > 1:
             ear_diff = np.max(np.abs(pt_ear - onnx_outputs[1]))
             passed = passed and (ear_diff < tolerance)
             print(f"  Test {i+1}: logits diff={max_diff:.2e}, ear diff={ear_diff:.2e} {'PASS' if passed else 'FAIL'}")

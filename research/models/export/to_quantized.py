@@ -150,7 +150,7 @@ def export_tflite_int8(
     model = model.cpu()
     dummy = torch.randn(1, 3, input_size, input_size)
 
-    if task.removesuffix("_teacher") == "eye_state":
+    if task == "eye_state":
         # Wrap to return only logits for TFLite
         class Wrapper(torch.nn.Module):
             def __init__(self, m):

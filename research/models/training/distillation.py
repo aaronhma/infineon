@@ -31,9 +31,13 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
+from ..architectures.backbone import (
+    count_parameters,
+    freeze_backbone,
+    unfreeze_backbone,
+)
 from ..configs import load_config
 from ..datasets.dataset import create_dataloaders
-from ..architectures.backbone import count_parameters, freeze_backbone, unfreeze_backbone
 from .train import build_model, detect_device
 
 
@@ -70,7 +74,9 @@ class DistillationLoss(nn.Module):
         student_soft = F.log_softmax(student_logits / self.temperature, dim=-1)
 
         # KL divergence (teacher -> student), scaled by T^2
-        distill_loss = F.kl_div(student_soft, teacher_soft, reduction="batchmean") * (self.temperature ** 2)
+        distill_loss = F.kl_div(student_soft, teacher_soft, reduction="batchmean") * (
+            self.temperature**2
+        )
 
         # Hard label loss
         hard_loss = self.ce_loss(student_logits, targets)
@@ -105,8 +111,7 @@ class DistillationTrainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.config = config
-        self.task = task  # full name for checkpoint filenames
-        self.base_task = task.removesuffix("_teacher")  # for model branching
+        self.task = task
         self.device = device
 
         # Freeze teacher -- never updated
@@ -130,7 +135,9 @@ class DistillationTrainer:
 
         self.loss_fn = DistillationLoss(temperature=temperature, alpha=alpha)
 
-        save_dir = Path(config.get("checkpointing", {}).get("save_dir", "models/checkpoints"))
+        save_dir = Path(
+            config.get("checkpointing", {}).get("save_dir", "models/checkpoints")
+        )
         save_dir.mkdir(parents=True, exist_ok=True)
         self.save_dir = save_dir
 
@@ -146,10 +153,18 @@ class DistillationTrainer:
         student_params = count_parameters(self.student)
 
         print(f"\nKnowledge Distillation")
-        print(f"  Teacher: {teacher_params['total']:,} params ({teacher_params['total_mb']:.1f} MB)")
-        print(f"  Student: {student_params['total']:,} params ({student_params['total_mb']:.1f} MB)")
-        print(f"  Compression: {teacher_params['total']/student_params['total']:.1f}x fewer params")
-        print(f"  Temperature: {self.loss_fn.temperature} | Alpha: {self.loss_fn.alpha}")
+        print(
+            f"  Teacher: {teacher_params['total']:,} params ({teacher_params['total_mb']:.1f} MB)"
+        )
+        print(
+            f"  Student: {student_params['total']:,} params ({student_params['total_mb']:.1f} MB)"
+        )
+        print(
+            f"  Compression: {teacher_params['total'] / student_params['total']:.1f}x fewer params"
+        )
+        print(
+            f"  Temperature: {self.loss_fn.temperature} | Alpha: {self.loss_fn.alpha}"
+        )
         print()
 
         # Freeze student backbone initially
@@ -174,7 +189,7 @@ class DistillationTrainer:
             history["val_acc"].append(val_acc)
 
             print(
-                f"Epoch {epoch+1}/{self.epochs} | "
+                f"Epoch {epoch + 1}/{self.epochs} | "
                 f"Train: {train_loss:.4f} | "
                 f"Val: {val_loss:.4f} | "
                 f"Acc: {val_acc:.2%} | "
@@ -189,7 +204,7 @@ class DistillationTrainer:
                 self.epochs_no_improve += 1
 
             if self.epochs_no_improve >= self.patience:
-                print(f"\nEarly stopping at epoch {epoch+1}")
+                print(f"\nEarly stopping at epoch {epoch + 1}")
                 break
 
         self.writer.close()
@@ -203,7 +218,7 @@ class DistillationTrainer:
 
         pbar = tqdm(
             self.train_loader,
-            desc=f"  Train {epoch+1}/{self.epochs}",
+            desc=f"  Train {epoch + 1}/{self.epochs}",
             leave=False,
             unit="batch",
         )
@@ -214,13 +229,13 @@ class DistillationTrainer:
 
             # Get teacher predictions (no grad)
             with torch.no_grad():
-                if self.base_task == "eye_state":
+                if self.task == "eye_state":
                     teacher_logits, _ = self.teacher(images)
                 else:
                     teacher_logits = self.teacher(images)
 
             # Get student predictions
-            if self.base_task == "eye_state":
+            if self.task == "eye_state":
                 student_logits, _ = self.student(images)
             else:
                 student_logits = self.student(images)
@@ -250,7 +265,7 @@ class DistillationTrainer:
 
         pbar = tqdm(
             self.val_loader,
-            desc=f"  Val   {epoch+1}/{self.epochs}",
+            desc=f"  Val   {epoch + 1}/{self.epochs}",
             leave=False,
             unit="batch",
         )
@@ -259,7 +274,7 @@ class DistillationTrainer:
             images = images.to(self.device)
             targets = targets.to(self.device)
 
-            if self.base_task == "eye_state":
+            if self.task == "eye_state":
                 student_logits, _ = self.student(images)
                 teacher_logits, _ = self.teacher(images)
             else:
@@ -287,22 +302,31 @@ class DistillationTrainer:
         return avg_loss, accuracy
 
     def _save_checkpoint(self, epoch: int, val_acc: float, val_loss: float) -> None:
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": self.student.state_dict(),
-            "val_acc": val_acc,
-            "val_loss": val_loss,
-            "config": self.config,
-            "task": self.task,
-            "distilled": True,
-        }, self.save_dir / f"{self.task}_distilled_best_acc.pt")
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": self.student.state_dict(),
+                "val_acc": val_acc,
+                "val_loss": val_loss,
+                "config": self.config,
+                "task": self.task,
+                "distilled": True,
+            },
+            self.save_dir / f"{self.task}_distilled_best_acc.pt",
+        )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Knowledge distillation training")
-    parser.add_argument("--teacher-checkpoint", type=str, required=True, help="Teacher model checkpoint")
-    parser.add_argument("--teacher-config", type=str, default=None,
-                        help="Teacher config (defaults to student config with efficientnet_b0 backbone)")
+    parser.add_argument(
+        "--teacher-checkpoint", type=str, required=True, help="Teacher model checkpoint"
+    )
+    parser.add_argument(
+        "--teacher-config",
+        type=str,
+        default=None,
+        help="Teacher config (defaults to student config with efficientnet_b0 backbone)",
+    )
     parser.add_argument("--config", type=str, required=True, help="Student config")
     parser.add_argument("--manifest", type=str, default=None)
     parser.add_argument("--device", type=str, default="auto")
@@ -319,24 +343,30 @@ def main():
     student = build_model(config)
 
     # Build teacher (load from checkpoint)
-    teacher_config = load_config(args.teacher_config) if args.teacher_config else config.copy()
-    # Override teacher backbone if not specified
-    if not args.teacher_config:
+    ckpt = torch.load(args.teacher_checkpoint, map_location=device, weights_only=False)
+
+    if args.teacher_config:
+        teacher_config = load_config(args.teacher_config)
+    elif "config" in ckpt:
+        # Use the config saved inside the checkpoint -- guarantees architecture match
+        teacher_config = ckpt["config"]
+    else:
+        # Last resort: copy student config and guess teacher settings
+        teacher_config = config.copy()
         teacher_config["model"] = teacher_config.get("model", {}).copy()
         teacher_config["model"]["backbone"] = "efficientnet_b0"
-    teacher = build_model(teacher_config)
+        teacher_config["model"]["hidden_dim"] = 256
 
-    ckpt = torch.load(args.teacher_checkpoint, map_location=device, weights_only=False)
+    teacher = build_model(teacher_config)
     teacher.load_state_dict(ckpt["model_state_dict"])
     print(f"Teacher loaded from: {args.teacher_checkpoint}")
     print(f"  Teacher val acc: {ckpt.get('val_acc', 'N/A')}")
 
     # Load data
-    base_task = task.removesuffix("_teacher")
     manifest = args.manifest
     if not manifest:
         data_dir = Path("models/data/processed")
-        for name in [base_task, "statefarm", "mrl_eyes"]:
+        for name in [task, "statefarm", "mrl_eyes"]:
             candidate = data_dir / name / "manifest.csv"
             if candidate.exists():
                 manifest = str(candidate)

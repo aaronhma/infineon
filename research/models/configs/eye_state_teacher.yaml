@@ -1,7 +1,7 @@
 # Teacher model for eye state: larger backbone.
 # Train this first, then distill into the student (eye_state.yaml).
 
-task: "eye_state_teacher"
+task: "eye_state"
 
 classes:
   - "eyes_open"

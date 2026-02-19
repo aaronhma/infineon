@@ -39,17 +39,14 @@ def build_model(config: dict) -> torch.nn.Module:
     backbone = model_cfg.get("backbone", config.get("backbone", {}).get("name", "mobilenet_v3_small"))
     pretrained = config.get("backbone", {}).get("pretrained", True)
 
-    # Strip "_teacher" suffix so teacher configs use the same model class
-    base_task = task.removesuffix("_teacher")
-
-    if base_task == "eye_state":
+    if task == "eye_state":
         return EyeStateClassifier(
             backbone_name=backbone,
             num_classes=model_cfg.get("num_classes", len(config.get("classes", []))),
             pretrained=pretrained,
             dropout=model_cfg.get("head_dropout", 0.3),
         )
-    elif base_task == "driver_activity":
+    elif task == "driver_activity":
         return DriverActivityClassifier(
             backbone_name=backbone,
             num_classes=model_cfg.get("num_classes", len(config.get("classes", []))),
@@ -73,7 +70,6 @@ def main():
     # Load config
     config = load_config(args.config)
     task = config["task"]
-    base_task = task.removesuffix("_teacher")
     classes = config["classes"]
     device = detect_device(args.device)
 
@@ -87,7 +83,7 @@ def main():
         data_dir = Path("models/data/processed")
         # Look for task-specific manifest first
         candidates = [
-            data_dir / base_task / "manifest.csv",
+            data_dir / task / "manifest.csv",
             data_dir / "statefarm" / "manifest.csv",
             data_dir / "mrl_eyes" / "manifest.csv",
         ]
@@ -99,8 +95,8 @@ def main():
     if not manifest:
         print("\nError: No dataset manifest found.")
         print("Prepare a dataset first:")
-        print(f"  uv run python -m models.datasets.download --dataset {'statefarm' if base_task == 'driver_activity' else 'mrl_eyes'}")
-        print(f"  uv run python -m models.datasets.prepare_{'statefarm' if base_task == 'driver_activity' else 'mrl_eyes'}")
+        print(f"  uv run python -m models.datasets.download --dataset {'statefarm' if task == 'driver_activity' else 'mrl_eyes'}")
+        print(f"  uv run python -m models.datasets.prepare_{'statefarm' if task == 'driver_activity' else 'mrl_eyes'}")
         sys.exit(1)
 
     print(f"Manifest: {manifest}")

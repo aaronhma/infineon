@@ -59,8 +59,7 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.config = config
-        self.task = task  # full name for checkpoint filenames
-        self.base_task = task.removesuffix("_teacher")  # for model branching
+        self.task = task
         self.device = device
 
         t_cfg = config.get("training", {})
@@ -228,7 +227,7 @@ class Trainer:
                 lam = 1.0
 
             with torch.autocast(device_type=autocast_dtype, enabled=self.use_autocast):
-                if self.base_task == "eye_state":
+                if self.task == "eye_state":
                     class_logits, ear_pred = self.model(images)
                     if self.use_mixup:
                         loss_a = loss_fn(class_logits, ear_pred, targets_a)
@@ -288,7 +287,7 @@ class Trainer:
             images = images.to(self.device)
             targets = targets.to(self.device)
 
-            if self.base_task == "eye_state":
+            if self.task == "eye_state":
                 class_logits, ear_pred = self.model(images)
                 loss_dict = loss_fn(class_logits, ear_pred, targets)
                 loss = loss_dict["total"] if isinstance(loss_dict, dict) else loss_dict
