@@ -263,15 +263,25 @@ def main():
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
 
+    # Derive model prefix from checkpoint name (e.g. "driver_activity_distilled" from
+    # "driver_activity_distilled_best_acc.pt") so different models don't overwrite each other
+    ckpt_stem = Path(args.checkpoint).stem  # "driver_activity_distilled_best_acc"
+    # Strip common suffixes to get the model prefix
+    model_prefix = ckpt_stem
+    for suffix in ["_best_acc", "_best_loss", "_latest"]:
+        if model_prefix.endswith(suffix):
+            model_prefix = model_prefix[: -len(suffix)]
+            break
+
     print(f"Task: {task}")
+    print(f"Model: {model_prefix}")
     print(f"Input: {input_size}x{input_size}")
     print(f"Method: {args.method}")
 
     # First export FP32 ONNX as base
-    fp32_path = f"models/checkpoints/{task}_fp32.onnx"
+    fp32_path = f"models/checkpoints/{model_prefix}_fp32.onnx"
 
-    # Clean up stale external data files from previous exports (e.g. teacher model)
-    # to prevent shape mismatches during quantization
+    # Clean up stale external data files from previous exports
     stale_data = Path(fp32_path + ".data")
     if stale_data.exists():
         stale_data.unlink()
@@ -287,7 +297,7 @@ def main():
 
     # Dynamic quantization (no calibration needed)
     if args.method in ("dynamic", "both"):
-        out = args.output or f"models/checkpoints/{task}_int8_dynamic.onnx"
+        out = args.output or f"models/checkpoints/{model_prefix}_int8_dynamic.onnx"
         quantize_onnx_dynamic(fp32_path, out)
 
     # Static quantization (needs calibration data)
@@ -296,7 +306,7 @@ def main():
             print("\nError: --calibration-dir required for static quantization")
             print("Example: --calibration-dir models/data/processed/statefarm/imgs/train/c0")
             return
-        out = args.output or f"models/checkpoints/{task}_int8_static.onnx"
+        out = args.output or f"models/checkpoints/{model_prefix}_int8_static.onnx"
         quantize_onnx_static(fp32_path, out, args.calibration_dir, input_size)
 
     # TFLite
@@ -309,7 +319,7 @@ def main():
     print("Size comparison:")
     print(f"  FP32 ONNX: {fp32_size:.1f} MB")
     for suffix in ["_int8_dynamic.onnx", "_int8_static.onnx", "_int8.tflite"]:
-        path = Path(f"models/checkpoints/{task}{suffix}")
+        path = Path(f"models/checkpoints/{model_prefix}{suffix}")
         if path.exists():
             print(f"  {suffix}: {path.stat().st_size / (1024*1024):.1f} MB")
     print(f"\nExpected RPi4 inference improvement: ~3-4x faster than FP32")

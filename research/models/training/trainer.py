@@ -325,7 +325,13 @@ class Trainer:
             "config": self.config,
             "task": self.task,
         }
-        path = self.save_dir / f"{self.task}_{tag}.pt"
+        # Include backbone name to prevent teacher/student checkpoint collisions
+        backbone_name = self.config.get("model", {}).get("backbone", "")
+        if "teacher" in backbone_name or "efficientnet" in backbone_name:
+            prefix = f"{self.task}_teacher"
+        else:
+            prefix = self.task
+        path = self.save_dir / f"{prefix}_{tag}.pt"
         torch.save(checkpoint, path)
 
     @staticmethod
