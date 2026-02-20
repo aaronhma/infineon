@@ -8,17 +8,26 @@
 import SwiftUI
 
 struct VehicleAnimationView: View {
+  var isParked: Bool
   var speed: Int
   var isReversed: Bool = false
 
   var body: some View {
-    TimelineView(.animation(minimumInterval: nil, paused: speed <= 0)) { context in
-      AnimatedLaneContent(speed: speed, isReversed: isReversed, date: context.date)
+    TimelineView(
+      .animation(minimumInterval: nil, paused: speed <= 0)
+    ) { context in
+      AnimatedLaneContent(
+        isParked: isParked,
+        speed: speed,
+        isReversed: isReversed,
+        date: context.date
+      )
     }
   }
 }
 
 private struct AnimatedLaneContent: View {
+  var isParked: Bool
   var speed: Int
   var isReversed: Bool
   var date: Date
@@ -27,13 +36,15 @@ private struct AnimatedLaneContent: View {
   private let angleFromVertical: CGFloat = 80
 
   private var phase: Double {
-    Double(speed) * date.timeIntervalSinceReferenceDate * 6.0 * (isReversed ? -1.0 : 1.0)
+    Double(speed) * date.timeIntervalSinceReferenceDate * 14.0 * (isReversed ? -1.0 : 1.0)
   }
 
   var body: some View {
     ZStack {
       Canvas { context, size in
-        drawLaneMarkers(in: context, size: size)
+        if !isParked {
+          drawLaneMarkers(in: context, size: size)
+        }
       }
 
       Image(.modelY)
@@ -82,13 +93,21 @@ private struct AnimatedLaneContent: View {
     let centerDash: CGFloat = 50
     let centerGap: CGFloat = 70
     let centerPeriod = centerDash + centerGap
-    let centerPhaseOffset = phase.truncatingRemainder(dividingBy: Double(centerPeriod))
+    let centerPhaseOffset = phase.truncatingRemainder(
+      dividingBy: Double(centerPeriod)
+    )
     let centerCount = Int(lineLength / centerPeriod) + 2
 
     for i in 0..<centerCount {
-      let t = -lineLength / 2 + CGFloat(i) * centerPeriod + centerPhaseOffset
+      let t =
+        -lineLength / 2 + CGFloat(
+          i
+        ) * centerPeriod + centerPhaseOffset
       let start = CGPoint(x: centerX + dirX * t, y: centerY + dirY * t)
-      let end = CGPoint(x: centerX + dirX * (t + centerDash), y: centerY + dirY * (t + centerDash))
+      let end = CGPoint(
+        x: centerX + dirX * (t + centerDash),
+        y: centerY + dirY * (t + centerDash)
+      )
 
       drawFadingDash(
         in: context, start: start, end: end, perpX: perpX, perpY: perpY, lineWidth: lineWidth,
@@ -101,13 +120,21 @@ private struct AnimatedLaneContent: View {
     let rightDash: CGFloat = 140
     let rightGap: CGFloat = 50
     let rightPeriod = rightDash + rightGap
-    let rightPhaseOffset = phase.truncatingRemainder(dividingBy: Double(rightPeriod))
+    let rightPhaseOffset = phase.truncatingRemainder(
+      dividingBy: Double(rightPeriod)
+    )
     let rightCount = Int(lineLength / rightPeriod) + 2
 
     for i in 0..<rightCount {
-      let t = -lineLength / 2 + CGFloat(i) * rightPeriod + rightPhaseOffset
+      let t =
+        -lineLength / 2 + CGFloat(
+          i
+        ) * rightPeriod + rightPhaseOffset
       let start = CGPoint(x: rightCX + dirX * t, y: rightCY + dirY * t)
-      let end = CGPoint(x: rightCX + dirX * (t + rightDash), y: rightCY + dirY * (t + rightDash))
+      let end = CGPoint(
+        x: rightCX + dirX * (t + rightDash),
+        y: rightCY + dirY * (t + rightDash)
+      )
 
       drawFadingDash(
         in: context, start: start, end: end, perpX: perpX, perpY: perpY, lineWidth: lineWidth,
@@ -121,10 +148,34 @@ private struct AnimatedLaneContent: View {
     let halfWidth = lineWidth / 2
 
     var rect = Path()
-    rect.move(to: CGPoint(x: start.x - perpX * halfWidth, y: start.y - perpY * halfWidth))
-    rect.addLine(to: CGPoint(x: start.x + perpX * halfWidth, y: start.y + perpY * halfWidth))
-    rect.addLine(to: CGPoint(x: end.x + perpX * halfWidth, y: end.y + perpY * halfWidth))
-    rect.addLine(to: CGPoint(x: end.x - perpX * halfWidth, y: end.y - perpY * halfWidth))
+    rect
+      .move(
+        to: CGPoint(
+          x: start.x - perpX * halfWidth,
+          y: start.y - perpY * halfWidth
+        )
+      )
+    rect
+      .addLine(
+        to: CGPoint(
+          x: start.x + perpX * halfWidth,
+          y: start.y + perpY * halfWidth
+        )
+      )
+    rect
+      .addLine(
+        to: CGPoint(
+          x: end.x + perpX * halfWidth,
+          y: end.y + perpY * halfWidth
+        )
+      )
+    rect
+      .addLine(
+        to: CGPoint(
+          x: end.x - perpX * halfWidth,
+          y: end.y - perpY * halfWidth
+        )
+      )
     rect.closeSubpath()
 
     context.fill(
@@ -143,11 +194,11 @@ private struct AnimatedLaneContent: View {
 }
 
 #Preview {
-  VehicleAnimationView(speed: 90)
+  VehicleAnimationView(isParked: false, speed: 90)
     .background(.black)
 }
 
 #Preview("Reversed") {
-  VehicleAnimationView(speed: 90, isReversed: true)
+  VehicleAnimationView(isParked: false, speed: 90, isReversed: true)
     .background(.black)
 }

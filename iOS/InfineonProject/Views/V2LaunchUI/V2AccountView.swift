@@ -34,6 +34,7 @@ struct V2AccountView: View {
 
   enum SettingsOptions: Hashable {
     case profile
+    case appearance
     case notifications
     case licensing
   }
@@ -312,7 +313,6 @@ struct V2AccountView: View {
             HStack(spacing: 16) {
               profileImageView
                 .frame(width: 60, height: 60)
-                .stableMatchedTransition(id: SettingsOptions.profile, in: namespace)
                 .clipShape(.circle)
 
               VStack(alignment: .leading, spacing: 4) {
@@ -334,6 +334,16 @@ struct V2AccountView: View {
 
         // Settings Section
         Section {
+          NavigationLink(value: SettingsOptions.appearance) {
+            Label {
+              Text("Appearance")
+            } icon: {
+              SettingsBoxView(
+                icon: "circle.lefthalf.filled", color: .indigo
+              )
+            }
+          }
+
           NavigationLink(value: SettingsOptions.notifications) {
             Label {
               Text("Notifications")
@@ -342,7 +352,6 @@ struct V2AccountView: View {
                 icon: supabase.userProfile?.notificationsEnabled ?? true
                   ? "bell.fill" : "bell.slash.fill", color: .red
               )
-              .stableMatchedTransition(id: SettingsOptions.notifications, in: namespace)
             }
           }
         }
@@ -371,7 +380,6 @@ struct V2AccountView: View {
               Text("Licensing")
             } icon: {
               SettingsBoxView(icon: "graduationcap.fill", color: .indigo)
-                .stableMatchedTransition(id: SettingsOptions.licensing, in: namespace)
             }
           }
         }
@@ -415,10 +423,10 @@ struct V2AccountView: View {
         switch route {
         case .profile:
           EditProfileView()
-            .navigationTransition(.zoom(sourceID: SettingsOptions.profile, in: namespace))
         case .notifications:
           NotificationSettingsView()
-            .navigationTransition(.zoom(sourceID: SettingsOptions.notifications, in: namespace))
+        case .appearance:
+          AppearanceSettingsView()
         case .licensing:
           List {
             Section("License") {
@@ -540,7 +548,6 @@ struct V2AccountView: View {
           }
           .navigationTitle("Licensing")
           .navigationBarTitleDisplayMode(.inline)
-          .navigationTransition(.zoom(sourceID: SettingsOptions.licensing, in: namespace))
         }
       }
     }

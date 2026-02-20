@@ -64,30 +64,33 @@ struct VehicleView: View {
   var body: some View {
     NavigationStack {
       ZStack(alignment: .top) {
-        VehicleAnimationView(speed: vehicle.realtimeData?.speedMph ?? 0)
-          .frame(height: 350)
+        VehicleAnimationView(
+          isParked: !(vehicle.realtimeData?.isMoving ?? false),
+          speed: vehicle.realtimeData?.speedMph ?? 0
+        )
+        .frame(height: 350)
+        .blur(radius: scrollBlurAmount)
+        .opacity(1.0 - scrollDimAmount)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .overlay(alignment: .topLeading) {
+          VStack(alignment: .leading) {
+            Text(vehicle.name)
+              .font(.largeTitle)
+              .bold()
+
+            if let data = vehicle.realtimeData {
+              Text(data.updatedAt, style: .relative)
+                .foregroundStyle(.secondary)
+
+              Text(data.isMoving ? "\(data.speedMph) MPH" : "Parked")
+                .contentTransition(.numericText(value: 0))
+                .foregroundStyle(.secondary)
+            }
+          }
           .blur(radius: scrollBlurAmount)
           .opacity(1.0 - scrollDimAmount)
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-          .overlay(alignment: .topLeading) {
-            VStack(alignment: .leading) {
-              Text(vehicle.name)
-                .font(.largeTitle)
-                .bold()
-
-              if let data = vehicle.realtimeData {
-                Text(data.updatedAt, style: .relative)
-                  .foregroundStyle(.secondary)
-
-                Text(data.isMoving ? "\(data.speedMph) MPH" : "Parked")
-                  .contentTransition(.numericText(value: 0))
-                  .foregroundStyle(.secondary)
-              }
-            }
-            .blur(radius: scrollBlurAmount)
-            .opacity(1.0 - scrollDimAmount)
-            .padding(.horizontal)
-          }
+          .padding(.horizontal)
+        }
 
         ScrollView {
           VStack(spacing: 0) {
@@ -522,6 +525,7 @@ struct VehicleView: View {
             Image(systemName: "person.2.fill")
               .stableMatchedTransition(id: "accessSheet", in: namespace)
           }
+          .containerShape(.capsule)
           .contentShape(.capsule)
           .possibleGlassEffect(in: .capsule)
           .buttonStyle(
@@ -536,10 +540,11 @@ struct VehicleView: View {
             ProfileToolbarImage()
               .stableMatchedTransition(id: "settingsSheet", in: namespace)
           }
-          .contentShape(.capsule)
-          .possibleGlassEffect(in: .capsule)
+          .containerShape(.circle)
+          .contentShape(.circle)
+          .possibleGlassEffect(in: .circle)
           .buttonStyle(
-            FluidZoomTransitionStyle(id: "settingsSheet", namespace: namespace, shape: .capsule))
+            FluidZoomTransitionStyle(id: "settingsSheet", namespace: namespace, shape: .circle))
         }
       }
       //      .dynamicIslandToast(isPresented: .constant(vehicleStreetName != nil), toast: .init(symbol: "xmark.circle.fill", symbolForegroundStyle: (.green, .white), title: "Distracted Driving", message: "Driver was alerted"))

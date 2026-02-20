@@ -63,13 +63,15 @@ struct InfineonProjectApp: App {
 
   var body: some Scene {
     WindowGroup {
-      RootView()
-        .onOpenURL(perform: handleShortcut)
-        .onAppear {
-          supabase.configureCache(
-            modelContext: sharedModelContainer.mainContext
-          )
-        }
+      ThemeSwitcher {
+        RootView()
+          .onOpenURL(perform: handleShortcut)
+          .onAppear {
+            supabase.configureCache(
+              modelContext: sharedModelContainer.mainContext
+            )
+          }
+      }
     }
     .modelContainer(sharedModelContainer)
     .onChange(of: scenePhase) {
