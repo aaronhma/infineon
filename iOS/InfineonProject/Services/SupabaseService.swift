@@ -226,6 +226,9 @@ struct FaceDetection: Codable, Identifiable {
   // Distraction detection
   let isPhoneDetected: Bool?
   let isDrinkingDetected: Bool?
+  // GPS coordinates at time of detection
+  let latitude: Double?
+  let longitude: Double?
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -251,6 +254,8 @@ struct FaceDetection: Codable, Identifiable {
     case sessionId = "session_id"
     case isPhoneDetected = "is_phone_detected"
     case isDrinkingDetected = "is_drinking_detected"
+    case latitude
+    case longitude
   }
 }
 
@@ -1448,6 +1453,25 @@ class SupabaseService {
       .eq("session_id", value: sessionId)
       .eq("is_drinking_detected", value: true)
       .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  /// Fetches all face detections with GPS coordinates for a trip session (used for route + event pins).
+  func fetchAllDetectionsWithLocation(for sessionId: UUID, vehicleId: String) async throws
+    -> [FaceDetection]
+  {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .not("latitude", operator: .is, value: "null")
+      .not("longitude", operator: .is, value: "null")
+      .order("created_at", ascending: true)
       .execute()
       .value
 

@@ -27,23 +27,8 @@ struct HomeView: View {
     todayTrips.count
   }
 
-  private var todayOkCount: Int {
-    todayTrips.filter { $0.status == .ok }.count
-  }
-
-  private var todayWarningCount: Int {
-    todayTrips.filter { $0.status == .warning }.count
-  }
-
-  private var todayDangerCount: Int {
-    todayTrips.filter { $0.status == .danger }.count
-  }
-
-  private var todayScore: Int {
-    guard todayTripCount > 0 else { return 100 }
-    // Score based on trip statuses: ok = 100, warning = 50, danger = 0
-    let totalScore = todayOkCount * 100 + todayWarningCount * 50 + todayDangerCount * 0
-    return totalScore / todayTripCount
+  private var todayDailyScore: DailyScore {
+    DrivingScoreCalculator.dailyScore(for: todayTrips)
   }
 
   var body: some View {
@@ -115,40 +100,47 @@ struct HomeView: View {
     List {
       // Today's summary section
       Section {
-        VStack {
-          HStack {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Driving Score")
-                .font(.title3)
-                .bold()
+        VStack(spacing: 16) {
+          HStack(alignment: .top) {
+            // Score ring — hero element
+            TripScoreRing(score: todayDailyScore.overall, size: 90)
 
-              Text("\(todayScore)/100")
-                .foregroundStyle(scoreColor)
-                .contentTransition(.numericText(value: Double(todayScore)))
-                .padding(.bottom)
+            Spacer(minLength: 16)
 
-              Text("Today's Trips")
-                .font(.title3)
-                .bold()
-
-              Text("\(todayOkCount)/\(todayTripCount)")
-                .foregroundStyle(todayOkCount == todayTripCount ? .green : .orange)
-                .contentTransition(.numericText(value: Double(todayOkCount)))
-
-              Spacer(minLength: 0)
+            // Sub-score gauges
+            VStack(spacing: 10) {
+              DailySubScoreGauge(
+                label: "Attentiveness",
+                score: todayDailyScore.attentiveness,
+                icon: "eye.fill",
+                color: .cyan
+              )
+              DailySubScoreGauge(
+                label: "Safety",
+                score: todayDailyScore.safety,
+                icon: "shield.fill",
+                color: .blue
+              )
+              DailySubScoreGauge(
+                label: "Impairment",
+                score: todayDailyScore.impairment,
+                icon: "brain.head.profile.fill",
+                color: .purple
+              )
             }
-
-            Spacer(minLength: 0)
-
-            RingsView(
-              size: 100,
-              lineWidth: 15,
-              progressOuter: $progressOuter,
-              progressMiddle: $progressMiddle,
-              progressInner: $progressInner
-            )
           }
+
+          // Rings
+          RingsView(
+            size: 80,
+            lineWidth: 12,
+            progressOuter: $progressOuter,
+            progressMiddle: $progressMiddle,
+            progressInner: $progressInner
+          )
+          .frame(maxWidth: .infinity, alignment: .center)
         }
+        .padding(.vertical, 4)
         .onAppear {
           updateRings()
         }
@@ -156,20 +148,22 @@ struct HomeView: View {
           updateRings()
         }
       } header: {
-        HStack {
+        HStack(alignment: .firstTextBaseline) {
           Text("Today")
             .foregroundStyle(Color.primary)
-            .font(.title2)
+            .font(.system(.title2, design: .rounded))
+            .bold()
 
           Spacer()
 
           if !todayTrips.isEmpty {
-            Text("\(todayTripCount) trip\(todayTripCount == 1 ? "" : "s")")
-              .foregroundStyle(.secondary)
+            Text(
+              "\(todayTripCount) trip\(todayTripCount == 1 ? "" : "s")"
+            )
+            .font(.system(.subheadline, design: .rounded))
+            .foregroundStyle(.secondary)
           }
         }
-        .lineLimit(1)
-        .bold()
       }
 
       // Recent trips section
@@ -181,19 +175,19 @@ struct HomeView: View {
         }
       } header: {
         NavigationLink(value: Constants.HomeRouteAnnouncer.trips.rawValue) {
-          HStack {
+          HStack(alignment: .firstTextBaseline) {
             Text("Recent Trips")
+              .font(.system(.title2, design: .rounded))
+              .bold()
 
             Image(systemName: "chevron.right")
-              .foregroundStyle(.secondary)
+              .font(.system(.caption, design: .rounded))
+              .bold()
+              .foregroundStyle(.tertiary)
 
             Spacer()
           }
-          .lineLimit(1)
-          .font(.title2)
-          .bold()
         }
-        .frame(maxWidth: .infinity)
         .foregroundStyle(.primary)
       }
     }
@@ -210,27 +204,15 @@ struct HomeView: View {
     .navigationTitle("All Trips")
   }
 
-  private var scoreColor: Color {
-    if todayScore >= 80 {
-      return .green
-    } else if todayScore >= 50 {
-      return .orange
-    } else {
-      return .red
-    }
-  }
-
   private func updateRings() {
+    let daily = todayDailyScore
     withAnimation(.easeInOut(duration: 0.5)) {
-      // Outer ring: overall score
-      progressOuter = CGFloat(todayScore) / 100.0
-
-      // Middle ring: percentage of trips that are OK
-      progressMiddle = todayTripCount > 0 ? CGFloat(todayOkCount) / CGFloat(todayTripCount) : 1.0
-
-      // Inner ring: inverse of danger trips (1.0 = no danger, 0.0 = all danger)
-      progressInner =
-        todayTripCount > 0 ? 1.0 - (CGFloat(todayDangerCount) / CGFloat(todayTripCount)) : 1.0
+      // Outer ring: overall driving score
+      progressOuter = CGFloat(daily.overall) / 100.0
+      // Middle ring: attentiveness sub-score
+      progressMiddle = CGFloat(daily.attentiveness) / 100.0
+      // Inner ring: safety sub-score
+      progressInner = CGFloat(daily.safety) / 100.0
     }
   }
 
@@ -254,6 +236,53 @@ struct HomeView: View {
       await MainActor.run {
         self.errorMessage = error.localizedDescription
         self.isLoading = false
+      }
+    }
+  }
+}
+
+// MARK: - Daily Sub-Score Gauge
+
+struct DailySubScoreGauge: View {
+  let label: String
+  let score: Int
+  let icon: String
+  let color: Color
+
+  private var effectiveColor: Color {
+    switch DrivingScoreCalculator.scoreCategory(for: score) {
+    case .good: color
+    case .moderate: .orange
+    case .poor: .red
+    }
+  }
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: icon)
+        .font(.system(size: 10))
+        .foregroundStyle(effectiveColor)
+        .frame(width: 14)
+
+      VStack(alignment: .leading, spacing: 2) {
+        HStack {
+          Text(label)
+            .font(.system(.caption2, design: .rounded))
+            .foregroundStyle(.secondary)
+
+          Spacer(minLength: 0)
+
+          Text("\(score)")
+            .font(.system(.caption2, design: .rounded))
+            .bold()
+            .foregroundStyle(effectiveColor)
+        }
+
+        Gauge(value: Double(score), in: 0...100) {
+          EmptyView()
+        }
+        .gaugeStyle(.linearCapacity)
+        .tint(effectiveColor.gradient)
       }
     }
   }

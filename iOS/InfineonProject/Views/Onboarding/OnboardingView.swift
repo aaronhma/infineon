@@ -227,8 +227,6 @@ private let videos: [DataModel] = [
 ]
 
 struct OnboardingView: View {
-  //    @State private var showingAuthSheet = false
-
   @State private var finalOffset = CGFloat.zero
   @State private var currentDrag = CGFloat.zero
   @State private var lastView = CGFloat.zero
@@ -293,10 +291,6 @@ struct OnboardingView: View {
         }
 
         GetStartedView(height: 250 + abs(currentDrag))
-
-        //                GetStartedView(height: 250 + abs(currentDrag)) {
-        //                    showingAuthSheet.toggle()
-        //                }
       }
       .background(.black)
       .offset(y: finalOffset + currentDrag)
@@ -341,16 +335,9 @@ struct OnboardingView: View {
       }
     }
     .ignoresSafeArea()
-    //        .sheet(isPresented: $showingAuthSheet) {
-    //            AuthView()
-    //        }
   }
 }
 
 #Preview {
   OnboardingView()
 }
-
-//#Preview("Button") {
-//    GetStartedView(height: 50) {}
-//}

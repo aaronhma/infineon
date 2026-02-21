@@ -274,7 +274,9 @@ extension FaceDetection: Hashable {
         imagePath: "test/path.jpg",
         sessionId: UUID(),
         isPhoneDetected: false,
-        isDrinkingDetected: false
+        isDrinkingDetected: false,
+        latitude: 37.3349,
+        longitude: -122.0090
       ),
       eventType: .drowsiness
     )

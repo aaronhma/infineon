@@ -64,6 +64,11 @@ struct Trip: Identifiable {
   var isOngoing: Bool {
     timeEnded == nil
   }
+
+  /// Smart driving score computed from all trip event data.
+  var score: TripScore {
+    DrivingScoreCalculator.score(for: self)
+  }
 }
 
 // MARK: - Navigation Destinations
