@@ -247,14 +247,16 @@ struct NewUserOnboardingView: View {
     NewUserOnboardingView(
       items: [
         Item(
-          id: UUID(), title: "Test1", subtitle: "test1",
+          id: UUID(), title: "Welcome to InfineonProject",
+          subtitle:
+            "Here, you'll find your vehicle's live status, including driver alertness metrics.",
           image: UIImage(imageLiteralResourceName: "sampleAppScreenshot")),
         Item(
-          id: UUID(), title: "Test1", subtitle: "test1",
+          id: UUID(), title: "Live Location", subtitle: "See where your vehicle is at.",
           image: UIImage(imageLiteralResourceName: "sampleAppScreenshot"), zoomScale: 1.3,
           zoomAnchor: .bottom),
         Item(
-          id: UUID(), title: "Test1", subtitle: "test1",
+          id: UUID(), title: "Live Camera", subtitle: "",
           image: UIImage(imageLiteralResourceName: "sampleAppScreenshot"), zoomScale: 1.2,
           zoomAnchor: .init(x: 0.5, y: -0.1)),
         Item(
