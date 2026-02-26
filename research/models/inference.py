@@ -27,6 +27,9 @@ Usage:
     print(result["alerts"])            # ["phone_detected", "eyes_closed"]
 """
 
+import os
+import platform
+import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -34,6 +37,24 @@ from enum import Enum
 
 import cv2
 import numpy as np
+
+# Suppress onnxruntime GPU discovery on RPi (no discrete GPU).
+_IS_ARM_LINUX = platform.machine() in ("aarch64", "armv7l") and sys.platform == "linux"
+_IS_MACOS = sys.platform == "darwin"
+if _IS_ARM_LINUX:
+    os.environ.setdefault("ORT_DISABLE_GPU_DISCOVERY", "1")
+
+
+def _get_ort_providers():
+    """Return the best onnxruntime execution providers for this platform."""
+    if _IS_MACOS:
+        try:
+            import onnxruntime as _ort
+            if "CoreMLExecutionProvider" in _ort.get_available_providers():
+                return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        except Exception:
+            pass
+    return ["CPUExecutionProvider"]
 
 
 class DriverState(str, Enum):
@@ -177,7 +198,10 @@ class DriverAwarenessSystem:
             raise
 
     def _load_onnx(self, path: str):
-        """Load ONNX model optimized for CPU inference."""
+        """Load ONNX model with platform-appropriate execution providers.
+
+        Uses CoreML on macOS (Apple Silicon), CPU-only on RPi/Linux.
+        """
         import onnxruntime as ort
 
         opts = ort.SessionOptions()
@@ -188,10 +212,11 @@ class DriverAwarenessSystem:
         opts.enable_mem_pattern = True
         opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
+        providers = _get_ort_providers()
         return ort.InferenceSession(
             path,
             sess_options=opts,
-            providers=["CPUExecutionProvider"],
+            providers=providers,
         )
 
     def _preprocess(self, image: np.ndarray, target_size: int) -> np.ndarray:

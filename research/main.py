@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import platform
 import random
 import signal
 import sys
@@ -14,6 +15,16 @@ from datetime import datetime, timedelta, timezone
 
 # PST timezone (UTC-8)
 PST = timezone(timedelta(hours=-8))
+
+# Platform detection — used for choosing onnxruntime execution providers.
+# RPi4 is aarch64 Linux (ARM, no GPU), Mac is arm64 Darwin (Apple Silicon).
+_IS_ARM_LINUX = platform.machine() in ("aarch64", "armv7l") and sys.platform == "linux"
+_IS_MACOS = sys.platform == "darwin"
+
+# Suppress onnxruntime GPU discovery on devices without a discrete GPU.
+# Without this, ort prints "GPU device discovery failed" errors on RPi.
+if _IS_ARM_LINUX:
+    os.environ.setdefault("ORT_DISABLE_GPU_DISCOVERY", "1")
 
 # Force unbuffered stdout so prints appear even if the process crashes
 sys.stdout.reconfigure(line_buffering=True)
@@ -66,6 +77,24 @@ except Exception as e:
 # MediaPipe + scipy are loaded lazily inside FaceAnalyzer.__init__() to avoid
 # segfaults from protobuf conflicts on RPi (a segfault bypasses try/except).
 _MEDIAPIPE_AVAILABLE = None  # determined at runtime in _check_mediapipe()
+
+
+def _get_ort_providers():
+    """Return the best available onnxruntime execution providers for this platform.
+
+    - macOS (Apple Silicon): CoreMLExecutionProvider → CPUExecutionProvider
+    - RPi / ARM Linux:       CPUExecutionProvider only
+    - Other:                 CPUExecutionProvider only
+    """
+    if _IS_MACOS:
+        try:
+            import onnxruntime as _ort
+            available = _ort.get_available_providers()
+            if "CoreMLExecutionProvider" in available:
+                return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+        except Exception:
+            pass
+    return ["CPUExecutionProvider"]
 
 
 def _check_mediapipe():
@@ -1301,14 +1330,16 @@ class DistractionDetector:
                 if onnx_path:
                     try:
                         import onnxruntime as ort
+                        providers = _get_ort_providers()
                         print(f"Loading YOLO model (onnxruntime): {onnx_path}")
+                        print(f"  Execution providers: {providers}")
                         opts = ort.SessionOptions()
                         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
                         opts.intra_op_num_threads = 4
                         opts.inter_op_num_threads = 1
                         self._onnx_session = ort.InferenceSession(
                             onnx_path, sess_options=opts,
-                            providers=["CPUExecutionProvider"],
+                            providers=providers,
                         )
                         inp = self._onnx_session.get_inputs()[0]
                         self._onnx_input_name = inp.name
