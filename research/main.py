@@ -117,6 +117,7 @@ load_dotenv()
 
 # Try to import YOLO — tested in subprocess first to survive segfaults
 YOLO_AVAILABLE = False
+YOLO_ONNX_AVAILABLE = False
 print("  Checking YOLO...", end=" ", flush=True)
 try:
     _yolo_check = __import__("subprocess").run(
@@ -126,12 +127,27 @@ try:
     if _yolo_check.returncode == 0:
         from ultralytics import YOLO
         YOLO_AVAILABLE = True
-        print("ok")
+        print("ok (ultralytics)")
     else:
         _yolo_err = _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
-        print(f"skipped ({_yolo_err[:100]})")
+        print(f"ultralytics unavailable ({_yolo_err[:80]})")
 except Exception as e:
-    print(f"skipped ({e})")
+    print(f"ultralytics unavailable ({e})")
+# On RPi where ultralytics/PyTorch aren't available, check for ONNX fallback
+if not YOLO_AVAILABLE:
+    _onnx_candidates = [
+        "yolo-models/yolo26n.onnx", "yolo-models/yolo26s.onnx", "yolo-models/yolo26m.onnx",
+    ]
+    _has_onnx_model = any(os.path.isfile(p) for p in _onnx_candidates)
+    if _has_onnx_model:
+        try:
+            import onnxruntime
+            YOLO_ONNX_AVAILABLE = True
+            print(f"  YOLO ONNX fallback available (onnxruntime {onnxruntime.__version__})")
+        except ImportError:
+            print("  No ONNX fallback (onnxruntime not installed)")
+    else:
+        print("  No ONNX models found in yolo-models/ (run export_driver.py to generate)")
 
 # .env overrides: if explicitly set in .env, these take priority over Supabase.
 # If not set, Supabase value is used. Format: {key: (value, is_explicitly_set)}
@@ -549,9 +565,9 @@ class SupabaseUploader:
                 val = default
                 source = "default"
 
-            # YOLO needs the runtime to actually be available
+            # YOLO needs at least one runtime (ultralytics or ONNX) to be available
             if key == "enable_yolo":
-                val = val and YOLO_AVAILABLE
+                val = val and (YOLO_AVAILABLE or YOLO_ONNX_AVAILABLE)
 
             self.feature_settings[key] = val
             print(f"  {key}: {val}  ({source})", flush=True)
@@ -1194,7 +1210,19 @@ class SupabaseUploader:
 
 
 class DistractionDetector:
-    """YOLO-based detector for phone usage and drinking detection"""
+    """YOLO-based detector for phone usage and drinking detection.
+
+    Combines YOLO object detection (visible phones) with MediaPipe Hands
+    (hand-at-ear gesture) to detect phone usage even when the phone is
+    occluded against the ear during a call.
+
+    Supports two backends:
+      - **ultralytics** (dev machines with PyTorch): loads .pt models directly
+      - **onnxruntime** (RPi / edge): loads .onnx models without PyTorch
+
+    On RPi where PyTorch/ultralytics aren't available, the detector
+    automatically falls back to ONNX runtime with the exported nano model.
+    """
 
     # COCO class IDs for driver monitoring
     CELL_PHONE = 67
@@ -1204,40 +1232,105 @@ class DistractionDetector:
     DRINK_CLASSES = {39, 40, 41}             # bottle, wine glass, cup
     DEVICE_CLASSES = {63, 65, 67, 73}        # laptop, remote, cell phone, book
 
+    # COCO class names (subset used for logging when running ONNX backend)
+    COCO_NAMES = {
+        0: "person", 39: "bottle", 40: "wine glass", 41: "cup",
+        63: "laptop", 65: "remote", 67: "cell phone", 73: "book",
+    }
+
+    # ONNX model candidates: tried in order when ultralytics is unavailable
+    _ONNX_CANDIDATES = [
+        "yolo-models/yolo26n.onnx",
+        "yolo-models/yolo26s.onnx",
+        "yolo-models/yolo26m.onnx",
+    ]
+
     def __init__(self, model_path=None, enabled=True):
-        """Initialize YOLO model for object detection
+        """Initialize YOLO model for object detection.
+
+        Tries ultralytics first (for dev machines with PyTorch).  If that
+        isn't available, falls back to onnxruntime with an exported .onnx
+        model — this is the path used on Raspberry Pi.
 
         Args:
-            model_path: Path to YOLO model weights. Use 'yolo26n.pt' for nano (fast),
-                       'yolo26s.pt' for small, 'yolo26m.pt' for medium accuracy (v26).
-                       If None, uses YOLO_MODEL_PATH env var or defaults to 'yolo-models/yolo26m.pt'.
-            enabled: Whether YOLO detection is enabled (requires YOLO module)
+            model_path: Path to YOLO model weights (.pt or .onnx).
+                        If None, uses YOLO_MODEL_PATH env var or auto-detects.
+            enabled: Whether detection is enabled at all.
         """
         self.enabled = enabled
 
-        # Get model path from env var if not provided
+        # Get model path from env var if not provided.
+        # Default to nano (.onnx first, then .pt) — nano is the only model
+        # small enough to run at acceptable speed on RPi4.
         if model_path is None:
-            model_path = os.environ.get("YOLO_MODEL_PATH", "yolo-models/yolo26m.pt")
+            model_path = os.environ.get("YOLO_MODEL_PATH")
+        if model_path is None:
+            if YOLO_AVAILABLE:
+                model_path = "yolo-models/yolo26m.pt"   # dev machine: use best accuracy
+            else:
+                model_path = "yolo-models/yolo26n.onnx"  # RPi: use nano ONNX
 
         # Classes relevant to driver monitoring (subset of COCO 80)
         self.TARGET_CLASSES = [0, 39, 40, 41, 63, 65, 67, 73]
         #  0=person, 39=bottle, 40=wine glass, 41=cup,
         # 63=laptop, 65=remote, 67=cell phone, 73=book
 
+        # Backend state: exactly one of these will be set
+        self.model = None           # ultralytics YOLO model (if available)
+        self._onnx_session = None   # onnxruntime session (RPi fallback)
+        self._onnx_input_name = None
+        self._onnx_img_size = 480   # must match export imgsz
+        self._backend = None        # "ultralytics" or "onnx"
+
         if self.enabled:
-            print(f"Loading YOLO model: {model_path}")
-            self.model = YOLO(model_path)
-            self.confidence_threshold = 0.25  # Lower threshold for better detection
-            print("YOLO model loaded successfully")
+            self.confidence_threshold = 0.25
+
+            # --- Try ultralytics first (dev machines) ---
+            if YOLO_AVAILABLE:
+                try:
+                    print(f"Loading YOLO model (ultralytics): {model_path}")
+                    self.model = YOLO(model_path)
+                    self._backend = "ultralytics"
+                    print("YOLO model loaded successfully (ultralytics backend)")
+                except Exception as e:
+                    print(f"  ultralytics YOLO failed: {e}")
+
+            # --- Fallback to ONNX runtime (RPi / edge) ---
+            if self._backend is None:
+                onnx_path = self._find_onnx_model(model_path)
+                if onnx_path:
+                    try:
+                        import onnxruntime as ort
+                        print(f"Loading YOLO model (onnxruntime): {onnx_path}")
+                        opts = ort.SessionOptions()
+                        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                        opts.intra_op_num_threads = 4
+                        opts.inter_op_num_threads = 1
+                        self._onnx_session = ort.InferenceSession(
+                            onnx_path, sess_options=opts,
+                            providers=["CPUExecutionProvider"],
+                        )
+                        inp = self._onnx_session.get_inputs()[0]
+                        self._onnx_input_name = inp.name
+                        self._onnx_img_size = inp.shape[2]  # H from [1,3,H,W]
+                        self._backend = "onnx"
+                        print(f"YOLO model loaded successfully (onnx backend, "
+                              f"input {inp.shape})")
+                    except Exception as e:
+                        print(f"  ONNX YOLO failed: {e}")
+
+            if self._backend is None:
+                print("YOLO detection disabled - no backend available")
+                self.enabled = False
         else:
             print("YOLO detection disabled - distraction detection unavailable")
-            self.model = None
 
         # Detection state
         self.phone_detected = False
         self.drinking_detected = False
         self.phone_bbox = None
         self.bottle_bbox = None
+        self.hand_at_ear = False  # True when phone detected via hand-at-ear
 
         # Smoothing - require multiple consecutive frames
         self.phone_frames = 0
@@ -1255,6 +1348,135 @@ class DistractionDetector:
         # YOLO performance tracking
         self._yolo_times = deque(maxlen=50)
         self._yolo_completions = 0
+
+        # MediaPipe Hands for hand-at-ear (phone call) detection.
+        # When a phone is held against the ear, YOLO can't see it — but
+        # we CAN detect the hand raised to the ear and infer phone usage.
+        # Uses Tasks API (same pattern as FaceLandmarker in FaceAnalyzer).
+        self.hand_landmarker = None
+        self._mp = None  # mediapipe module reference for Image creation
+        self._last_face_bbox = None  # Cached face bbox from previous frame
+        if self.enabled:
+            try:
+                import mediapipe as _mp
+                from mediapipe.tasks import python as _mp_python
+                from mediapipe.tasks.python import vision as _mp_vision
+                self._mp = _mp
+
+                base_options = _mp_python.BaseOptions(
+                    model_asset_path="hand_landmarker.task"
+                )
+                options = _mp_vision.HandLandmarkerOptions(
+                    base_options=base_options,
+                    running_mode=_mp_vision.RunningMode.IMAGE,
+                    num_hands=2,
+                    min_hand_detection_confidence=0.5,
+                    min_hand_presence_confidence=0.5,
+                    min_tracking_confidence=0.5,
+                )
+                self.hand_landmarker = _mp_vision.HandLandmarker.create_from_options(options)
+                print("MediaPipe HandLandmarker loaded for phone-at-ear detection")
+            except Exception as e:
+                print(f"MediaPipe Hands not available ({e}) — phone-at-ear detection disabled")
+
+    def _find_onnx_model(self, model_path):
+        """Find an ONNX model file, checking the given path and fallback candidates."""
+        # If the given path is already .onnx and exists, use it
+        if model_path.endswith(".onnx") and os.path.isfile(model_path):
+            return model_path
+        # Try replacing .pt extension with .onnx
+        onnx_variant = model_path.replace(".pt", ".onnx")
+        if os.path.isfile(onnx_variant):
+            return onnx_variant
+        # Try candidates in order (nano first — smallest/fastest for RPi)
+        for candidate in self._ONNX_CANDIDATES:
+            if os.path.isfile(candidate):
+                return candidate
+        return None
+
+    def _run_onnx_inference(self, frame):
+        """Run YOLO inference using onnxruntime (no ultralytics/PyTorch needed).
+
+        Handles preprocessing (resize, normalize, NCHW), inference, and
+        post-processing (decode boxes, NMS, class filtering).
+
+        Returns:
+            list of (class_id, confidence, x1, y1, x2, y2) detections
+        """
+        orig_h, orig_w = frame.shape[:2]
+        img_size = self._onnx_img_size
+
+        # --- Preprocess: resize with letterbox padding ---
+        scale = min(img_size / orig_h, img_size / orig_w)
+        new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+        # Pad to square
+        pad_w = (img_size - new_w) // 2
+        pad_h = (img_size - new_h) // 2
+        padded = np.full((img_size, img_size, 3), 114, dtype=np.uint8)
+        padded[pad_h:pad_h + new_h, pad_w:pad_w + new_w] = resized
+
+        # BGR → RGB, HWC → CHW, normalize to 0-1, add batch dim
+        blob = padded[:, :, ::-1].astype(np.float32) / 255.0
+        blob = np.transpose(blob, (2, 0, 1))[np.newaxis]  # [1, 3, H, W]
+
+        # --- Inference ---
+        outputs = self._onnx_session.run(None, {self._onnx_input_name: blob})
+        preds = outputs[0]  # [1, 84, N] — 4 box + 80 class scores
+
+        # Transpose to [N, 84]
+        preds = preds[0].T  # [N, 84]
+
+        # --- Post-process ---
+        # Split box coords and class scores
+        cx, cy, bw, bh = preds[:, 0], preds[:, 1], preds[:, 2], preds[:, 3]
+        class_scores = preds[:, 4:]  # [N, 80]
+
+        # Best class per prediction
+        class_ids = np.argmax(class_scores, axis=1)
+        confidences = class_scores[np.arange(len(class_ids)), class_ids]
+
+        # Filter by confidence and target classes
+        target_set = set(self.TARGET_CLASSES)
+        mask = np.array([
+            conf >= self.confidence_threshold and int(cid) in target_set
+            for conf, cid in zip(confidences, class_ids)
+        ])
+
+        if not np.any(mask):
+            return []
+
+        cx, cy, bw, bh = cx[mask], cy[mask], bw[mask], bh[mask]
+        class_ids = class_ids[mask]
+        confidences = confidences[mask]
+
+        # Convert cx,cy,w,h → x1,y1,x2,y2 (in padded image coords)
+        x1 = cx - bw / 2
+        y1 = cy - bh / 2
+        x2 = cx + bw / 2
+        y2 = cy + bh / 2
+
+        # Remove padding and rescale to original frame coords
+        x1 = ((x1 - pad_w) / scale).clip(0, orig_w)
+        y1 = ((y1 - pad_h) / scale).clip(0, orig_h)
+        x2 = ((x2 - pad_w) / scale).clip(0, orig_w)
+        y2 = ((y2 - pad_h) / scale).clip(0, orig_h)
+
+        # NMS per class using OpenCV
+        boxes_list = np.stack([x1, y1, x2 - x1, y2 - y1], axis=1).tolist()
+        conf_list = confidences.tolist()
+        indices = cv2.dnn.NMSBoxes(boxes_list, conf_list, self.confidence_threshold, 0.45)
+
+        detections = []
+        if len(indices) > 0:
+            for i in indices.flatten():
+                detections.append((
+                    int(class_ids[i]),
+                    float(confidences[i]),
+                    int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i]),
+                ))
+        return detections
 
     def _boxes_overlap(self, box1, box2, overlap_threshold=0.1):
         """Check if two bounding boxes overlap significantly"""
@@ -1310,6 +1532,94 @@ class DistractionDetector:
 
         return dx < extended_width and dy < extended_height
 
+    def _detect_hand_at_ear(self, frame):
+        """Detect a hand raised near the ear region (phone call gesture).
+
+        When someone holds a phone to their ear, the phone is occluded by
+        the hand and head — YOLO can't see it. But MediaPipe Hands CAN
+        detect the hand, and we check if it's positioned near the ear.
+
+        Uses the Tasks API HandLandmarker (RunningMode.IMAGE) in the
+        background thread.  The cached face_bbox from the main thread
+        provides ear-region coordinates for proximity checks.
+
+        Returns:
+            tuple: (is_at_ear: bool, hand_bbox: tuple|None)
+                   hand_bbox is (x1, y1, x2, y2) pixel coordinates or None
+        """
+        if self.hand_landmarker is None or self._mp is None:
+            return False, None
+
+        h, w = frame.shape[:2]
+
+        # Convert BGR → RGB and wrap in MediaPipe Image
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = self._mp.Image(
+            image_format=self._mp.ImageFormat.SRGB, data=rgb
+        )
+        results = self.hand_landmarker.detect(mp_image)
+
+        if not results.hand_landmarks:
+            return False, None
+
+        face = self._last_face_bbox
+
+        for hand_lms in results.hand_landmarks:
+            # Wrist (landmark 0) and middle-finger MCP (landmark 9)
+            wrist_x = hand_lms[0].x * w
+            wrist_y = hand_lms[0].y * h
+            mcp_x = hand_lms[9].x * w
+            mcp_y = hand_lms[9].y * h
+
+            # --- Gate 1: hand must be in upper 65% of frame (head level) ---
+            if wrist_y > h * 0.65:
+                continue
+
+            if face is not None:
+                face_cx = (face["x_min"] + face["x_max"]) / 2
+                face_w = face["x_max"] - face["x_min"]
+                face_h = face["y_max"] - face["y_min"]
+                # Ear level ≈ 40% down from top of face bounding box
+                ear_y = face["y_min"] + face_h * 0.4
+
+                # --- Gate 2: wrist must be near the ear region ---
+                # Ears are at the left/right edges of the face bbox
+                left_ear_x = face["x_min"]
+                right_ear_x = face["x_max"]
+
+                near_left = (
+                    abs(wrist_x - left_ear_x) < face_w * 0.8
+                    and abs(wrist_y - ear_y) < face_h * 0.8
+                )
+                near_right = (
+                    abs(wrist_x - right_ear_x) < face_w * 0.8
+                    and abs(wrist_y - ear_y) < face_h * 0.8
+                )
+
+                if not (near_left or near_right):
+                    continue
+
+                # --- Gate 3: hand should be roughly vertical (not flat) ---
+                hand_dy = abs(mcp_y - wrist_y)
+                hand_dx = abs(mcp_x - wrist_x)
+                # Skip clearly horizontal hands (resting on steering wheel)
+                if hand_dx > 0 and hand_dy < hand_dx * 0.3:
+                    continue
+            else:
+                # No face bbox available — use looser frame-relative checks
+                if wrist_y > h * 0.5:
+                    continue
+                if wrist_x < w * 0.15 or wrist_x > w * 0.85:
+                    continue
+
+            # All gates passed → compute hand bounding box
+            xs = [lm.x * w for lm in hand_lms]
+            ys = [lm.y * h for lm in hand_lms]
+            bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+            return True, bbox
+
+        return False, None
+
     def detect(self, frame, face_bbox=None):
         """Run YOLO detection on frame (non-blocking async).
 
@@ -1317,13 +1627,20 @@ class DistractionDetector:
         instantly so the main loop is never blocked by the YOLO model.
         Smoothing state is updated only when new YOLO results arrive.
 
+        Also runs MediaPipe Hands in the same background thread to detect
+        hand-at-ear gestures (phone calls where the phone is occluded).
+
         Args:
             frame: BGR image from OpenCV
-            face_bbox: Optional face bounding box dict (currently unused)
+            face_bbox: Optional face bounding box dict with x_min/y_min/x_max/y_max.
+                       Used by hand-at-ear detection to locate ear regions.
 
         Returns:
             dict with detection results
         """
+        # Cache face bbox for the background thread's hand-at-ear check
+        if face_bbox is not None:
+            self._last_face_bbox = face_bbox
         # Return empty results if YOLO is disabled
         if not self.enabled or self.model is None:
             return {
@@ -1333,17 +1650,19 @@ class DistractionDetector:
                 "bottle_bbox": None,
                 "phone_frames": 0,
                 "drinking_frames": 0,
+                "hand_at_ear": False,
             }
 
         # Check for completed async YOLO result
         new_phone = None
         new_bottle = None
+        is_hand_at_ear = False
         has_result = False
 
         if self._yolo_future is not None:
             if self._yolo_future.done():
                 try:
-                    new_phone, new_bottle = self._yolo_future.result()
+                    new_phone, new_bottle, is_hand_at_ear = self._yolo_future.result()
                 except Exception:
                     pass
                 self._yolo_future = None
@@ -1357,13 +1676,16 @@ class DistractionDetector:
 
         # Update smoothing only when we have new YOLO results
         if has_result:
+            # Phone: detected by YOLO object detection OR hand-at-ear gesture
             if new_phone is not None:
                 self.phone_bbox = new_phone
                 self.phone_frames += 1
+                self.hand_at_ear = is_hand_at_ear
             else:
                 self.phone_frames = max(0, self.phone_frames - 1)
                 if self.phone_frames == 0:
                     self.phone_bbox = None
+                    self.hand_at_ear = False
 
             if new_bottle is not None:
                 self.bottle_bbox = new_bottle
@@ -1383,35 +1705,62 @@ class DistractionDetector:
             "bottle_bbox": self.bottle_bbox,
             "phone_frames": self.phone_frames,
             "drinking_frames": self.drinking_frames,
+            "hand_at_ear": self.hand_at_ear,
         }
 
     def _run_yolo_inference(self, frame):
-        """Run YOLO model inference in background thread.
+        """Run YOLO model inference + hand-at-ear detection in background thread.
+
+        Uses ultralytics backend on dev machines, onnxruntime on RPi/edge.
 
         Returns:
-            tuple: (phone_bbox, bottle_bbox) — each is (x1,y1,x2,y2) or None
+            tuple: (phone_bbox, bottle_bbox, hand_at_ear)
+                   phone_bbox/bottle_bbox are (x1,y1,x2,y2) or None
+                   hand_at_ear is True if phone was detected via hand gesture
         """
         t0 = time.time()
         current_phone = None
         current_bottle = None
+        hand_at_ear = False
 
-        results = self.model(
-            frame, verbose=False, conf=self.confidence_threshold,
-            classes=self.TARGET_CLASSES,
-        )
+        if self._backend == "ultralytics":
+            # --- Ultralytics backend (dev machines with PyTorch) ---
+            results = self.model(
+                frame, verbose=False, conf=self.confidence_threshold,
+                classes=self.TARGET_CLASSES,
+            )
 
-        for result in results:
-            boxes = result.boxes
-            if boxes is None:
-                continue
+            for result in results:
+                boxes = result.boxes
+                if boxes is None:
+                    continue
 
-            for box in boxes:
-                cls = int(box.cls[0])
-                conf = float(box.conf[0])
-                xyxy = box.xyxy[0].cpu().numpy()
-                bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
+                for box in boxes:
+                    cls = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    xyxy = box.xyxy[0].cpu().numpy()
+                    bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
 
-                class_name = self.model.names[cls]
+                    class_name = self.model.names[cls]
+
+                    if cls in self.PHONE_CLASSES or cls in self.DEVICE_CLASSES:
+                        current_phone = bbox
+                        print(f"YOLO: DEVICE (class {cls}: {class_name}) conf={conf:.2f}")
+                    elif cls in self.DRINK_CLASSES:
+                        current_bottle = bbox
+                        print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
+                    elif conf > 0.4:
+                        print(
+                            f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
+                        )
+
+        elif self._backend == "onnx":
+            # --- ONNX runtime backend (RPi / edge without PyTorch) ---
+            detections = self._run_onnx_inference(frame)
+
+            for cls, conf, x1, y1, x2, y2 in detections:
+                bbox = (x1, y1, x2, y2)
+                class_name = self.COCO_NAMES.get(cls, f"class_{cls}")
 
                 if cls in self.PHONE_CLASSES or cls in self.DEVICE_CLASSES:
                     current_phone = bbox
@@ -1424,9 +1773,19 @@ class DistractionDetector:
                         f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
                     )
 
+        # If YOLO didn't find a phone, check for hand-at-ear gesture.
+        # This catches phone calls where the phone is pressed against the
+        # ear and not visible to YOLO's object detector.
+        if current_phone is None:
+            is_at_ear, hand_bbox = self._detect_hand_at_ear(frame)
+            if is_at_ear:
+                current_phone = hand_bbox
+                hand_at_ear = True
+                print("HANDS: Phone at ear detected (hand near ear region)")
+
         self._yolo_times.append(time.time() - t0)
         self._yolo_completions += 1
-        return current_phone, current_bottle
+        return current_phone, current_bottle, hand_at_ear
 
     def get_yolo_stats(self):
         """Return (avg_ms, fps, completions) for recent YOLO inferences."""
@@ -1441,9 +1800,11 @@ class DistractionDetector:
         self._yolo_completions = 0
 
     def shutdown(self):
-        """Shutdown the YOLO executor and wait for pending work."""
+        """Shutdown the YOLO executor and release MediaPipe HandLandmarker."""
         if self._yolo_executor is not None:
             self._yolo_executor.shutdown(wait=False)
+        if self.hand_landmarker is not None:
+            self.hand_landmarker.close()
 
     def draw_detections(self, frame):
         """Draw detection boxes on frame (optimized)"""
@@ -1451,7 +1812,10 @@ class DistractionDetector:
             x1, y1, x2, y2 = self.phone_bbox
             color = COLOR_RED if self.phone_detected else COLOR_ORANGE
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            label = "PHONE - DISTRACTED!" if self.phone_detected else "Phone"
+            if self.hand_at_ear:
+                label = "PHONE AT EAR!" if self.phone_detected else "Hand at ear"
+            else:
+                label = "PHONE - DISTRACTED!" if self.phone_detected else "Phone"
             cv2.putText(frame, label, (x1, y1 - 10), FONT_FAST, 1.0, color, 1)
 
         if self.bottle_bbox:
@@ -1730,7 +2094,7 @@ class FaceAnalyzer:
         self._mp = _mp
         self._sp_distance = _sp_distance
 
-        # Initialize MediaPipe Face Landmarker
+        # Initialize MediaPipe Face Landmarker (with blendshapes for gaze)
         base_options = _mp_python.BaseOptions(model_asset_path="face_landmarker.task")
         options = _mp_vision.FaceLandmarkerOptions(
             base_options=base_options,
@@ -1739,6 +2103,7 @@ class FaceAnalyzer:
             min_face_detection_confidence=0.5,
             min_face_presence_confidence=0.5,
             min_tracking_confidence=0.5,
+            output_face_blendshapes=True,
         )
         self.landmarker = _mp_vision.FaceLandmarker.create_from_options(options)
 
@@ -1751,11 +2116,26 @@ class FaceAnalyzer:
         self.DROWSINESS_FRAMES = 20
         self.BLINK_THRESHOLD = 30
 
+        # Gaze distraction thresholds
+        # Blendshape scores are 0.0-1.0; above this = looking in that direction
+        self.GAZE_THRESHOLD = 0.35
+        # Both eyeBlink blendshapes above this = eyes closed
+        self.BLINK_CLOSED_THRESHOLD = 0.55
+        # Seconds of sustained gaze-away before flagging as distracted
+        self.GAZE_DISTRACTION_SECONDS = 2.0
+        # Seconds of sustained eyes-closed before flagging as impaired
+        self.EYES_CLOSED_IMPAIRED_SECONDS = 1.0
+
         # Tracking variables
         self.eye_closed_counter = 0
         self.blink_counter = 0
         self.blink_history = deque(maxlen=100)
         self.ear_history = deque(maxlen=50)
+
+        # Gaze / eyes-closed temporal tracking (wall-clock based)
+        self._gaze_away_start = None      # time.time() when gaze left center
+        self._eyes_closed_start = None    # time.time() when both eyes closed
+        self._last_gaze_direction = "straight"
 
     def calculate_ear(self, eye_landmarks):
         """Calculate Eye Aspect Ratio"""
@@ -1778,6 +2158,97 @@ class FaceAnalyzer:
             y = int(landmark.y * h)
             landmarks.append((x, y))
         return landmarks
+
+    def analyze_gaze(self, blendshapes):
+        """Analyze gaze direction and eye closure from face blendshapes.
+
+        Uses MediaPipe blendshape scores to determine:
+        - Gaze direction: straight, left, right, or down
+        - Whether both eyes are closed
+        - Sustained duration of each state (wall-clock)
+
+        Blendshape convention (per-eye, relative to that eye):
+            eyeLookInLeft  = left eye looking toward nose  → person looking RIGHT
+            eyeLookOutLeft = left eye looking away from nose → person looking LEFT
+            eyeLookInRight = right eye looking toward nose → person looking LEFT
+            eyeLookOutRight= right eye looking away from nose → person looking RIGHT
+
+        Args:
+            blendshapes: list of mediapipe blendshape categories for one face
+
+        Returns:
+            dict with gaze_direction, gaze_distracted, eyes_both_closed,
+                 gaze_away_seconds, eyes_closed_seconds
+        """
+        now = time.time()
+
+        # Build a quick lookup: category_name → score
+        bs = {b.category_name: b.score for b in blendshapes}
+
+        # --- Gaze direction ---
+        look_left = (
+            bs.get("eyeLookOutLeft", 0) + bs.get("eyeLookInRight", 0)
+        ) / 2
+        look_right = (
+            bs.get("eyeLookInLeft", 0) + bs.get("eyeLookOutRight", 0)
+        ) / 2
+        look_down = (
+            bs.get("eyeLookDownLeft", 0) + bs.get("eyeLookDownRight", 0)
+        ) / 2
+
+        gaze_direction = "straight"
+        if look_down > self.GAZE_THRESHOLD and look_down >= max(look_left, look_right):
+            gaze_direction = "down"
+        elif look_left > self.GAZE_THRESHOLD and look_left >= look_right:
+            gaze_direction = "left"
+        elif look_right > self.GAZE_THRESHOLD:
+            gaze_direction = "right"
+
+        # --- Eyes closed (both eyes) ---
+        blink_left = bs.get("eyeBlinkLeft", 0)
+        blink_right = bs.get("eyeBlinkRight", 0)
+        eyes_both_closed = (
+            blink_left > self.BLINK_CLOSED_THRESHOLD
+            and blink_right > self.BLINK_CLOSED_THRESHOLD
+        )
+
+        # --- Temporal tracking: gaze away ---
+        if gaze_direction != "straight":
+            if self._gaze_away_start is None:
+                self._gaze_away_start = now
+            gaze_away_seconds = now - self._gaze_away_start
+        else:
+            self._gaze_away_start = None
+            gaze_away_seconds = 0.0
+
+        gaze_distracted = gaze_away_seconds >= self.GAZE_DISTRACTION_SECONDS
+
+        # --- Temporal tracking: eyes closed ---
+        if eyes_both_closed:
+            if self._eyes_closed_start is None:
+                self._eyes_closed_start = now
+            eyes_closed_seconds = now - self._eyes_closed_start
+        else:
+            self._eyes_closed_start = None
+            eyes_closed_seconds = 0.0
+
+        eyes_closed_impaired = eyes_closed_seconds >= self.EYES_CLOSED_IMPAIRED_SECONDS
+
+        self._last_gaze_direction = gaze_direction
+
+        return {
+            "gaze_direction": gaze_direction,
+            "gaze_distracted": gaze_distracted,
+            "gaze_away_seconds": round(gaze_away_seconds, 2),
+            "eyes_both_closed": eyes_both_closed,
+            "eyes_closed_impaired": eyes_closed_impaired,
+            "eyes_closed_seconds": round(eyes_closed_seconds, 2),
+            "look_left": round(look_left, 3),
+            "look_right": round(look_right, 3),
+            "look_down": round(look_down, 3),
+            "blink_left": round(blink_left, 3),
+            "blink_right": round(blink_right, 3),
+        }
 
     def detect_intoxication(self, left_ear, right_ear):
         """Detect potential intoxication indicators"""
@@ -1848,7 +2319,7 @@ class FaceAnalyzer:
         detection_data = None
 
         if results.face_landmarks:
-            for face_landmarks in results.face_landmarks:
+            for face_idx, face_landmarks in enumerate(results.face_landmarks):
                 # Get face bounding box
                 x_coords = [landmark.x for landmark in face_landmarks]
                 y_coords = [landmark.y for landmark in face_landmarks]
@@ -1878,6 +2349,14 @@ class FaceAnalyzer:
                 # Detect intoxication
                 intox_data = self.detect_intoxication(left_ear, right_ear)
 
+                # Gaze direction + eyes-closed analysis from blendshapes
+                gaze_data = None
+                if (
+                    results.face_blendshapes
+                    and face_idx < len(results.face_blendshapes)
+                ):
+                    gaze_data = self.analyze_gaze(results.face_blendshapes[face_idx])
+
                 # Extract face crop for upload (with padding)
                 padding = 20
                 crop_x_min = max(0, x_min - padding)
@@ -1900,6 +2379,7 @@ class FaceAnalyzer:
                     "left_eye_ear": left_ear,
                     "right_eye_state": right_eye_state,
                     "right_eye_ear": right_ear,
+                    "gaze_data": gaze_data,
                 }
 
                 # Optimized text rendering - combine multiple labels into fewer calls
@@ -1917,9 +2397,44 @@ class FaceAnalyzer:
                     1,
                 )
 
+                # Show gaze direction above the eye info
+                if gaze_data:
+                    gaze_dir = gaze_data["gaze_direction"].upper()
+                    if gaze_data["eyes_closed_impaired"]:
+                        gaze_label = f"EYES CLOSED ({gaze_data['eyes_closed_seconds']:.1f}s) - IMPAIRED"
+                        gaze_color = COLOR_RED
+                    elif gaze_data["gaze_distracted"]:
+                        gaze_label = f"LOOKING {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s) - DISTRACTED"
+                        gaze_color = COLOR_RED
+                    elif gaze_data["eyes_both_closed"]:
+                        gaze_label = f"EYES CLOSED ({gaze_data['eyes_closed_seconds']:.1f}s)"
+                        gaze_color = COLOR_ORANGE
+                    elif gaze_dir != "STRAIGHT":
+                        gaze_label = f"Gaze: {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s)"
+                        gaze_color = COLOR_ORANGE
+                    else:
+                        gaze_label = f"Gaze: {gaze_dir}"
+                        gaze_color = COLOR_GREEN
+
+                    cv2.putText(
+                        frame,
+                        gaze_label,
+                        (x_min, y_offset - 16),
+                        FONT_FAST,
+                        0.9,
+                        gaze_color,
+                        1,
+                    )
+
                 # Determine status and build warning message efficiently
                 y_offset = y_max + 20
-                if intox_data["score"] >= 4:
+                if gaze_data and gaze_data["eyes_closed_impaired"]:
+                    status = "IMPAIRED - EYES CLOSED"
+                    color = COLOR_RED
+                elif gaze_data and gaze_data["gaze_distracted"]:
+                    status = "DISTRACTED - LOOKING AWAY"
+                    color = COLOR_RED
+                elif intox_data["score"] >= 4:
                     status = "HIGH RISK - INTOXICATED"
                     color = COLOR_RED
                 elif intox_data["score"] >= 2:
@@ -2116,7 +2631,7 @@ class MusicRecognizer:
         return self.enabled
 
 
-def draw_distraction_warning(frame, distraction_data):
+def draw_distraction_warning(frame, distraction_data, gaze_data=None):
     """Draw prominent distraction warning banner on frame (optimized)
 
     Performance optimizations:
@@ -2129,11 +2644,37 @@ def draw_distraction_warning(frame, distraction_data):
 
     h, w = frame.shape[:2]
 
-    if distraction_data["phone_detected"]:
-        # Red banner for phone usage - use direct numpy array assignment (faster than cv2.rectangle)
+    # Priority order: eyes-closed impairment > gaze distraction > phone > drinking
+    if gaze_data and gaze_data.get("eyes_closed_impaired"):
+        secs = gaze_data["eyes_closed_seconds"]
         frame[h - 80 : h, 0:w] = COLOR_DARK_RED
+        cv2.putText(
+            frame,
+            f"IMPAIRED: EYES CLOSED ({secs:.1f}s)",
+            (w // 2 - 280, h - 45),
+            FONT_FAST,
+            1.4,
+            COLOR_WHITE,
+            1,
+        )
 
-        # Combined warning text - use faster font and reduced thickness
+    elif gaze_data and gaze_data.get("gaze_distracted"):
+        direction = gaze_data["gaze_direction"].upper()
+        secs = gaze_data["gaze_away_seconds"]
+        frame[h - 80 : h, 0:w] = COLOR_DARK_RED
+        cv2.putText(
+            frame,
+            f"DISTRACTED: LOOKING {direction} ({secs:.1f}s)",
+            (w // 2 - 280, h - 45),
+            FONT_FAST,
+            1.4,
+            COLOR_WHITE,
+            1,
+        )
+
+    elif distraction_data["phone_detected"]:
+        # Red banner for phone usage
+        frame[h - 80 : h, 0:w] = COLOR_DARK_RED
         cv2.putText(
             frame,
             "WARNING: PHONE",
@@ -2145,9 +2686,8 @@ def draw_distraction_warning(frame, distraction_data):
         )
 
     elif distraction_data["drinking_detected"]:
-        # Orange banner for drinking - use direct numpy array assignment
+        # Orange banner for drinking
         frame[h - 60 : h, 0:w] = COLOR_DARK_ORANGE
-
         cv2.putText(
             frame,
             "WARNING: DRINKING",
@@ -2343,6 +2883,7 @@ def main():
             "bottle_bbox": None,
             "phone_frames": 0,
             "drinking_frames": 0,
+            "hand_at_ear": False,
         }
 
         # --- Camera-dependent processing ---
@@ -2356,15 +2897,18 @@ def main():
             frame_count += 1
             fps_frame_count += 1
 
-            # YOLO distraction detection (async — no-op when custom models loaded)
-            distraction_data = distraction_detector.detect(frame)
-
-            # Face detection + annotation drawing (MediaPipe)
+            # Face detection + annotation drawing (MediaPipe) — run FIRST so
+            # face_bbox is available for hand-at-ear detection in YOLO pass
             t_mp = time.time()
             processed_frame, detection_data = analyzer.process_frame(
                 frame, timestamp_ms
             )
             mediapipe_times.append(time.time() - t_mp)
+
+            # YOLO distraction detection (async — no-op when custom models loaded)
+            # Pass face_bbox so hand-at-ear can locate ear regions
+            face_bbox = detection_data.get("face_bbox") if detection_data else None
+            distraction_data = distraction_detector.detect(frame, face_bbox=face_bbox)
 
             # Custom model inference: override distraction_data and intox_data
             if driver_system:
@@ -2400,12 +2944,22 @@ def main():
             else:
                 intox_data = detection_data["intox_data"] if detection_data else None
 
+            # Extract gaze data from this frame (if available)
+            gaze_data = (
+                detection_data.get("gaze_data") if detection_data else None
+            )
+
             # Buzzer alerts
             if intox_data and intox_data["score"] >= 4:
                 buzzer.play_drowsy_alert()
             if distraction_data["phone_detected"]:
                 buzzer.play_distraction_alert()
+            if gaze_data and gaze_data["eyes_closed_impaired"]:
+                buzzer.play_drowsy_alert()
+            if gaze_data and gaze_data["gaze_distracted"]:
+                buzzer.play_distraction_alert()
         else:
+            gaze_data = None
             # Camera off — throttle loop to ~10 Hz
             time.sleep(0.1)
 
@@ -2414,6 +2968,12 @@ def main():
             # Custom models provide richer driver state
             driver_status = awareness["driver_state"]
             intox_score = awareness["intoxication_score"]
+        elif gaze_data and gaze_data["eyes_closed_impaired"]:
+            driver_status = "impaired"
+            intox_score = intox_data["score"] if intox_data else 0
+        elif gaze_data and gaze_data["gaze_distracted"]:
+            driver_status = "distracted_gaze"
+            intox_score = intox_data["score"] if intox_data else 0
         elif distraction_data["phone_detected"]:
             driver_status = "distracted_phone"
             intox_score = intox_data["score"] if intox_data else 0
@@ -2499,7 +3059,7 @@ def main():
             t_draw = time.time()
             processed_frame = distraction_detector.draw_detections(processed_frame)
             processed_frame = draw_distraction_warning(
-                processed_frame, distraction_data
+                processed_frame, distraction_data, gaze_data=gaze_data
             )
             draw_times.append(time.time() - t_draw)
 

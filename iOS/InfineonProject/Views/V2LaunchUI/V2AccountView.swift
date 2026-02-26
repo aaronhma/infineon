@@ -37,6 +37,7 @@ struct V2AccountView: View {
     case appearance
     case notifications
     case licensing
+    case license(name: String, creator: String, license: String)
   }
 
   private func apacheLicense(_ author: String = "Aaron Ma") -> String {
@@ -427,6 +428,29 @@ struct V2AccountView: View {
           NotificationSettingsView()
         case .appearance:
           AppearanceSettingsView()
+        case .license(let name, let creator, let license):
+          List {
+            Section {
+              VStack(alignment: .leading) {
+                Text(name)
+                  .bold()
+                  .font(.title2)
+                  .titleVisibilityAnchor()
+
+                Text(creator)
+                  .foregroundStyle(.secondary)
+              }
+            }
+
+            Section("\(license) License") {
+              if license == "MIT" {
+                Text(mitLicense(creator))
+              } else {
+                Text(apacheLicense(creator))
+              }
+            }
+          }
+          .scrollAwareTitle(name)
         case .licensing:
           List {
             Section("License") {
@@ -447,109 +471,52 @@ struct V2AccountView: View {
               }
               .foregroundStyle(.primary)
 
-              NavigationLink {
-                ScrollView {
-                  Text(apacheLicense())
-                    .padding(.horizontal)
-                }
-                .navigationTitle("Copyright Statement")
-              } label: {
-                Text("Copyright Statement")
-              }
+              licenseComponentView(name: "Copyright", creator: "Aaron Ma", license: "Apache-2")
             }
 
             Section("AaronUI") {
-              Text(
-                "© 2026 Aaron Ma and the AaronUI internal project authors. This app contains code with restricted licensing."
-              )
-
-              NavigationLink {
-                ScrollView {
-                  Text(apacheLicense())
-                    .padding(.horizontal)
-                }
-                .navigationTitle("AaronUI License")
-              } label: {
-                Text("AaronUI License")
-              }
+              licenseComponentView(name: "AaronUI", creator: "Aaron Ma", license: "Apache-2")
             }
 
-            Section("Open Source Components Used") {
-              NavigationLink {
-                ScrollView {
-                  Text(mitLicense("Supabase"))
-                    .padding(.horizontal)
-                }
-                .navigationTitle("Supabase")
-              } label: {
-                Text("Supabase")
-              }
-
-              NavigationLink {
-                ScrollView {
-                  Text(apacheLicense("Apple, Inc."))
-                    .padding(.horizontal)
-                }
-                .navigationTitle("swift-asn1")
-              } label: {
-                Text("swift-asn1")
-              }
-
-              NavigationLink {
-                ScrollView {
-                  Text(mitLicense("Point-Free"))
-                    .padding(.horizontal)
-                }
-                .navigationTitle("swift-clocks")
-              } label: {
-                Text("swift-clocks")
-              }
-
-              NavigationLink {
-                ScrollView {
-                  Text(mitLicense("Point-Free"))
-                    .padding(.horizontal)
-                }
-                .navigationTitle("swift-concurrency-extras")
-              } label: {
-                Text("swift-concurrency-extras")
-              }
-
-              NavigationLink {
-                ScrollView {
-                  Text(apacheLicense("Apple, Inc."))
-                    .padding(.horizontal)
-                }
-                .navigationTitle("swift-crypto")
-              } label: {
-                Text("swift-crypto")
-              }
-
-              NavigationLink {
-                ScrollView {
-                  Text(apacheLicense("Apple, Inc."))
-                    .padding(.horizontal)
-                }
-                .navigationTitle("swift-http-types")
-              } label: {
-                Text("swift-http-types")
-              }
-
-              NavigationLink {
-                ScrollView {
-                  Text(mitLicense("Point-Free, Inc."))
-                    .padding(.horizontal)
-                }
-                .navigationTitle("xctest-dynamic-overlay")
-              } label: {
-                Text("xctest-dynamic-overlay")
-              }
+            Section("Open Source Software") {
+              licenseComponentView(name: "Supabase", creator: "Supabase", license: "MIT")
+              licenseComponentView(name: "swift-asn1", creator: "Apple, Inc.", license: "Apache-2")
+              licenseComponentView(name: "swift-clocks", creator: "Point-Free", license: "MIT")
+              licenseComponentView(
+                name: "swift-concurrency-extras", creator: "Point-Free", license: "MIT")
+              licenseComponentView(
+                name: "swift-crypto", creator: "Apple, Inc.", license: "Apache-2")
+              licenseComponentView(
+                name: "swift-http-types", creator: "Apple, Inc.", license: "Apache-2")
+              licenseComponentView(
+                name: "xctest-dynamic-overlay", creator: "Point-Free, Inc.", license: "MIT")
             }
           }
           .navigationTitle("Licensing")
           .navigationBarTitleDisplayMode(.inline)
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private func licenseComponentView(name: String, creator: String, license: String) -> some View {
+    NavigationLink(value: SettingsOptions.license(name: name, creator: creator, license: license)) {
+      HStack {
+        VStack(alignment: .leading) {
+          Text(name)
+            .bold()
+
+          Text(creator)
+            .foregroundStyle(.secondary)
+        }
+
+        Spacer()
+
+        Text(license)
+          .foregroundStyle(.secondary)
+      }
+      .lineLimit(1)
     }
   }
 
@@ -967,7 +934,12 @@ struct NotificationSettingsView: View {
 
 #Preview {
   @Previewable @State var appData = V2AppData()
+  @Previewable @Namespace var namespace
 
-  V2AccountView()
+  Text("Sheet will open")
+    .sheet(isPresented: .constant(true)) {
+      V2AccountView()
+        .navigationTransition(.zoom(sourceID: "settingsSheet", in: namespace))
+    }
     .environment(appData)
 }
