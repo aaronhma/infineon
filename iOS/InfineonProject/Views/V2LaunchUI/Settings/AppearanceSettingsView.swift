@@ -50,14 +50,20 @@ struct AppearanceSettingsView: View {
   @AppStorage("_appTheme") private var appTheme = AppTheme.system
 
   var body: some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 50) {
+    List {
+      Section {
         HStack {
           ForEach(AppTheme.allCases, id: \.self) {
             appearanceButton($0)
           }
         }
+      }
+      .listRowInsets(EdgeInsets())
+      .listRowBackground(Color.clear)
+      .listRowSeparator(.hidden)
+      .listSectionSeparator(.hidden)
 
+      Section {
         Picker(selection: .constant("English")) {
           Text("English")
             .tag("English")
@@ -70,10 +76,7 @@ struct AppearanceSettingsView: View {
             )
           }
         }
-        .pickerStyle(.navigationLink)
-        .modifier(BackgroundShadowModifier())
       }
-      .padding(.horizontal)
     }
     .navigationTitle("Appearance")
   }
@@ -85,7 +88,13 @@ struct AppearanceSettingsView: View {
     } label: {
       VStack {
         RoundedRectangle(cornerRadius: 16)
-          .fill(appTheme == theme ? AnyShapeStyle(.secondary) : AnyShapeStyle(.ultraThinMaterial))
+          .fill(
+            appTheme == theme
+              ? AnyShapeStyle(.ultraThinMaterial)
+              : AnyShapeStyle(
+                .background
+              )
+          )
           .frame(height: 120)
           .frame(maxWidth: .infinity)
           .overlay {
@@ -98,12 +107,21 @@ struct AppearanceSettingsView: View {
           .foregroundStyle(Color.primary)
       }
     }
+    .buttonStyle(.plain)
     .modifier(BackgroundShadowModifier())
   }
 }
 
-#Preview {
+#Preview("Light Mode") {
   NavigationStack {
     AppearanceSettingsView()
+      .preferredColorScheme(.light)
+  }
+}
+
+#Preview("Dark Mode") {
+  NavigationStack {
+    AppearanceSettingsView()
+      .preferredColorScheme(.dark)
   }
 }

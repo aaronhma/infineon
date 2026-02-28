@@ -31,6 +31,7 @@ struct FilterToggleButtonSheetView: View {
         } label: {
           HStack {
             Text(filter)
+              .foregroundStyle(Color.primary)
 
             Spacer()
 
@@ -40,10 +41,8 @@ struct FilterToggleButtonSheetView: View {
               .foregroundStyle(.tint)
               .opacity(selectedFilters.contains(filter) ? 1 : 0)
           }
-          //                    .padding(.horizontal)
-          .contentShape(Rectangle())
+          .padding(.horizontal)
         }
-        .buttonStyle(.plain)
       }
       .navigationTitle("Filters")
       .toolbar {
@@ -62,6 +61,8 @@ struct FilterToggleButtonView<FilterOptions: View>: View {
   let filteredByText: String
 
   @ViewBuilder var filterOptions: FilterOptions
+
+  @Namespace private var namespace
 
   @State private var showingFilterSheet = false
 
@@ -85,9 +86,11 @@ struct FilterToggleButtonView<FilterOptions: View>: View {
         }
         .padding(.trailing, 4)
         .frame(maxWidth: 150)
+        .stableMatchedTransition(id: "filterOptionsSheet", in: namespace)
       }
       .sheet(isPresented: $showingFilterSheet) {
         filterOptions
+          .navigationTransition(.zoom(sourceID: "filterOptionsSheet", in: namespace))
       }
     }
   }
