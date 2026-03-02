@@ -2973,6 +2973,20 @@ def main():
         )
         music_recognizer.start()
 
+    # Optional gyro reader (serial acc/gyro); no hard dependency
+    gyro_reader = None
+    last_effective_risk = None
+    GYRO_HARSH_THRESHOLD_DEG_S = 50.0
+    GYRO_BUMP = 1
+    try:
+        from components.gyroData import GyroReader
+        _gr = GyroReader()
+        _gr.start(print_from_loop=False)
+        gyro_reader = _gr
+        print("Gyro reader started (serial)")
+    except Exception as e:
+        print(f"Gyro reader unavailable: {e}")
+
     frame_count = 0
 
     # FPS tracking
@@ -3110,6 +3124,16 @@ def main():
             driver_status = "unknown"
             intox_score = 0
 
+        # Gyro-weighted risk (optional): bump score when gyro indicates harsh motion
+        effective_risk = intox_score
+        if gyro_reader is not None:
+            latest = gyro_reader.get_latest()
+            if latest is not None:
+                gyro_mag = latest["gyro_mag"]
+                gyro_bump = GYRO_BUMP if gyro_mag >= GYRO_HARSH_THRESHOLD_DEG_S else 0
+                effective_risk = min(6, intox_score + gyro_bump)
+                last_effective_risk = effective_risk
+
         # --- Always: realtime + trip + buzzer ---
         supabase_uploader.update_vehicle_realtime(
             speed_mph=driving_sim.get_speed(),
@@ -3117,7 +3141,7 @@ def main():
             compass_direction=driving_sim.get_compass_direction(),
             is_speeding=driving_sim.is_speeding(),
             driver_status=driver_status,
-            intoxication_score=intox_score,
+            intoxication_score=effective_risk,
             latitude=driving_sim.get_latitude(),
             longitude=driving_sim.get_longitude(),
             satellites=driving_sim.get_satellites(),
@@ -3132,7 +3156,7 @@ def main():
         is_unstable_eyes = intox_data["unstable_eyes"] if intox_data else False
         supabase_uploader.update_trip_stats(
             speed=driving_sim.get_speed(),
-            intox_score=intox_score,
+            intox_score=effective_risk,
             is_speeding=driving_sim.is_speeding(),
             is_drowsy=is_drowsy,
             is_excessive_blinking=is_excessive_blinking,
@@ -3219,7 +3243,7 @@ def main():
                     else "YOLO: OFF"
                 )
 
-                print(
+                stats_lines = (
                     f"\n[STATS] Loop: {loop_fps:.1f} FPS "
                     f"({avg_total*1000:.1f}ms/frame) | "
                     f"Camera: {capture_fps:.1f} FPS | "
@@ -3228,6 +3252,14 @@ def main():
                     f"Draw: {avg_draw*1000:.1f}ms | "
                     f"Resolution: {width}x{height}\n"
                 )
+                if gyro_reader is not None:
+                    gyro_latest = gyro_reader.get_latest()
+                    if gyro_latest is not None:
+                        gyro_part = f"        Gyro: {gyro_latest['gyro_mag']:.2f} deg/s"
+                        if last_effective_risk is not None:
+                            gyro_part += f" | risk+gyro: {last_effective_risk}"
+                        stats_lines += gyro_part + "\n"
+                print(stats_lines)
 
                 if distraction_detector:
                     distraction_detector.reset_yolo_stats()
@@ -3274,6 +3306,8 @@ def main():
         dashcam.stop()
     if streamer:
         streamer.stop()
+    if gyro_reader is not None:
+        gyro_reader.stop()
     if music_recognizer:
         music_recognizer.stop()
     if distraction_detector:
