@@ -5,9 +5,12 @@
 //  Created by Aaron Ma on 2/6/26.
 //
 
+import AaronUI
 import SwiftUI
 
 struct ShazamHistoryView: View {
+  @Environment(\.dismiss) private var dismiss
+
   let vehicleId: String
 
   @State private var musicDetections: [MusicDetection] = []
@@ -15,58 +18,67 @@ struct ShazamHistoryView: View {
   @State private var errorMessage: String?
 
   var body: some View {
-    Group {
-      if isLoading {
-        ProgressView("Loading music history...")
-      } else if let errorMessage {
-        ContentUnavailableView {
-          Label("Failed to Load", systemImage: "exclamationmark.triangle")
-        } description: {
-          Text(errorMessage)
-        } actions: {
-          Button("Retry") {
-            Task {
-              await loadMusicDetections()
-            }
-          }
-          .buttonStyle(.borderedProminent)
-        }
-      } else {
-        List {
-          Section {
-            HStack {
-              Image(systemName: "shazam.logo.fill")
-                .foregroundStyle(.blue.gradient)
-
-              VStack(alignment: .leading) {
-                Text("Shazam has detected \(musicDetections.count) songs on this vehicle.")
+    NavigationStack {
+      Group {
+        if isLoading {
+          ProgressView("Loading music history...")
+        } else if let errorMessage {
+          ContentUnavailableView {
+            Label("Failed to Load", systemImage: "exclamationmark.triangle")
+          } description: {
+            Text(errorMessage)
+          } actions: {
+            Button("Retry") {
+              Task {
+                await loadMusicDetections()
               }
             }
+            .buttonStyle(.borderedProminent)
           }
+        } else {
+          List {
+            Section {
+              HStack {
+                Image(systemName: "shazam.logo.fill")
+                  .foregroundStyle(.blue.gradient)
 
-          Section {
-            if musicDetections.isEmpty {
-              ContentUnavailableView {
-                Label("No Songs Detected", systemImage: "music.note")
-              } description: {
-                Text("Songs detected by Shazam will appear here")
+                VStack(alignment: .leading) {
+                  Text("Shazam has detected \(musicDetections.count) songs on this vehicle.")
+                }
               }
             }
 
-            ForEach(musicDetections) { detection in
-              MusicDetectionRow(detection: detection)
+            Section {
+              if musicDetections.isEmpty {
+                ContentUnavailableView {
+                  Label("No Songs Detected", systemImage: "music.note")
+                } description: {
+                  Text("Songs detected by Shazam will appear here")
+                }
+              }
+
+              ForEach(musicDetections) { detection in
+                MusicDetectionRow(detection: detection)
+              }
             }
           }
         }
       }
-    }
-    .navigationTitle("Shazam History")
-    .navigationBarTitleDisplayMode(.inline)
-    .task {
-      await loadMusicDetections()
-    }
-    .refreshable {
-      await loadMusicDetections()
+      .navigationTitle("Shazam History")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .cancellationAction) {
+          CloseButton {
+            dismiss()
+          }
+        }
+      }
+      .task {
+        await loadMusicDetections()
+      }
+      .refreshable {
+        await loadMusicDetections()
+      }
     }
   }
 

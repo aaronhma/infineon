@@ -33,168 +33,176 @@ struct VehicleSettingsView: View {
   }
 
   var body: some View {
-    List {
-      Section {
-        LabeledContent("Vehicle ID") {
-          Text(vehicle.id)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-        }
-      } header: {
-        Text("Vehicle ID")
-      } footer: {
-        Text("This is your hardware's unique identifier.")
-      }
-
-      Section {
-        LabeledContent("Invite Code") {
-          Text(vehicle.inviteCode)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-        }
-      }
-
-      if isOwner {
-        Section("Vehicle Name") {
-          TextField("Vehicle name", text: $vehicleName)
-        }
-
-        Section("Description") {
-          TextField("Vehicle description", text: $vehicleDescription)
-        }
-
-        if let errorMessage {
-          Section {
-            Text(errorMessage)
-              .foregroundStyle(.red)
-          }
-        }
-      } else {
-        Section("Vehicle Info") {
-          LabeledContent("Name") {
-            Text(vehicle.name ?? "Unnamed")
+    NavigationStack {
+      List {
+        Section {
+          LabeledContent("Vehicle ID") {
+            Text(vehicle.id)
+              .font(.caption)
               .foregroundStyle(.secondary)
+              .textSelection(.enabled)
           }
-
-          LabeledContent("Description") {
-            Text(vehicle.description ?? "No description")
-              .foregroundStyle(.secondary)
-          }
+        } header: {
+          Text("Vehicle ID")
+        } footer: {
+          Text("This is your hardware's unique identifier.")
         }
 
         Section {
-          Text("Only the vehicle owner can edit these settings.")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
+          LabeledContent("Invite Code") {
+            Text(vehicle.inviteCode)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .textSelection(.enabled)
+          }
         }
-      }
 
-      Section("Note") {
-        Text("These changes will take effect when the device restarts.")
-      }
+        if isOwner {
+          Section("Vehicle Name") {
+            TextField("Vehicle name", text: $vehicleName)
+          }
 
-      Section("Hardware") {
-        featureToggle(
-          "Camera",
-          icon: "camera.fill",
-          slashIcon: "camera.slash.fill",
-          description: "Capture video from the vehicle camera",
-          color: .blue,
-          isOn: $enableCamera
-        )
+          Section("Description") {
+            TextField("Vehicle description", text: $vehicleDescription)
+          }
 
-        featureToggle(
-          "Microphone",
-          icon: "mic.fill",
-          slashIcon: "mic.slash.fill",
-          description: "Record audio for music recognition",
-          color: .orange,
-          isOn: $enableMicrophone
-        )
-      }
-
-      Section {
-        featureToggle(
-          "Live Camera Stream",
-          icon: "video.fill",
-          slashIcon: "video.slash.fill",
-          description: "Stream live video to the app",
-          color: .green,
-          isOn: $enableStream
-        )
-
-        featureToggle(
-          "AI Detection",
-          icon: "eye.fill",
-          slashIcon: "eye.slash.fill",
-          description: "Detect phone usage and drinking with YOLO",
-          color: .purple,
-          isOn: $enableYolo
-        )
-
-        featureToggle(
-          "Music Recognition",
-          icon: "shazam.logo.fill",
-          slashIcon: "shazam.logo.fill",
-          description: "Identify songs playing in the vehicle",
-          color: .cyan,
-          isOn: $enableShazam
-        )
-
-        featureToggle(
-          "Dashcam",
-          icon: "record.circle",
-          slashIcon: "record.circle.fill",
-          description: "Record annotated dashcam video on device",
-          color: .red,
-          isOn: $enableDashcam
-        )
-      } header: {
-        Text("Features")
-      }
-    }
-    .navigationTitle("Vehicle Settings")
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      if isOwner {
-        ToolbarItem(placement: .confirmationAction) {
-          if isSaving {
-            ProgressView()
-          } else {
-            Button("Save") {
-              Task {
-                await saveVehicleSettings()
-              }
+          if let errorMessage {
+            Section {
+              Text(errorMessage)
+                .foregroundStyle(.red)
             }
-            .disabled(vehicleName.isEmpty)
+          }
+        } else {
+          Section("Vehicle Info") {
+            LabeledContent("Name") {
+              Text(vehicle.name ?? "Unnamed")
+                .foregroundStyle(.secondary)
+            }
+
+            LabeledContent("Description") {
+              Text(vehicle.description ?? "No description")
+                .foregroundStyle(.secondary)
+            }
+          }
+
+          Section {
+            Text("Only the vehicle owner can edit these settings.")
+              .font(.footnote)
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        Section("Note") {
+          Text("These changes will take effect when the device restarts.")
+        }
+
+        Section("Hardware") {
+          featureToggle(
+            "Camera",
+            icon: "camera.fill",
+            slashIcon: "camera.slash.fill",
+            description: "Capture video from the vehicle camera",
+            color: .blue,
+            isOn: $enableCamera
+          )
+
+          featureToggle(
+            "Microphone",
+            icon: "mic.fill",
+            slashIcon: "mic.slash.fill",
+            description: "Record audio for music recognition",
+            color: .orange,
+            isOn: $enableMicrophone
+          )
+        }
+
+        Section {
+          featureToggle(
+            "Live Camera Stream",
+            icon: "video.fill",
+            slashIcon: "video.slash.fill",
+            description: "Stream live video to the app",
+            color: .green,
+            isOn: $enableStream
+          )
+
+          featureToggle(
+            "AI Detection",
+            icon: "eye.fill",
+            slashIcon: "eye.slash.fill",
+            description: "Detect phone usage and drinking with YOLO",
+            color: .purple,
+            isOn: $enableYolo
+          )
+
+          featureToggle(
+            "Music Recognition",
+            icon: "shazam.logo.fill",
+            slashIcon: "shazam.logo.fill",
+            description: "Identify songs playing in the vehicle",
+            color: .cyan,
+            isOn: $enableShazam
+          )
+
+          featureToggle(
+            "Dashcam",
+            icon: "record.circle",
+            slashIcon: "record.circle.fill",
+            description: "Record annotated dashcam video on device",
+            color: .red,
+            isOn: $enableDashcam
+          )
+        } header: {
+          Text("Features")
+        }
+      }
+      .navigationTitle("Vehicle Settings")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          CloseButton {
+            dismiss()
+          }
+        }
+
+        if isOwner {
+          ToolbarItem(placement: .topBarTrailing) {
+            if isSaving {
+              ProgressView()
+            } else {
+              Button("Save") {
+                Task {
+                  await saveVehicleSettings()
+                }
+              }
+              .disabled(vehicleName.isEmpty)
+            }
           }
         }
       }
-    }
-    .onAppear {
-      vehicleName = vehicle.name ?? ""
-      vehicleDescription = vehicle.description ?? ""
-      enableYolo = vehicle.enableYolo
-      enableStream = vehicle.enableStream
-      enableShazam = vehicle.enableShazam
-      enableMicrophone = vehicle.enableMicrophone
-      enableCamera = vehicle.enableCamera
-      enableDashcam = vehicle.enableDashcam
-    }
-    .onDisappear {
-      hideKeyboard()
-    }
-    .overlay {
-      if isSaving {
-        Color.black.opacity(0.3)
-          .ignoresSafeArea()
-          .overlay {
-            ProgressView("Saving...")
-              .padding()
-              .background(.regularMaterial, in: .rect(cornerRadius: 12))
-          }
+      .onAppear {
+        vehicleName = vehicle.name ?? ""
+        vehicleDescription = vehicle.description ?? ""
+        enableYolo = vehicle.enableYolo
+        enableStream = vehicle.enableStream
+        enableShazam = vehicle.enableShazam
+        enableMicrophone = vehicle.enableMicrophone
+        enableCamera = vehicle.enableCamera
+        enableDashcam = vehicle.enableDashcam
+      }
+      .onDisappear {
+        hideKeyboard()
+      }
+      .overlay {
+        if isSaving {
+          Color.black.opacity(0.3)
+            .ignoresSafeArea()
+            .overlay {
+              ProgressView("Saving...")
+                .padding()
+                .background(.regularMaterial, in: .rect(cornerRadius: 12))
+            }
+        }
       }
     }
   }

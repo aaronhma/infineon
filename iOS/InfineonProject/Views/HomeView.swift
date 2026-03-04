@@ -9,6 +9,8 @@ import AaronUI
 import SwiftUI
 
 struct HomeView: View {
+  @Environment(\.dismiss) private var dismiss
+
   var vehicle: V2Profile
 
   @State private var trips: [Trip] = []
@@ -32,67 +34,76 @@ struct HomeView: View {
   }
 
   var body: some View {
-    Group {
-      if isLoading {
-        ProgressView("Loading trips...")
-      } else if let errorMessage {
-        ContentUnavailableView {
-          Label("Error", systemImage: "exclamationmark.triangle")
-        } description: {
-          Text(errorMessage)
-        } actions: {
-          Button("Retry") {
-            Task {
-              await loadTrips()
+    NavigationStack {
+      Group {
+        if isLoading {
+          ProgressView("Loading trips...")
+        } else if let errorMessage {
+          ContentUnavailableView {
+            Label("Error", systemImage: "exclamationmark.triangle")
+          } description: {
+            Text(errorMessage)
+          } actions: {
+            Button("Retry") {
+              Task {
+                await loadTrips()
+              }
             }
           }
+        } else if trips.isEmpty {
+          ContentUnavailableView {
+            Label("No Trips", systemImage: "car.side")
+          } description: {
+            Text("No trips recorded yet for this vehicle.")
+          }
+        } else {
+          tripsList
         }
-      } else if trips.isEmpty {
-        ContentUnavailableView {
-          Label("No Trips", systemImage: "car.side")
-        } description: {
-          Text("No trips recorded yet for this vehicle.")
+      }
+      .navigationTitle("Trips")
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          CloseButton {
+            dismiss()
+          }
         }
-      } else {
-        tripsList
       }
-    }
-    .navigationTitle("Trips")
-    .navigationDestination(for: String.self) { destination in
-      switch destination {
-      case Constants.HomeRouteAnnouncer.trips.rawValue:
-        allTripsView
-      default:
-        Text("Unknown destination: \(destination)")
+      .navigationDestination(for: String.self) { destination in
+        switch destination {
+        case Constants.HomeRouteAnnouncer.trips.rawValue:
+          allTripsView
+        default:
+          Text("Unknown destination: \(destination)")
+        }
       }
-    }
-    .navigationDestination(for: Trip.self) { trip in
-      TripDetailView(trip: trip, namespace: namespace)
-    }
-    .navigationDestination(for: TripEventDestination.self) { destination in
-      switch destination {
-      case .drowsinessEvents(let trip):
-        EventsListView(trip: trip, eventType: .drowsiness)
-      case .excessiveBlinkingEvents(let trip):
-        EventsListView(trip: trip, eventType: .excessiveBlinking)
-      case .unstableEyesEvents(let trip):
-        EventsListView(trip: trip, eventType: .unstableEyes)
-      case .speedingEvents(let trip):
-        EventsListView(trip: trip, eventType: .speeding)
-      case .phoneDistractionEvents(let trip):
-        EventsListView(trip: trip, eventType: .phoneDistraction)
-      case .drinkingEvents(let trip):
-        EventsListView(trip: trip, eventType: .drinking)
+      .navigationDestination(for: Trip.self) { trip in
+        TripDetailView(trip: trip, namespace: namespace)
       }
-    }
-    .navigationDestination(for: TripEventDetail.self) { detail in
-      EventDetailView(event: detail.event, eventType: detail.eventType)
-    }
-    .refreshable {
-      await loadTrips()
-    }
-    .task {
-      await loadTrips()
+      .navigationDestination(for: TripEventDestination.self) { destination in
+        switch destination {
+        case .drowsinessEvents(let trip):
+          EventsListView(trip: trip, eventType: .drowsiness)
+        case .excessiveBlinkingEvents(let trip):
+          EventsListView(trip: trip, eventType: .excessiveBlinking)
+        case .unstableEyesEvents(let trip):
+          EventsListView(trip: trip, eventType: .unstableEyes)
+        case .speedingEvents(let trip):
+          EventsListView(trip: trip, eventType: .speeding)
+        case .phoneDistractionEvents(let trip):
+          EventsListView(trip: trip, eventType: .phoneDistraction)
+        case .drinkingEvents(let trip):
+          EventsListView(trip: trip, eventType: .drinking)
+        }
+      }
+      .navigationDestination(for: TripEventDetail.self) { detail in
+        EventDetailView(event: detail.event, eventType: detail.eventType)
+      }
+      .refreshable {
+        await loadTrips()
+      }
+      .task {
+        await loadTrips()
+      }
     }
   }
 

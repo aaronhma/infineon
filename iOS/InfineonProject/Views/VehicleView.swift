@@ -18,7 +18,16 @@ struct VehicleView: View {
 
   @Namespace private var namespace
 
-  @State private var showingUnidentifiedFaces = false
+  @State private var showingUnidentifiedFacesSheet = false
+  @State private var showingFaceDetectionsSheet = false
+  @State private var showingAlertSheet = false
+
+  @State private var showingLiveCameraSheet = false
+  @State private var showingTripsSheet = false
+  @State private var showingShazamHistorySheet = false
+  @State private var showingLiveLocationSheet = false
+  @State private var showingVehicleSettingsSheet = false
+
   @State private var showingVehicleAccessSheet = false
   @State private var showingAccountSheet = false
 
@@ -49,16 +58,6 @@ struct VehicleView: View {
 
   private var scrollDimAmount: Double {
     max(0, min(Double(scrollOffset) / 200.0, 0.5))
-  }
-
-  enum VehicleOptions: Hashable {
-    case faceDetections
-    case liveCamera
-    case alert
-    case trips
-    case shazamHistory
-    case liveLocation
-    case vehicleSettings
   }
 
   var body: some View {
@@ -165,17 +164,19 @@ struct VehicleView: View {
                   .padding(.horizontal, 8)
                   .padding(.bottom, 8)
 
-                  NavigationLink(value: VehicleOptions.shazamHistory) {
-                    AaronButtonView(text: "All Songs") {}
-                      .buttonStyle(.plain)
-                      .stableMatchedTransition(id: VehicleOptions.shazamHistory, in: namespace)
-
-                    //                        SettingsBoxView(
-                    //                          icon: "music.note.list",
-                    //                          color: .purple
-                    //                        )
+                  AaronButtonView(text: "All Songs") {
+                    showingShazamHistorySheet.toggle()
                   }
+                  .contentShape(.capsule)
+                  .buttonStyle(
+                    FluidZoomTransitionStyle(
+                      id: "shazamHistorySheet", namespace: namespace, shape: .capsule,
+                      applyGlass: false)
+                  )
                   .padding()
+                  .onTapGesture {
+                    showingShazamHistorySheet.toggle()
+                  }
                 }
                 .background(Color(.secondarySystemBackground))
                 .clipShape(.rect(cornerRadius: 12))
@@ -189,7 +190,7 @@ struct VehicleView: View {
               // Face Detection Section
               if vehicle.unidentifiedFacesCount > 0 {
                 Button {
-                  showingUnidentifiedFaces = true
+                  showingUnidentifiedFacesSheet.toggle()
                 } label: {
                   Label {
                     VStack(alignment: .leading) {
@@ -198,34 +199,41 @@ struct VehicleView: View {
                       )
                     }
                   } icon: {
-                    Image(systemName: "face.smiling")
-                      .foregroundStyle(.orange)
-                      .stableMatchedTransition(id: "unidentifiedFacesSheet", in: namespace)
+                    SettingsBoxView(
+                      icon: "face.smiling",
+                      color: .orange
+                    )
                   }
                 }
                 .tint(.primary)
                 .contentShape(.rect)
                 .buttonStyle(
                   FluidZoomTransitionStyle(
-                    id: "unidentifiedFacesSheet", namespace: namespace, shape: .rect))
+                    id: "unidentifiedFacesSheet", namespace: namespace, shape: .rect,
+                    applyGlass: false))
               }
 
-              NavigationLink(value: VehicleOptions.faceDetections) {
+              Button {
+                showingFaceDetectionsSheet.toggle()
+              } label: {
                 Label {
-                  VStack(alignment: .leading) {
-                    Text("Face Detections")
-                  }
+                  Text("Face Detections")
                 } icon: {
                   SettingsBoxView(
                     icon: "person.crop.rectangle.stack.fill",
                     color: .blue
                   )
-                  .stableMatchedTransition(id: VehicleOptions.faceDetections, in: namespace)
                 }
               }
               .tint(.primary)
+              .contentShape(.rect)
+              .buttonStyle(
+                FluidZoomTransitionStyle(
+                  id: "faceDetectionsSheet", namespace: namespace, shape: .rect, applyGlass: false))
 
-              NavigationLink(value: VehicleOptions.trips) {
+              Button {
+                showingTripsSheet.toggle()
+              } label: {
                 Label {
                   VStack(alignment: .leading) {
                     Text("Trips")
@@ -235,15 +243,20 @@ struct VehicleView: View {
                     icon: "airplane.up.right",
                     color: .indigo
                   )
-                  .stableMatchedTransition(id: VehicleOptions.trips, in: namespace)
                 }
               }
               .tint(.primary)
+              .contentShape(.rect)
+              .buttonStyle(
+                FluidZoomTransitionStyle(
+                  id: "tripsSheet", namespace: namespace, shape: .rect, applyGlass: false))
 
               // Live Data Section
               if let data = vehicle.realtimeData {
                 Group {
-                  NavigationLink(value: VehicleOptions.liveCamera) {
+                  Button {
+                    showingLiveCameraSheet.toggle()
+                  } label: {
                     Label {
                       VStack(alignment: .leading) {
                         Text("Live Camera")
@@ -253,12 +266,17 @@ struct VehicleView: View {
                         icon: "video.fill",
                         color: .green
                       )
-                      .stableMatchedTransition(id: VehicleOptions.liveCamera, in: namespace)
                     }
                   }
                   .tint(.primary)
+                  .contentShape(.rect)
+                  .buttonStyle(
+                    FluidZoomTransitionStyle(
+                      id: "liveCameraSheet", namespace: namespace, shape: .rect, applyGlass: false))
 
-                  NavigationLink(value: VehicleOptions.alert) {
+                  Button {
+                    showingAlertSheet.toggle()
+                  } label: {
                     Label {
                       VStack(alignment: .leading) {
                         Text("Alert")
@@ -268,15 +286,21 @@ struct VehicleView: View {
                         icon: "bell.fill",
                         color: .red
                       )
-                      .stableMatchedTransition(id: VehicleOptions.alert, in: namespace)
                     }
                   }
                   .tint(.primary)
+                  .contentShape(.rect)
+                  .buttonStyle(
+                    FluidZoomTransitionStyle(
+                      id: "alertSheet", namespace: namespace, shape: .rect, applyGlass: false)
+                  )
                   .task {
                     await fetchBuzzerStatus()
                   }
 
-                  NavigationLink(value: VehicleOptions.liveLocation) {
+                  Button {
+                    showingLiveLocationSheet.toggle()
+                  } label: {
                     Label {
                       VStack(alignment: .leading) {
                         // Primary: Street name, fallback: "Live Location"
@@ -308,10 +332,15 @@ struct VehicleView: View {
                         icon: "location.fill",
                         color: .blue
                       )
-                      .stableMatchedTransition(id: VehicleOptions.liveLocation, in: namespace)
                     }
                   }
                   .tint(.primary)
+                  .contentShape(.rect)
+                  .buttonStyle(
+                    FluidZoomTransitionStyle(
+                      id: "liveLocationSheet", namespace: namespace, shape: .rect, applyGlass: false
+                    )
+                  )
                   .task {
                     await fetchVehicleLocationPreview(data: data)
                   }
@@ -329,15 +358,21 @@ struct VehicleView: View {
                     }
                   }
 
-                  NavigationLink(value: VehicleOptions.vehicleSettings) {
+                  Button {
+                    showingVehicleSettingsSheet.toggle()
+                  } label: {
                     Label {
                       Text("Vehicle Settings")
                     } icon: {
                       SettingsBoxView(icon: "car.fill", color: .blue)
-                        .stableMatchedTransition(id: VehicleOptions.vehicleSettings, in: namespace)
                     }
                   }
                   .tint(.primary)
+                  .contentShape(.rect)
+                  .buttonStyle(
+                    FluidZoomTransitionStyle(
+                      id: "vehicleSettingsSheet", namespace: namespace, shape: .rect,
+                      applyGlass: false))
 
                   LabeledContent("Speed") {
                     HStack {
@@ -473,48 +508,6 @@ struct VehicleView: View {
           scrollOffset = newValue
         }
       }
-      .navigationDestination(for: VehicleOptions.self) { route in
-        switch route {
-        case .faceDetections:
-          FaceDetectionsView(vehicle: vehicle.vehicle)
-            .navigationTransition(.zoom(sourceID: VehicleOptions.faceDetections, in: namespace))
-        case .liveCamera:
-          VehicleLiveCameraView(vehicleId: vehicle.vehicle.id)
-            .navigationTransition(.zoom(sourceID: VehicleOptions.liveCamera, in: namespace))
-        case .alert:
-          VehicleAlertControlView(
-            vehicleId: vehicle.vehicle.id,
-            vehicleName: vehicle.name,
-            initialBuzzerActive: cachedBuzzerActive,
-            initialBuzzerType: cachedBuzzerType
-          )
-          .navigationTransition(.zoom(sourceID: VehicleOptions.alert, in: namespace))
-        case .trips:
-          HomeView(vehicle: vehicle)
-            .navigationTransition(.zoom(sourceID: VehicleOptions.trips, in: namespace))
-        case .shazamHistory:
-          ShazamHistoryView(vehicleId: vehicle.vehicle.id)
-            .navigationTransition(.zoom(sourceID: VehicleOptions.shazamHistory, in: namespace))
-        case .liveLocation:
-          Group {
-            if let data = vehicle.realtimeData {
-              VehicleLiveLocationView(
-                vehicleData: data,
-                vehicleName: vehicle.name,
-                cachedRoute: cachedRoute,
-                cachedStreetName: vehicleStreetName,
-                cachedUserLocation: cachedUserCoordinate
-              )
-            } else {
-              Text("Unable to load location.")
-            }
-          }
-          .navigationTransition(.zoom(sourceID: VehicleOptions.liveLocation, in: namespace))
-        case .vehicleSettings:
-          VehicleSettingsView(vehicle: vehicle.vehicle)
-            .navigationTransition(.zoom(sourceID: VehicleOptions.vehicleSettings, in: namespace))
-        }
-      }
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
@@ -523,11 +516,9 @@ struct VehicleView: View {
             showingVehicleAccessSheet.toggle()
           } label: {
             Image(systemName: "person.2.fill")
-              .stableMatchedTransition(id: "accessSheet", in: namespace)
           }
           .containerShape(.capsule)
           .contentShape(.capsule)
-          .possibleGlassEffect(in: .capsule)
           .buttonStyle(
             FluidZoomTransitionStyle(id: "accessSheet", namespace: namespace, shape: .capsule))
         }
@@ -538,22 +529,65 @@ struct VehicleView: View {
             showingAccountSheet.toggle()
           } label: {
             ProfileToolbarImage()
-              .stableMatchedTransition(id: "settingsSheet", in: namespace)
           }
           .containerShape(.circle)
           .contentShape(.circle)
-          .possibleGlassEffect(in: .circle)
           .buttonStyle(
             FluidZoomTransitionStyle(id: "settingsSheet", namespace: namespace, shape: .circle))
         }
       }
       //      .dynamicIslandToast(isPresented: .constant(vehicleStreetName != nil), toast: .init(symbol: "xmark.circle.fill", symbolForegroundStyle: (.green, .white), title: "Distracted Driving", message: "Driver was alerted"))
     }
+    .sheet(isPresented: $showingLiveCameraSheet) {
+      VehicleLiveCameraView(vehicleId: vehicle.vehicle.id)
+        .navigationTransition(.zoom(sourceID: "liveCameraSheet", in: namespace))
+    }
+    .sheet(isPresented: $showingTripsSheet) {
+      HomeView(vehicle: vehicle)
+        .navigationTransition(.zoom(sourceID: "tripsSheet", in: namespace))
+    }
+    .sheet(isPresented: $showingShazamHistorySheet) {
+      ShazamHistoryView(vehicleId: vehicle.vehicle.id)
+        .navigationTransition(.zoom(sourceID: "shazamHistorySheet", in: namespace))
+    }
+    .sheet(isPresented: $showingLiveLocationSheet) {
+      Group {
+        if let data = vehicle.realtimeData {
+          VehicleLiveLocationView(
+            vehicleData: data,
+            vehicleName: vehicle.name,
+            cachedRoute: cachedRoute,
+            cachedStreetName: vehicleStreetName,
+            cachedUserLocation: cachedUserCoordinate
+          )
+        } else {
+          Text("Unable to load location.")
+        }
+      }
+      .navigationTransition(.zoom(sourceID: "liveLocationSheet", in: namespace))
+    }
+    .sheet(isPresented: $showingVehicleSettingsSheet) {
+      VehicleSettingsView(vehicle: vehicle.vehicle)
+        .navigationTransition(.zoom(sourceID: "vehicleSettingsSheet", in: namespace))
+    }
+    .sheet(isPresented: $showingAlertSheet) {
+      VehicleAlertControlView(
+        vehicleId: vehicle.vehicle.id,
+        vehicleName: vehicle.name,
+        initialBuzzerActive: cachedBuzzerActive,
+        initialBuzzerType: cachedBuzzerType
+      )
+      .navigationTransition(.zoom(sourceID: "alertSheet", in: namespace))
+    }
     .sheet(isPresented: $showingVehicleAccessSheet) {
       VehicleAccessSheet(vehicle: vehicle.vehicle)
         .navigationTransition(.zoom(sourceID: "accessSheet", in: namespace))
     }
-    .sheet(isPresented: $showingUnidentifiedFaces) {
+    .sheet(isPresented: $showingFaceDetectionsSheet) {
+      FaceDetectionsView(vehicle: vehicle.vehicle)
+        .navigationTransition(.zoom(sourceID: "faceDetectionsSheet", in: namespace))
+    }
+    .sheet(isPresented: $showingUnidentifiedFacesSheet) {
       UnidentifiedFacesView(vehicle: vehicle.vehicle)
         .navigationTransition(.zoom(sourceID: "unidentifiedFacesSheet", in: namespace))
     }
@@ -927,6 +961,8 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
 // MARK: - Vehicle Live Location View
 
 struct VehicleLiveLocationView: View {
+  @Environment(\.dismiss) private var dismiss
+
   let vehicleData: VehicleRealtime
   let vehicleName: String
   let cachedRoute: MKRoute?
@@ -949,88 +985,98 @@ struct VehicleLiveLocationView: View {
   }
 
   var body: some View {
-    Group {
-      if let vehicleCoord = vehicleCoordinate {
-        Map(position: $mapCameraPosition) {
-          // Vehicle marker
-          Annotation(vehicleName, coordinate: vehicleCoord) {
-            ZStack {
-              Circle()
-                .fill(.blue)
-                .frame(width: 44, height: 44)
-              Image(systemName: "car.fill")
-                .font(.title2)
-                .foregroundStyle(.white)
+    NavigationStack {
+      Group {
+        if let vehicleCoord = vehicleCoordinate {
+          Map(position: $mapCameraPosition) {
+            // Vehicle marker
+            Annotation(vehicleName, coordinate: vehicleCoord) {
+              ZStack {
+                Circle()
+                  .fill(.blue)
+                  .frame(width: 44, height: 44)
+                Image(systemName: "car.fill")
+                  .font(.title2)
+                  .foregroundStyle(.white)
+              }
             }
-          }
 
-          // User location
-          UserAnnotation()
+            // User location
+            UserAnnotation()
 
-          // Route polyline
-          if let route {
-            MapPolyline(route.polyline)
-              .stroke(.blue, lineWidth: 5)
-          }
-        }
-        .mapControls {
-          MapUserLocationButton()
-          MapCompass()
-          MapScaleView()
-        }
-        .mapStyle(.standard(elevation: .realistic))
-        .safeAreaInset(edge: .bottom) {
-          if #available(iOS 26, macOS 26, watchOS 26, tvOS 26, visionOS 26, *) {
-            locationInfoCard
-              .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
-          } else {
-            locationInfoCard
-              .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-              .padding()
-          }
-        }
-        .onAppear {
-          initializeFromCache(vehicleCoord: vehicleCoord)
-          if cachedRoute == nil {
-            locationManager.requestLocation()
-          }
-        }
-        .task {
-          if cachedStreetName == nil {
-            await reverseGeocode(coordinate: vehicleCoord)
-          }
-        }
-        .onChange(of: locationManager.userLocation) { _, newLocation in
-          if let userCoord = newLocation, let vehicleCoord = vehicleCoordinate, !hasCalculatedRoute
-          {
-            hasCalculatedRoute = true
-            Task {
-              await calculateRoute(from: userCoord, to: vehicleCoord)
+            // Route polyline
+            if let route {
+              MapPolyline(route.polyline)
+                .stroke(.blue, lineWidth: 5)
             }
           }
-        }
-        .onChange(of: locationManager.locationError) { _, error in
-          if let error {
-            travelTime = error
-            if let vehicleCoord = vehicleCoordinate {
-              mapCameraPosition = .region(
-                MKCoordinateRegion(
-                  center: vehicleCoord,
-                  span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                ))
+          .mapControls {
+            MapUserLocationButton()
+            MapCompass()
+            MapScaleView()
+          }
+          .mapStyle(.standard(elevation: .realistic))
+          .safeAreaInset(edge: .bottom) {
+            if #available(iOS 26, macOS 26, watchOS 26, tvOS 26, visionOS 26, *) {
+              locationInfoCard
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+            } else {
+              locationInfoCard
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                .padding()
             }
           }
+          .onAppear {
+            initializeFromCache(vehicleCoord: vehicleCoord)
+            if cachedRoute == nil {
+              locationManager.requestLocation()
+            }
+          }
+          .task {
+            if cachedStreetName == nil {
+              await reverseGeocode(coordinate: vehicleCoord)
+            }
+          }
+          .onChange(of: locationManager.userLocation) { _, newLocation in
+            if let userCoord = newLocation, let vehicleCoord = vehicleCoordinate,
+              !hasCalculatedRoute
+            {
+              hasCalculatedRoute = true
+              Task {
+                await calculateRoute(from: userCoord, to: vehicleCoord)
+              }
+            }
+          }
+          .onChange(of: locationManager.locationError) { _, error in
+            if let error {
+              travelTime = error
+              if let vehicleCoord = vehicleCoordinate {
+                mapCameraPosition = .region(
+                  MKCoordinateRegion(
+                    center: vehicleCoord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                  ))
+              }
+            }
+          }
+        } else {
+          ContentUnavailableView {
+            Label("No Location Data", systemImage: "location.slash")
+          } description: {
+            Text("Vehicle GPS coordinates are not available.")
+          }
         }
-      } else {
-        ContentUnavailableView {
-          Label("No Location Data", systemImage: "location.slash")
-        } description: {
-          Text("Vehicle GPS coordinates are not available.")
+      }
+      .navigationTitle("Vehicle Location")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          CloseButton {
+            dismiss()
+          }
         }
       }
     }
-    .navigationTitle("Vehicle Location")
-    .navigationBarTitleDisplayMode(.inline)
   }
 
   private var locationInfoCard: some View {
@@ -1195,6 +1241,8 @@ struct VehicleLiveLocationView: View {
 // MARK: - Vehicle Alert Control View
 
 struct VehicleAlertControlView: View {
+  @Environment(\.dismiss) private var dismiss
+
   let vehicleId: String
   let vehicleName: String
   let initialBuzzerActive: Bool?
@@ -1234,180 +1282,189 @@ struct VehicleAlertControlView: View {
   }
 
   var body: some View {
-    List {
-      Section {
-        VStack(spacing: 20) {
-          // Buzzer icon with animation
-          ZStack {
-            // Police lights - revolving around the circle
-            if buzzerActive {
-              ForEach(0..<8, id: \.self) { index in
+    NavigationStack {
+      List {
+        Section {
+          VStack(spacing: 20) {
+            // Buzzer icon with animation
+            ZStack {
+              // Police lights - revolving around the circle
+              if buzzerActive {
+                ForEach(0..<8, id: \.self) { index in
+                  Circle()
+                    .fill(index % 2 == 0 ? Color.red : Color.blue)
+                    .frame(width: 14, height: 14)
+                    .opacity(policeLightsOn ? 1.0 : 0.3)
+                    .offset(y: -80)
+                    .rotationEffect(.degrees(Double(index) * 45 + policeRotation))
+                    .shadow(
+                      color: (index % 2 == 0 ? Color.red : Color.blue).opacity(0.8),
+                      radius: policeLightsOn ? 8 : 2
+                    )
+                }
+              }
+
+              // Pulsing background circle with shadow
+              if buzzerActive {
                 Circle()
-                  .fill(index % 2 == 0 ? Color.red : Color.blue)
-                  .frame(width: 14, height: 14)
-                  .opacity(policeLightsOn ? 1.0 : 0.3)
-                  .offset(y: -80)
-                  .rotationEffect(.degrees(Double(index) * 45 + policeRotation))
-                  .shadow(
-                    color: (index % 2 == 0 ? Color.red : Color.blue).opacity(0.8),
-                    radius: policeLightsOn ? 8 : 2
+                  .fill(buzzerType.color.opacity(0.2))
+                  .frame(width: 120, height: 120)
+                  .shadow(color: buzzerType.color.opacity(0.6), radius: 20)
+                  .scaleEffect(buzzerActive ? 1.2 : 1.0)
+                  .animation(
+                    .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                    value: buzzerActive
                   )
               }
+
+              Image(systemName: buzzerType.icon)
+                .font(.system(size: 60))
+                .foregroundStyle(buzzerActive ? buzzerType.color : .gray)
+                .symbolEffect(.bounce, value: buzzerActive)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+            .task(id: buzzerActive) {
+              // Continuous haptics while buzzer is active
+              guard buzzerActive else { return }
+              while buzzerActive {
+                Haptics.impact()
+                try? await Task.sleep(for: .seconds(2.5))
+              }
+            }
+            .task(id: buzzerActive) {
+              // Revolving police lights animation
+              guard buzzerActive else { return }
+              while buzzerActive {
+                withAnimation(.linear(duration: 1.2)) {
+                  policeRotation += 360
+                }
+                try? await Task.sleep(for: .seconds(1.2))
+              }
+            }
+            .task(id: buzzerActive) {
+              // Flashing police lights
+              guard buzzerActive else { return }
+              while buzzerActive {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                  policeLightsOn.toggle()
+                }
+                try? await Task.sleep(for: .seconds(0.4))
+              }
             }
 
-            // Pulsing background circle with shadow
+            // Status text
+            Text(buzzerActive ? "Buzzer Active" : "Buzzer Inactive")
+              .font(.title2)
+              .bold()
+              .foregroundStyle(buzzerActive ? buzzerType.color : .secondary)
+
             if buzzerActive {
-              Circle()
-                .fill(buzzerType.color.opacity(0.2))
-                .frame(width: 120, height: 120)
-                .shadow(color: buzzerType.color.opacity(0.6), radius: 20)
-                .scaleEffect(buzzerActive ? 1.2 : 1.0)
-                .animation(
-                  .easeInOut(duration: 0.8).repeatForever(autoreverses: true),
-                  value: buzzerActive
-                )
+              Text("The vehicle buzzer is currently sounding")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
             }
-
-            Image(systemName: buzzerType.icon)
-              .font(.system(size: 60))
-              .foregroundStyle(buzzerActive ? buzzerType.color : .gray)
-              .symbolEffect(.bounce, value: buzzerActive)
           }
           .frame(maxWidth: .infinity)
-          .padding(.vertical, 20)
-          .task(id: buzzerActive) {
-            // Continuous haptics while buzzer is active
-            guard buzzerActive else { return }
-            while buzzerActive {
-              Haptics.impact()
-              try? await Task.sleep(for: .seconds(2.5))
-            }
-          }
-          .task(id: buzzerActive) {
-            // Revolving police lights animation
-            guard buzzerActive else { return }
-            while buzzerActive {
-              withAnimation(.linear(duration: 1.2)) {
-                policeRotation += 360
-              }
-              try? await Task.sleep(for: .seconds(1.2))
-            }
-          }
-          .task(id: buzzerActive) {
-            // Flashing police lights
-            guard buzzerActive else { return }
-            while buzzerActive {
-              withAnimation(.easeInOut(duration: 0.4)) {
-                policeLightsOn.toggle()
-              }
-              try? await Task.sleep(for: .seconds(0.4))
-            }
-          }
+          .listRowBackground(Color.clear)
+        }
 
-          // Status text
-          Text(buzzerActive ? "Buzzer Active" : "Buzzer Inactive")
-            .font(.title2)
-            .bold()
-            .foregroundStyle(buzzerActive ? buzzerType.color : .secondary)
-
-          if buzzerActive {
-            Text("The vehicle buzzer is currently sounding")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .multilineTextAlignment(.center)
+        // Buzzer type picker
+        if !buzzerActive {
+          Section {
+            Picker("Type", selection: $buzzerType) {
+              ForEach(BuzzerType.allCases, id: \.self) { type in
+                Text(type.displayName)
+                  .tag(type)
+              }
+            }
+            .pickerStyle(.segmented)
+          } header: {
+            Text("Buzzer Type")
+          } footer: {
+            Text(buzzerTypeDescription)
           }
         }
-        .frame(maxWidth: .infinity)
-        .listRowBackground(Color.clear)
-      }
 
-      // Buzzer type picker
-      if !buzzerActive {
+        // Control button
         Section {
-          Picker("Type", selection: $buzzerType) {
-            ForEach(BuzzerType.allCases, id: \.self) { type in
-              Text(type.displayName)
-                .tag(type)
+          Button {
+            Haptics.impact()
+            Task {
+              await toggleBuzzer()
+            }
+          } label: {
+            HStack {
+              Spacer()
+              if isLoading {
+                ProgressView()
+                  .tint(.white)
+              } else {
+                Image(systemName: buzzerActive ? "stop.fill" : "play.fill")
+                Text(buzzerActive ? "Stop Buzzer" : "Start Buzzer")
+                  .bold()
+              }
+              Spacer()
+            }
+            .padding()
+            .foregroundStyle(.white)
+          }
+          .listRowBackground(buzzerActive ? Color.red : buzzerType.color)
+          .disabled(isLoading)
+        }
+
+        // Error message
+        if let errorMessage {
+          Section {
+            Label {
+              Text(errorMessage)
+                .foregroundStyle(.red)
+            } icon: {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
             }
           }
-          .pickerStyle(.segmented)
-        } header: {
-          Text("Buzzer Type")
-        } footer: {
-          Text(buzzerTypeDescription)
         }
-      }
 
-      // Control button
-      Section {
-        Button {
-          Haptics.impact()
-          Task {
-            await toggleBuzzer()
-          }
-        } label: {
-          HStack {
-            Spacer()
-            if isLoading {
-              ProgressView()
-                .tint(.white)
-            } else {
-              Image(systemName: buzzerActive ? "stop.fill" : "play.fill")
-              Text(buzzerActive ? "Stop Buzzer" : "Start Buzzer")
-                .bold()
-            }
-            Spacer()
-          }
-          .padding()
-          .foregroundStyle(.white)
-        }
-        .listRowBackground(buzzerActive ? Color.red : buzzerType.color)
-        .disabled(isLoading)
-      }
-
-      // Error message
-      if let errorMessage {
+        // Info section
         Section {
           Label {
-            Text(errorMessage)
-              .foregroundStyle(.red)
+            VStack(alignment: .leading) {
+              Text("Remote Control")
+                .font(.headline)
+              Text(
+                "This will activate the buzzer on \(vehicleName). The buzzer will sound continuously until stopped."
+              )
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            }
           } icon: {
-            Image(systemName: "exclamationmark.triangle.fill")
-              .foregroundStyle(.red)
+            Image(systemName: "info.circle.fill")
+              .foregroundStyle(.blue)
           }
         }
       }
-
-      // Info section
-      Section {
-        Label {
-          VStack(alignment: .leading) {
-            Text("Remote Control")
-              .font(.headline)
-            Text(
-              "This will activate the buzzer on \(vehicleName). The buzzer will sound continuously until stopped."
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+      .navigationTitle("Alert Control")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          CloseButton {
+            dismiss()
           }
-        } icon: {
-          Image(systemName: "info.circle.fill")
-            .foregroundStyle(.blue)
         }
       }
-    }
-    .navigationTitle("Alert Control")
-    .navigationBarTitleDisplayMode(.inline)
-    .task {
-      // Use cached values if available, otherwise fetch fresh
-      if let initialActive = initialBuzzerActive,
-        let initialType = initialBuzzerType,
-        let type = BuzzerType(rawValue: initialType)
-      {
-        buzzerActive = initialActive
-        buzzerType = type
-      } else {
-        await fetchBuzzerState()
+      .task {
+        // Use cached values if available, otherwise fetch fresh
+        if let initialActive = initialBuzzerActive,
+          let initialType = initialBuzzerType,
+          let type = BuzzerType(rawValue: initialType)
+        {
+          buzzerActive = initialActive
+          buzzerType = type
+        } else {
+          await fetchBuzzerState()
+        }
       }
     }
   }
@@ -1504,6 +1561,8 @@ struct VehicleAlertControlView: View {
 // MARK: - Live Camera View
 
 struct VehicleLiveCameraView: View {
+  @Environment(\.dismiss) private var dismiss
+
   let vehicleId: String
 
   @State private var currentFrame: UIImage?
@@ -1518,147 +1577,155 @@ struct VehicleLiveCameraView: View {
   @State private var dataTask: Task<Void, Never>?
 
   var body: some View {
-    VStack(spacing: 0) {
-      // Camera feed
-      ZStack {
-        if let frame = currentFrame {
-          Image(uiImage: frame)
-            .resizable()
-            .aspectRatio(contentMode: .fit)
-        } else if isStreaming {
-          ProgressView("Connecting to camera...")
-            .controlSize(.extraLarge)
-        } else if let error {
-          ContentUnavailableView {
-            Label("Stream Unavailable", systemImage: "video.slash")
-          } description: {
-            Text(error)
-          } actions: {
-            Button("Retry") {
-              self.error = nil
-              startPolling()
+    NavigationStack {
+      VStack(spacing: 0) {
+        // Camera feed
+        ZStack {
+          if let frame = currentFrame {
+            Image(uiImage: frame)
+              .resizable()
+              .aspectRatio(contentMode: .fit)
+          } else if isStreaming {
+            ProgressView("Connecting to camera...")
+              .controlSize(.extraLarge)
+          } else if let error {
+            ContentUnavailableView {
+              Label("Stream Unavailable", systemImage: "video.slash")
+            } description: {
+              Text(error)
+            } actions: {
+              Button("Retry") {
+                self.error = nil
+                startPolling()
+              }
+              .buttonStyle(.borderedProminent)
+              .possibleGlassEffect(.accentColor, in: .capsule)
             }
-            .buttonStyle(.borderedProminent)
-            .possibleGlassEffect(.accentColor, in: .capsule)
           }
         }
-      }
 
-      // Vehicle stats
-      if currentFrame != nil, let data = vehicleData {
-        ScrollView {
-          VStack(spacing: 12) {
-            // Speed row
-            HStack {
-              Label("Speed", systemImage: "speedometer")
-              Spacer()
-              Text(
-                "\(Text("\(data.speedMph)").foregroundStyle(.primary))/\(data.speedLimitMph)MPH"
-              )
-              .bold()
-              .contentTransition(.numericText(value: 0))
-              .foregroundStyle(
-                data.isSpeeding ? .red : .secondary
-              )
-            }
-
-            Divider()
-
-            // Heading
-            HStack {
-              Label("Heading", systemImage: "location.north.fill")
-              Spacer()
-              HStack(spacing: 4) {
-                Image(systemName: "location.north.fill")
-                  .rotationEffect(.degrees(Double(data.headingDegrees)))
-                  .foregroundStyle(.blue)
-                Text("\(data.headingDegrees)° \(data.compassDirection)")
-              }
-            }
-
-            Divider()
-
-            // Status (moving/parked)
-            HStack {
-              Label("Status", systemImage: "location.circle.fill")
-              Spacer()
-              HStack(spacing: 6) {
-                Circle()
-                  .fill(data.isMoving ? .green : .gray)
-                  .frame(width: 8, height: 8)
-                Text(data.isMoving ? "Moving" : "Parked")
-              }
-            }
-
-            Divider()
-
-            // Driver status
-            HStack {
-              Label("Driver Status", systemImage: "person.fill")
-              Spacer()
-              DriverStatusBadge(status: data.driverStatus)
-            }
-
-            Divider()
-
-            // Risk score
-            HStack {
-              Label("Risk Score", systemImage: "exclamationmark.triangle.fill")
-              Spacer()
-              Text("\(data.intoxicationScore)/6")
-                .foregroundStyle(intoxicationColor(for: data.intoxicationScore))
-                .bold()
-            }
-
-            Divider()
-
-            // GPS satellites
-            if let satellites = data.satellites {
+        // Vehicle stats
+        if currentFrame != nil, let data = vehicleData {
+          ScrollView {
+            VStack(spacing: 12) {
+              // Speed row
               HStack {
-                Label("GPS Satellites", systemImage: "location.fill")
+                Label("Speed", systemImage: "speedometer")
+                Spacer()
+                Text(
+                  "\(Text("\(data.speedMph)").foregroundStyle(.primary))/\(data.speedLimitMph)MPH"
+                )
+                .bold()
+                .contentTransition(.numericText(value: 0))
+                .foregroundStyle(
+                  data.isSpeeding ? .red : .secondary
+                )
+              }
+
+              Divider()
+
+              // Heading
+              HStack {
+                Label("Heading", systemImage: "location.north.fill")
                 Spacer()
                 HStack(spacing: 4) {
-                  Image(systemName: "location.fill")
-                    .foregroundStyle(satellites > 0 ? .green : .gray)
-                  Text("\(satellites)")
-                    .foregroundStyle(satellites > 0 ? .primary : .secondary)
+                  Image(systemName: "location.north.fill")
+                    .rotationEffect(.degrees(Double(data.headingDegrees)))
+                    .foregroundStyle(.blue)
+                  Text("\(data.headingDegrees)° \(data.compassDirection)")
                 }
               }
 
               Divider()
-            }
 
-            // Last updated
-            HStack {
-              Label("Last Updated", systemImage: "clock.fill")
-              Spacer()
-              Text(data.updatedAt, style: .relative)
-                .foregroundStyle(.secondary)
-                .font(.caption)
+              // Status (moving/parked)
+              HStack {
+                Label("Status", systemImage: "location.circle.fill")
+                Spacer()
+                HStack(spacing: 6) {
+                  Circle()
+                    .fill(data.isMoving ? .green : .gray)
+                    .frame(width: 8, height: 8)
+                  Text(data.isMoving ? "Moving" : "Parked")
+                }
+              }
+
+              Divider()
+
+              // Driver status
+              HStack {
+                Label("Driver Status", systemImage: "person.fill")
+                Spacer()
+                DriverStatusBadge(status: data.driverStatus)
+              }
+
+              Divider()
+
+              // Risk score
+              HStack {
+                Label("Risk Score", systemImage: "exclamationmark.triangle.fill")
+                Spacer()
+                Text("\(data.intoxicationScore)/6")
+                  .foregroundStyle(intoxicationColor(for: data.intoxicationScore))
+                  .bold()
+              }
+
+              Divider()
+
+              // GPS satellites
+              if let satellites = data.satellites {
+                HStack {
+                  Label("GPS Satellites", systemImage: "location.fill")
+                  Spacer()
+                  HStack(spacing: 4) {
+                    Image(systemName: "location.fill")
+                      .foregroundStyle(satellites > 0 ? .green : .gray)
+                    Text("\(satellites)")
+                      .foregroundStyle(satellites > 0 ? .primary : .secondary)
+                  }
+                }
+
+                Divider()
+              }
+
+              // Last updated
+              HStack {
+                Label("Last Updated", systemImage: "clock.fill")
+                Spacer()
+                Text(data.updatedAt, style: .relative)
+                  .foregroundStyle(.secondary)
+                  .font(.caption)
+              }
             }
+            .padding()
+            .font(.subheadline)
           }
-          .padding()
-          .font(.subheadline)
+          .background(Color(.systemBackground))
         }
-        .background(Color(.systemBackground))
       }
-    }
-    .navigationTitle("Live Camera")
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItem(placement: .topBarTrailing) {
-        Circle()
-          .fill(currentFrame != nil ? .green : (isStreaming ? .yellow : .red))
-          .frame(width: 15, height: 15)
+      .navigationTitle("Live Camera")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          CloseButton {
+            dismiss()
+          }
+        }
+
+        ToolbarItem(placement: .topBarTrailing) {
+          Circle()
+            .fill(currentFrame != nil ? .green : (isStreaming ? .yellow : .red))
+            .frame(width: 15, height: 15)
+        }
       }
-    }
-    .onAppear {
-      startPolling()
-      startFetchingData()
-    }
-    .onDisappear {
-      stopPolling()
-      stopFetchingData()
+      .onAppear {
+        startPolling()
+        startFetchingData()
+      }
+      .onDisappear {
+        stopPolling()
+        stopFetchingData()
+      }
     }
   }
 

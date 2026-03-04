@@ -26,6 +26,8 @@ enum DetectionFilter: Hashable {
 }
 
 struct FaceDetectionsView: View {
+  @Environment(\.dismiss) private var dismiss
+
   let vehicle: Vehicle
 
   @State private var allDetections: [FaceDetection] = []
@@ -61,103 +63,112 @@ struct FaceDetectionsView: View {
   }
 
   var body: some View {
-    Group {
-      if isLoading {
-        ProgressView("Loading detections...")
-      } else if let errorMessage {
-        ContentUnavailableView {
-          Label("Error", systemImage: "exclamationmark.triangle")
-        } description: {
-          Text(errorMessage)
-        } actions: {
-          Button("Retry") {
-            Task {
-              await loadData()
-            }
-          }
-        }
-      } else if filteredDetections.isEmpty {
-        ContentUnavailableView {
-          Label("No Detections", systemImage: "face.dashed")
-        } description: {
-          if selectedFilter == .all {
-            Text("No face detections recorded for this vehicle yet.")
-          } else {
-            Text("No detections found for this filter.")
-          }
-        } actions: {
-          if selectedFilter != .all {
-            Button("Show All") {
-              selectedFilter = .all
-            }
-          }
-        }
-      } else {
-        ScrollView {
-          LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(filteredDetections) { detection in
-              NavigationLink {
-                FaceDetectionDetailView(detection: detection)
-              } label: {
-                FaceDetectionThumbnail(detection: detection)
+    NavigationStack {
+      Group {
+        if isLoading {
+          ProgressView("Loading detections...")
+        } else if let errorMessage {
+          ContentUnavailableView {
+            Label("Error", systemImage: "exclamationmark.triangle")
+          } description: {
+            Text(errorMessage)
+          } actions: {
+            Button("Retry") {
+              Task {
+                await loadData()
               }
-              .buttonStyle(.plain)
             }
           }
-          .padding()
+        } else if filteredDetections.isEmpty {
+          ContentUnavailableView {
+            Label("No Detections", systemImage: "face.dashed")
+          } description: {
+            if selectedFilter == .all {
+              Text("No face detections recorded for this vehicle yet.")
+            } else {
+              Text("No detections found for this filter.")
+            }
+          } actions: {
+            if selectedFilter != .all {
+              Button("Show All") {
+                selectedFilter = .all
+              }
+            }
+          }
+        } else {
+          ScrollView {
+            LazyVGrid(columns: columns, spacing: 8) {
+              ForEach(filteredDetections) { detection in
+                NavigationLink {
+                  FaceDetectionDetailView(detection: detection)
+                } label: {
+                  FaceDetectionThumbnail(detection: detection)
+                }
+                .buttonStyle(.plain)
+              }
+            }
+            .padding()
+          }
         }
       }
-    }
-    .navigationTitle("Face Detections")
-    .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Menu {
-          Button {
-            Haptics.impact()
-            selectedFilter = .all
-          } label: {
-            Label("All Drivers", systemImage: selectedFilter == .all ? "checkmark" : "")
+      .navigationTitle("Face Detections")
+      .navigationBarTitleDisplayMode(.inline)
+      .toolbar {
+        ToolbarItem(placement: .topBarLeading) {
+          CloseButton {
+            dismiss()
           }
+        }
 
-          Divider()
-
-          ForEach(driverProfiles) { profile in
+        ToolbarItem(placement: .topBarTrailing) {
+          Menu {
             Button {
               Haptics.impact()
-              selectedFilter = .driver(profile.id)
+              selectedFilter = .all
             } label: {
-              Label(
-                profile.name, systemImage: selectedFilter == .driver(profile.id) ? "checkmark" : "")
+              Label("All Drivers", systemImage: selectedFilter == .all ? "checkmark" : "")
             }
-          }
 
-          if !driverProfiles.isEmpty {
             Divider()
-          }
 
-          Button {
-            Haptics.impact()
-            selectedFilter = .unidentified
+            ForEach(driverProfiles) { profile in
+              Button {
+                Haptics.impact()
+                selectedFilter = .driver(profile.id)
+              } label: {
+                Label(
+                  profile.name,
+                  systemImage: selectedFilter == .driver(profile.id) ? "checkmark" : "")
+              }
+            }
+
+            if !driverProfiles.isEmpty {
+              Divider()
+            }
+
+            Button {
+              Haptics.impact()
+              selectedFilter = .unidentified
+            } label: {
+              Label("Unidentified", systemImage: selectedFilter == .unidentified ? "checkmark" : "")
+            }
           } label: {
-            Label("Unidentified", systemImage: selectedFilter == .unidentified ? "checkmark" : "")
-          }
-        } label: {
-          HStack(spacing: 4) {
-            Text(filterTitle)
-              .lineLimit(1)
-            Image(systemName: "chevron.down")
-              .bold()
-              .font(.caption)
+            HStack(spacing: 4) {
+              Text(filterTitle)
+                .lineLimit(1)
+              Image(systemName: "chevron.down")
+                .bold()
+                .font(.caption)
+            }
           }
         }
       }
-    }
-    .task {
-      await loadData()
-    }
-    .refreshable {
-      await loadData()
+      .task {
+        await loadData()
+      }
+      .refreshable {
+        await loadData()
+      }
     }
   }
 

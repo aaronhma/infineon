@@ -9,9 +9,9 @@ import AaronUI
 import SwiftUI
 
 struct UnidentifiedFacesView: View {
-  let vehicle: Vehicle
-
   @Environment(\.dismiss) private var dismiss
+
+  let vehicle: Vehicle
 
   @State private var faceClusters: [FaceCluster] = []
   @State private var driverProfiles: [DriverProfile] = []
