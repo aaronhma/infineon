@@ -25,6 +25,7 @@ final class CachedVehicle {
   var enableShazam: Bool = true
   var enableMicrophone: Bool = true
   var enableCamera: Bool = true
+  var enableDashcam: Bool = false
 
   init() {}
 
@@ -41,6 +42,7 @@ final class CachedVehicle {
     self.enableShazam = vehicle.enableShazam
     self.enableMicrophone = vehicle.enableMicrophone
     self.enableCamera = vehicle.enableCamera
+    self.enableDashcam = vehicle.enableDashcam
   }
 
   func toVehicle() -> Vehicle {
@@ -56,7 +58,8 @@ final class CachedVehicle {
       enableStream: enableStream,
       enableShazam: enableShazam,
       enableMicrophone: enableMicrophone,
-      enableCamera: enableCamera
+      enableCamera: enableCamera,
+      enableDashcam: enableDashcam
     )
   }
 
@@ -72,6 +75,7 @@ final class CachedVehicle {
     self.enableShazam = vehicle.enableShazam
     self.enableMicrophone = vehicle.enableMicrophone
     self.enableCamera = vehicle.enableCamera
+    self.enableDashcam = vehicle.enableDashcam
   }
 }
 

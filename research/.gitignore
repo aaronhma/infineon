@@ -17,3 +17,6 @@ models/logs/
 !models/logs/.gitkeep
 models/data/
 !models/data/.gitkeep
+
+# Recordings
+recordings/

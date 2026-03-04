@@ -5,6 +5,7 @@
 //  Created by Aaron Ma on 1/13/26.
 //
 
+import CoreLocation
 import Supabase
 import SwiftData
 import SwiftUI
@@ -26,6 +27,7 @@ struct Vehicle: Codable, Identifiable {
   var enableShazam: Bool
   var enableMicrophone: Bool
   var enableCamera: Bool
+  var enableDashcam: Bool
 
   enum CodingKeys: String, CodingKey {
     case id
@@ -39,6 +41,7 @@ struct Vehicle: Codable, Identifiable {
     case enableShazam = "enable_shazam"
     case enableMicrophone = "enable_microphone"
     case enableCamera = "enable_camera"
+    case enableDashcam = "enable_dashcam"
   }
 
   init(
@@ -53,7 +56,8 @@ struct Vehicle: Codable, Identifiable {
     enableStream: Bool = true,
     enableShazam: Bool = true,
     enableMicrophone: Bool = true,
-    enableCamera: Bool = true
+    enableCamera: Bool = true,
+    enableDashcam: Bool = false
   ) {
     self.id = id
     self.createdAt = createdAt
@@ -67,6 +71,7 @@ struct Vehicle: Codable, Identifiable {
     self.enableShazam = enableShazam
     self.enableMicrophone = enableMicrophone
     self.enableCamera = enableCamera
+    self.enableDashcam = enableDashcam
   }
 
   init(from decoder: Decoder) throws {
@@ -83,6 +88,7 @@ struct Vehicle: Codable, Identifiable {
     enableShazam = try container.decodeIfPresent(Bool.self, forKey: .enableShazam) ?? true
     enableMicrophone = try container.decodeIfPresent(Bool.self, forKey: .enableMicrophone) ?? true
     enableCamera = try container.decodeIfPresent(Bool.self, forKey: .enableCamera) ?? true
+    enableDashcam = try container.decodeIfPresent(Bool.self, forKey: .enableDashcam) ?? false
   }
 }
 
@@ -328,6 +334,21 @@ struct DriverProfile: Codable, Identifiable {
   }
 }
 
+struct RouteWaypoint: Codable {
+  let lat: Double
+  let lng: Double
+  let spd: Int
+  let ts: Int
+
+  var coordinate: CLLocationCoordinate2D {
+    CLLocationCoordinate2D(latitude: lat, longitude: lng)
+  }
+
+  var date: Date {
+    Date(timeIntervalSince1970: TimeInterval(ts))
+  }
+}
+
 struct VehicleTrip: Codable, Identifiable {
   let id: UUID
   let createdAt: Date
@@ -351,6 +372,9 @@ struct VehicleTrip: Codable, Identifiable {
   let phoneDistractionEventCount: Int?
   let drinkingEventCount: Int?
 
+  // GPS route waypoints
+  let routeWaypoints: [RouteWaypoint]?
+
   enum CodingKeys: String, CodingKey {
     case id
     case createdAt = "created_at"
@@ -372,6 +396,7 @@ struct VehicleTrip: Codable, Identifiable {
     case speedSampleSum = "speed_sample_sum"
     case phoneDistractionEventCount = "phone_distraction_event_count"
     case drinkingEventCount = "drinking_event_count"
+    case routeWaypoints = "route_waypoints"
   }
 
   /// Returns the trip status as an enum for easier handling
@@ -1071,7 +1096,8 @@ class SupabaseService {
     enableStream: Bool? = nil,
     enableShazam: Bool? = nil,
     enableMicrophone: Bool? = nil,
-    enableCamera: Bool? = nil
+    enableCamera: Bool? = nil,
+    enableDashcam: Bool? = nil
   ) async throws {
     var updateData: [String: AnyJSON] = [:]
 
@@ -1095,6 +1121,9 @@ class SupabaseService {
     }
     if let enableCamera {
       updateData["enable_camera"] = .bool(enableCamera)
+    }
+    if let enableDashcam {
+      updateData["enable_dashcam"] = .bool(enableDashcam)
     }
 
     guard !updateData.isEmpty else { return }

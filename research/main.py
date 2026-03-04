@@ -194,6 +194,7 @@ _ENV_ENABLE_STREAM, _ENV_STREAM_SET = _parse_env_bool("ENABLE_STREAM", False)
 _ENV_ENABLE_SHAZAM, _ENV_SHAZAM_SET = _parse_env_bool("ENABLE_SHAZAM", True)
 _ENV_ENABLE_CAMERA, _ENV_CAMERA_SET = _parse_env_bool("ENABLE_CAMERA", True)
 _ENV_ENABLE_MICROPHONE, _ENV_MIC_SET = _parse_env_bool("ENABLE_MICROPHONE", True)
+_ENV_ENABLE_DASHCAM, _ENV_DASHCAM_SET = _parse_env_bool("ENABLE_DASHCAM", False)
 _ENV_ENABLE_CUSTOM_MODELS, _ = _parse_env_bool("ENABLE_CUSTOM_MODELS", False)
 
 # Stream / Shazam parameters (always from .env)
@@ -417,6 +418,38 @@ class VideoStreamer:
             pass  # Non-critical — iOS falls back to polling
 
 
+class DashcamRecorder:
+    """Records annotated camera frames to a local MP4 file."""
+
+    def __init__(self, output_dir="recordings", fps=10):
+        self.output_dir = output_dir
+        self.fps = fps
+        self.writer = None
+        self.filepath = None
+
+    def start(self, trip_id, width, height):
+        """Start recording to {output_dir}/{trip_id}.mp4"""
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.filepath = os.path.join(self.output_dir, f"{trip_id}.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self.writer = cv2.VideoWriter(self.filepath, fourcc, self.fps, (width, height))
+        print(f"Dashcam recording: {self.filepath} ({width}x{height} @ {self.fps} fps)")
+
+    def write_frame(self, frame):
+        """Write a single frame to the video file."""
+        if self.writer and self.writer.isOpened():
+            self.writer.write(frame)
+
+    def stop(self):
+        """Stop recording and release the writer."""
+        if self.writer:
+            self.writer.release()
+            self.writer = None
+            if self.filepath and os.path.exists(self.filepath):
+                size_mb = os.path.getsize(self.filepath) / (1024 * 1024)
+                print(f"Dashcam saved: {self.filepath} ({size_mb:.1f} MB)")
+
+
 class SupabaseUploader:
     """Handles uploading face detection data and vehicle telemetry to Supabase"""
 
@@ -475,6 +508,7 @@ class SupabaseUploader:
         self.trip_unstable_eyes_events = 0
         self.trip_face_detections = 0
         self.trip_speed_samples = []
+        self.trip_waypoints = []
         self.last_trip_update = 0
         self.trip_update_cooldown = 5.0  # Update trip stats every 5 seconds
         self.was_speeding = False  # Track speeding state changes
@@ -560,7 +594,7 @@ class SupabaseUploader:
                 self.client.table("vehicles")
                 .select(
                     "enable_yolo, enable_stream, enable_shazam, "
-                    "enable_microphone, enable_camera"
+                    "enable_microphone, enable_camera, enable_dashcam"
                 )
                 .eq("id", self.vehicle_id)
                 .execute()
@@ -578,6 +612,7 @@ class SupabaseUploader:
             "enable_shazam":     (_ENV_ENABLE_SHAZAM,     _ENV_SHAZAM_SET, "enable_shazam",     True),
             "enable_microphone": (_ENV_ENABLE_MICROPHONE, _ENV_MIC_SET,    "enable_microphone", True),
             "enable_camera":     (_ENV_ENABLE_CAMERA,     _ENV_CAMERA_SET, "enable_camera",     True),
+            "enable_dashcam":    (_ENV_ENABLE_DASHCAM,    _ENV_DASHCAM_SET, "enable_dashcam",   False),
         }
 
         self.feature_settings = {}
@@ -744,6 +779,9 @@ class SupabaseUploader:
         is_drowsy: bool,
         is_excessive_blinking: bool,
         is_unstable_eyes: bool,
+        latitude: float = 0.0,
+        longitude: float = 0.0,
+        is_real_gps: bool = False,
     ):
         """Update trip statistics (called frequently during session)"""
         # Track max values
@@ -772,6 +810,15 @@ class SupabaseUploader:
         if is_unstable_eyes and not self.was_unstable_eyes:
             self.trip_unstable_eyes_events += 1
         self.was_unstable_eyes = is_unstable_eyes
+
+        # Record GPS waypoint (only with real satellite fix)
+        if is_real_gps and latitude != 0.0 and longitude != 0.0:
+            self.trip_waypoints.append({
+                "lat": round(latitude, 6),
+                "lng": round(longitude, 6),
+                "spd": int(speed),
+                "ts": int(time.time()),
+            })
 
         # Periodically update trip in database
         current_time = time.time()
@@ -806,6 +853,7 @@ class SupabaseUploader:
             "speed_sample_count": len(self.trip_speed_samples),
             "speed_sample_sum": int(sum(self.trip_speed_samples)),
             "status": self._calculate_trip_status(),
+            "route_waypoints": json.dumps(self.trip_waypoints),
         }
         if self.current_driver_profile_id:
             record["driver_profile_id"] = self.current_driver_profile_id
@@ -850,6 +898,7 @@ class SupabaseUploader:
                 "speed_sample_count": len(self.trip_speed_samples),
                 "speed_sample_sum": int(sum(self.trip_speed_samples)),
                 "status": self._calculate_trip_status(),
+                "route_waypoints": json.dumps(self.trip_waypoints),
             }
 
             # Add driver profile if identified
@@ -2679,6 +2728,18 @@ class MusicRecognizer:
         return self.enabled
 
 
+def draw_dashcam_hud(frame, speed, heading, direction):
+    """Draw speed/heading/time HUD bar at the top of the frame."""
+    h, w = frame.shape[:2]
+    # Semi-transparent dark bar at top
+    overlay = frame[0:36, 0:w].copy()
+    frame[0:36, 0:w] = (overlay * 0.4).astype(frame.dtype)
+    timestamp = datetime.now(PST).strftime("%Y-%m-%d %H:%M:%S")
+    hud_text = f"{speed} MPH  {direction}  {heading}\xb0  {timestamp}"
+    cv2.putText(frame, hud_text, (10, 25), FONT_FAST, 1.2, COLOR_WHITE, 1)
+    return frame
+
+
 def draw_distraction_warning(frame, distraction_data, gaze_data=None):
     """Draw prominent distraction warning banner on frame (optimized)
 
@@ -2797,6 +2858,7 @@ def main():
     enable_stream = settings["enable_stream"]
     enable_shazam = settings["enable_shazam"] and settings["enable_microphone"]
     enable_camera = settings["enable_camera"]
+    enable_dashcam = settings["enable_dashcam"]
 
     # Open camera if enabled
     cap = None
@@ -2878,6 +2940,8 @@ def main():
         print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
     if enable_shazam:
         print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
+    if enable_dashcam and cap:
+        print("- Dashcam recording (local MP4)")
     if not headless and cap:
         print("- Press 'X' to simulate speeding (75 MPH)")
         print("- Press 'C' to reset speed to normal (45 MPH)")
@@ -2894,6 +2958,12 @@ def main():
             width=STREAM_WIDTH,
         )
         streamer.start()
+
+    # Dashcam recording (requires camera)
+    dashcam = None
+    if enable_dashcam and cap:
+        dashcam = DashcamRecorder()
+        dashcam.start(supabase_uploader.trip_id, width, height)
 
     # Music recognition (requires microphone)
     music_recognizer = None
@@ -3067,6 +3137,9 @@ def main():
             is_drowsy=is_drowsy,
             is_excessive_blinking=is_excessive_blinking,
             is_unstable_eyes=is_unstable_eyes,
+            latitude=driving_sim.get_latitude(),
+            longitude=driving_sim.get_longitude(),
+            is_real_gps=driving_sim.is_using_gps() and driving_sim.has_gps_fix(),
         )
 
         supabase_uploader.check_buzzer_commands()
@@ -3165,6 +3238,16 @@ def main():
             if streamer:
                 streamer.update_frame(processed_frame)
 
+            if dashcam:
+                hud_frame = processed_frame.copy()
+                draw_dashcam_hud(
+                    hud_frame,
+                    speed=driving_sim.get_speed(),
+                    heading=driving_sim.get_heading(),
+                    direction=driving_sim.get_compass_direction(),
+                )
+                dashcam.write_frame(hud_frame)
+
             if not headless:
                 cv2.imshow("Infineon Project - Winter 2026", processed_frame)
                 key = cv2.waitKey(1) & 0xFF
@@ -3187,6 +3270,8 @@ def main():
                     print(f"Speed reset to: {driving_sim.get_speed()} MPH")
 
     # End trip and release resources
+    if dashcam:
+        dashcam.stop()
     if streamer:
         streamer.stop()
     if music_recognizer:

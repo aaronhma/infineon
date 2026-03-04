@@ -29,6 +29,9 @@ struct TripDetailView: View {
   }
 
   private var routeCoordinates: [CLLocationCoordinate2D] {
+    // Prefer continuous GPS route waypoints over sparse face-detection locations
+    if !trip.routeCoordinates.isEmpty { return trip.routeCoordinates }
+    // Fallback to face detection locations for old trips
     let detected = allDetections.compactMap { event -> CLLocationCoordinate2D? in
       guard let lat = event.latitude, let lng = event.longitude else { return nil }
       return CLLocationCoordinate2D(latitude: lat, longitude: lng)

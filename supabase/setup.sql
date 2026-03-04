@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS public.vehicles (
     enable_stream BOOLEAN NOT NULL DEFAULT TRUE,
     enable_shazam BOOLEAN NOT NULL DEFAULT TRUE,
     enable_microphone BOOLEAN NOT NULL DEFAULT TRUE,
-    enable_camera BOOLEAN NOT NULL DEFAULT TRUE
+    enable_camera BOOLEAN NOT NULL DEFAULT TRUE,
+    enable_dashcam BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 -- Generate random 6-character alphanumeric invite code
@@ -335,7 +336,10 @@ CREATE TABLE IF NOT EXISTS public.vehicle_trips (
 
     -- Speed samples for average calculation
     speed_sample_count INTEGER DEFAULT 0,
-    speed_sample_sum INTEGER DEFAULT 0
+    speed_sample_sum INTEGER DEFAULT 0,
+
+    -- GPS route waypoints (JSONB array of {lat, lng, spd, ts})
+    route_waypoints JSONB DEFAULT '[]'::jsonb
 );
 
 CREATE INDEX IF NOT EXISTS idx_vehicle_trips_vehicle_id ON public.vehicle_trips(vehicle_id);

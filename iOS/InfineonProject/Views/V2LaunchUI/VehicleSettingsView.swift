@@ -26,6 +26,7 @@ struct VehicleSettingsView: View {
   @State private var enableShazam = true
   @State private var enableMicrophone = true
   @State private var enableCamera = true
+  @State private var enableDashcam = false
 
   private var isOwner: Bool {
     supabase.currentUser?.id == vehicle.ownerId
@@ -141,6 +142,15 @@ struct VehicleSettingsView: View {
           color: .cyan,
           isOn: $enableShazam
         )
+
+        featureToggle(
+          "Dashcam",
+          icon: "record.circle",
+          slashIcon: "record.circle.fill",
+          description: "Record annotated dashcam video on device",
+          color: .red,
+          isOn: $enableDashcam
+        )
       } header: {
         Text("Features")
       }
@@ -171,6 +181,7 @@ struct VehicleSettingsView: View {
       enableShazam = vehicle.enableShazam
       enableMicrophone = vehicle.enableMicrophone
       enableCamera = vehicle.enableCamera
+      enableDashcam = vehicle.enableDashcam
     }
     .onDisappear {
       hideKeyboard()
@@ -201,7 +212,8 @@ struct VehicleSettingsView: View {
         enableStream: enableStream,
         enableShazam: enableShazam,
         enableMicrophone: enableMicrophone,
-        enableCamera: enableCamera
+        enableCamera: enableCamera,
+        enableDashcam: enableDashcam
       )
 
       // Update the profile in appData so the UI reflects the change

@@ -5,6 +5,7 @@
 //  Created by Aaron Ma on 1/12/26.
 //
 
+import MapKit
 import SwiftUI
 
 /// A wrapper struct for VehicleTrip that provides convenient computed properties for UI display
@@ -26,6 +27,10 @@ struct Trip: Identifiable {
   var unstableEyesEventCount: Int { vehicleTrip.unstableEyesEventCount }
   var faceDetectionCount: Int { vehicleTrip.faceDetectionCount }
   var sessionId: UUID { vehicleTrip.sessionId }
+  // GPS route
+  var routeCoordinates: [CLLocationCoordinate2D] {
+    vehicleTrip.routeWaypoints?.map { $0.coordinate } ?? []
+  }
   // Distraction events
   var phoneDistractionEventCount: Int { vehicleTrip.phoneDistractionEventCount ?? 0 }
   var drinkingEventCount: Int { vehicleTrip.drinkingEventCount ?? 0 }
@@ -152,7 +157,8 @@ extension Trip {
       speedSampleCount: 100,
       speedSampleSum: 4550,
       phoneDistractionEventCount: 0,
-      drinkingEventCount: 0
+      drinkingEventCount: 0,
+      routeWaypoints: nil
     )
   )
 
@@ -177,7 +183,8 @@ extension Trip {
       speedSampleCount: 50,
       speedSampleSum: 2750,
       phoneDistractionEventCount: 2,
-      drinkingEventCount: 1
+      drinkingEventCount: 1,
+      routeWaypoints: nil
     )
   )
 
@@ -202,7 +209,8 @@ extension Trip {
       speedSampleCount: 30,
       speedSampleSum: 2100,
       phoneDistractionEventCount: 5,
-      drinkingEventCount: 3
+      drinkingEventCount: 3,
+      routeWaypoints: nil
     )
   )
 }

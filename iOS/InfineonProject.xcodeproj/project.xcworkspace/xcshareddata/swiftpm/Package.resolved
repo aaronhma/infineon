@@ -7,7 +7,7 @@
       "location" : "https://github.com/aaronhma/AaronUI",
       "state" : {
         "branch" : "main",
-        "revision" : "9b4ab19143e7e43aefdf8ec8a10e473013dc3d13"
+        "revision" : "09d7ffbec9e208908ede19aaebabd6fed3bfa10f"
       }
     },
     {
@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/xctest-dynamic-overlay",
       "state" : {
-        "revision" : "34e463e98ab8541c604af706c99bed7160f5ec70",
-        "version" : "1.8.1"
+        "revision" : "dfd70507def84cb5fb821278448a262c6ff2bbad",
+        "version" : "1.9.0"
       }
     }
   ],
