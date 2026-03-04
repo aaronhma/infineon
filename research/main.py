@@ -482,24 +482,21 @@ class SupabaseUploader:
         self.was_excessive_blinking = False  # Track excessive blinking state changes
         self.was_unstable_eyes = False  # Track unstable eyes state changes
 
-        # Register vehicle on startup
-        self._register_vehicle()
-
-        # Fetch feature settings from Supabase (overrides .env)
-        self._fetch_feature_settings()
-
-        # Load driver profiles
-        self._load_driver_profiles()
-
-        # Create trip record for this session
-        self._create_trip()
-
-        # Subscribe to realtime buzzer commands
-        self._subscribe_to_buzzer_commands()
-
-        print(
-            f"Supabase connected. Vehicle ID: {self.vehicle_id}, Session ID: {self.session_id}"
-        )
+        # Register vehicle on startup — allow offline operation
+        try:
+            self._register_vehicle()
+            self._fetch_feature_settings()
+            self._load_driver_profiles()
+            self._create_trip()
+            self._subscribe_to_buzzer_commands()
+            self._connected = True
+            print(
+                f"Supabase connected. Vehicle ID: {self.vehicle_id}, Session ID: {self.session_id}"
+            )
+        except Exception as e:
+            self._connected = False
+            print(f"Supabase unavailable ({e.__class__.__name__}), running offline")
+            self._fetch_feature_settings()  # still loads .env defaults
 
     def _generate_invite_code(self):
         """Generate a random 6-character alphanumeric invite code"""
@@ -1364,7 +1361,6 @@ class DistractionDetector:
         self.phone_bbox = None
         self.bottle_bbox = None
         self.hand_at_ear = False  # True when phone detected via hand-at-ear
-        self.hand_gripping = False  # True when phone detected via grip pose
 
         # Smoothing - require multiple consecutive frames
         self.phone_frames = 0
@@ -1583,25 +1579,29 @@ class DistractionDetector:
 
         if not results.hand_landmarks:
             return None
+        h, w = frame.shape[:2]
+        for i, hand_lms in enumerate(results.hand_landmarks):
+            wx, wy = hand_lms[0].x * w, hand_lms[0].y * h
+            print(f"  HANDS: detected hand {i} wrist=({wx:.0f},{wy:.0f})")
         return results.hand_landmarks
 
-    def _detect_hand_at_ear(self, frame, hand_landmarks=None):
-        """Detect a hand raised near the ear region (phone call gesture).
+    def _detect_hand_near_face(self, frame, hand_landmarks=None):
+        """Detect a hand raised near the face (phone at ear or held to face).
 
-        When someone holds a phone to their ear, the phone is occluded by
-        the hand and head — YOLO can't see it. But MediaPipe Hands CAN
-        detect the hand, and we check if it's positioned near the ear.
+        Catches two cases YOLO misses:
+        1. Phone pressed to ear (occluded by hand/head)
+        2. Phone held from the side near face (thin edge facing camera)
 
         Uses the Tasks API HandLandmarker (RunningMode.IMAGE) in the
         background thread.  The cached face_bbox from the main thread
-        provides ear-region coordinates for proximity checks.
+        provides face-region coordinates for proximity checks.
 
         Args:
             frame: BGR image (used for dimensions only if hand_landmarks provided)
             hand_landmarks: pre-computed landmarks from _detect_hands() (optional)
 
         Returns:
-            tuple: (is_at_ear: bool, hand_bbox: tuple|None)
+            tuple: (is_near_face: bool, hand_bbox: tuple|None)
                    hand_bbox is (x1, y1, x2, y2) pixel coordinates or None
         """
         if hand_landmarks is None:
@@ -1619,32 +1619,26 @@ class DistractionDetector:
             mcp_x = hand_lms[9].x * w
             mcp_y = hand_lms[9].y * h
 
-            # --- Gate 1: hand must be in upper 65% of frame (head level) ---
-            if wrist_y > h * 0.65:
+            # --- Gate 1: hand must be in upper 70% of frame (head level) ---
+            if wrist_y > h * 0.70:
+                print(f"  HANDS: gate1 fail wrist_y={wrist_y:.0f} > {h*0.70:.0f}")
                 continue
 
             if face is not None:
                 face_cx = (face["x_min"] + face["x_max"]) / 2
+                face_cy = (face["y_min"] + face["y_max"]) / 2
                 face_w = face["x_max"] - face["x_min"]
                 face_h = face["y_max"] - face["y_min"]
-                # Ear level ≈ 40% down from top of face bounding box
-                ear_y = face["y_min"] + face_h * 0.4
 
-                # --- Gate 2: wrist must be near the ear region ---
-                # Ears are at the left/right edges of the face bbox
-                left_ear_x = face["x_min"]
-                right_ear_x = face["x_max"]
-
-                near_left = (
-                    abs(wrist_x - left_ear_x) < face_w * 0.8
-                    and abs(wrist_y - ear_y) < face_h * 0.8
-                )
-                near_right = (
-                    abs(wrist_x - right_ear_x) < face_w * 0.8
-                    and abs(wrist_y - ear_y) < face_h * 0.8
-                )
-
-                if not (near_left or near_right):
+                # --- Gate 2: wrist must be near the face ---
+                # Allow within 1.2x face dimensions from face centre.
+                # This covers ear, cheek, and in-front-of-face positions.
+                dx = abs(wrist_x - face_cx)
+                dy = abs(wrist_y - face_cy)
+                if dx > face_w * 1.2 or dy > face_h * 1.2:
+                    print(f"  HANDS: gate2 fail wrist=({wrist_x:.0f},{wrist_y:.0f}) "
+                          f"face_c=({face_cx:.0f},{face_cy:.0f}) "
+                          f"dx={dx:.0f}>{face_w*1.2:.0f} dy={dy:.0f}>{face_h*1.2:.0f}")
                     continue
 
                 # --- Gate 3: hand should be roughly vertical (not flat) ---
@@ -1652,97 +1646,19 @@ class DistractionDetector:
                 hand_dx = abs(mcp_x - wrist_x)
                 # Skip clearly horizontal hands (resting on steering wheel)
                 if hand_dx > 0 and hand_dy < hand_dx * 0.3:
+                    print(f"  HANDS: gate3 fail (horizontal) dy={hand_dy:.0f} dx={hand_dx:.0f}")
                     continue
             else:
-                # No face bbox available — use looser frame-relative checks
-                if wrist_y > h * 0.5:
+                # No face bbox available — use frame-relative checks
+                print(f"  HANDS: no face bbox, using frame-relative gates")
+                if wrist_y > h * 0.55:
+                    print(f"  HANDS: no-face gate fail wrist_y={wrist_y:.0f} > {h*0.55:.0f}")
                     continue
-                if wrist_x < w * 0.15 or wrist_x > w * 0.85:
+                if wrist_x < w * 0.1 or wrist_x > w * 0.9:
+                    print(f"  HANDS: no-face gate fail wrist_x={wrist_x:.0f} outside 10-90%")
                     continue
 
             # All gates passed → compute hand bounding box
-            xs = [lm.x * w for lm in hand_lms]
-            ys = [lm.y * h for lm in hand_lms]
-            bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
-            return True, bbox
-
-        return False, None
-
-    def _detect_hand_gripping(self, frame, hand_landmarks=None):
-        """Detect a hand gripping an object at face level (side-on phone).
-
-        When a driver holds a phone from the side (edge-on to the camera),
-        YOLO can't recognise the thin profile.  But MediaPipe Hands still
-        detects the hand, and the finger-curl pattern reveals a grip.
-
-        Args:
-            frame: BGR image (used for dimensions only if hand_landmarks provided)
-            hand_landmarks: pre-computed landmarks from _detect_hands() (optional)
-
-        Returns:
-            tuple: (is_gripping: bool, hand_bbox: tuple|None)
-        """
-        if hand_landmarks is None:
-            hand_landmarks = self._detect_hands(frame)
-        if hand_landmarks is None:
-            return False, None
-
-        h, w = frame.shape[:2]
-        face = self._last_face_bbox
-
-        for hand_lms in hand_landmarks:
-            wrist_x = hand_lms[0].x * w
-            wrist_y = hand_lms[0].y * h
-
-            # --- Gate 1: hand must be in upper 70% of frame ---
-            if wrist_y > h * 0.70:
-                continue
-
-            # --- Gate 2: fingers must be curled (grip pose) ---
-            # For each finger, compare tip-to-wrist distance vs PIP-to-wrist
-            # distance.  A curled finger has its tip closer to the wrist than
-            # the PIP joint.
-            #   Index:  tip=8,  pip=6
-            #   Middle: tip=12, pip=10
-            #   Ring:   tip=16, pip=14
-            #   Pinky:  tip=20, pip=18
-            curled = 0
-            finger_tips = [8, 12, 16, 20]
-            finger_pips = [6, 10, 14, 18]
-            for tip_i, pip_i in zip(finger_tips, finger_pips):
-                tip_x = hand_lms[tip_i].x * w
-                tip_y = hand_lms[tip_i].y * h
-                pip_x = hand_lms[pip_i].x * w
-                pip_y = hand_lms[pip_i].y * h
-                # Distance from wrist to tip vs wrist to pip
-                d_tip = ((tip_x - wrist_x) ** 2 + (tip_y - wrist_y) ** 2) ** 0.5
-                d_pip = ((pip_x - wrist_x) ** 2 + (pip_y - wrist_y) ** 2) ** 0.5
-                if d_tip < d_pip * 1.1:  # tip is at/closer than pip → curled
-                    curled += 1
-
-            if curled < 3:
-                continue  # need at least 3 of 4 fingers curled
-
-            # --- Gate 3: hand should be near face region ---
-            if face is not None:
-                face_cx = (face["x_min"] + face["x_max"]) / 2
-                face_cy = (face["y_min"] + face["y_max"]) / 2
-                face_w = face["x_max"] - face["x_min"]
-                face_h = face["y_max"] - face["y_min"]
-
-                # Hand should be within ~1.5x face-width of face centre
-                dx = abs(wrist_x - face_cx)
-                dy = abs(wrist_y - face_cy)
-                if dx > face_w * 1.5 or dy > face_h * 1.5:
-                    continue
-            else:
-                # No face — fall back to central-upper region check
-                if wrist_y > h * 0.55:
-                    continue
-                if wrist_x < w * 0.15 or wrist_x > w * 0.85:
-                    continue
-
-            # All gates passed
             xs = [lm.x * w for lm in hand_lms]
             ys = [lm.y * h for lm in hand_lms]
             bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
@@ -1781,20 +1697,18 @@ class DistractionDetector:
                 "phone_frames": 0,
                 "drinking_frames": 0,
                 "hand_at_ear": False,
-                "hand_gripping": False,
             }
 
         # Check for completed async YOLO result
         new_phone = None
         new_bottle = None
         is_hand_at_ear = False
-        is_hand_gripping = False
         has_result = False
 
         if self._yolo_future is not None:
             if self._yolo_future.done():
                 try:
-                    new_phone, new_bottle, is_hand_at_ear, is_hand_gripping = self._yolo_future.result()
+                    new_phone, new_bottle, is_hand_at_ear = self._yolo_future.result()
                 except Exception:
                     pass
                 self._yolo_future = None
@@ -1808,18 +1722,16 @@ class DistractionDetector:
 
         # Update smoothing only when we have new YOLO results
         if has_result:
-            # Phone: detected by YOLO, hand-at-ear, or hand-gripping
+            # Phone: detected by YOLO or hand-near-face fallback
             if new_phone is not None:
                 self.phone_bbox = new_phone
                 self.phone_frames += 1
                 self.hand_at_ear = is_hand_at_ear
-                self.hand_gripping = is_hand_gripping
             else:
                 self.phone_frames = max(0, self.phone_frames - 1)
                 if self.phone_frames == 0:
                     self.phone_bbox = None
                     self.hand_at_ear = False
-                    self.hand_gripping = False
 
             if new_bottle is not None:
                 self.bottle_bbox = new_bottle
@@ -1840,7 +1752,6 @@ class DistractionDetector:
             "phone_frames": self.phone_frames,
             "drinking_frames": self.drinking_frames,
             "hand_at_ear": self.hand_at_ear,
-            "hand_gripping": self.hand_gripping,
         }
 
     def _run_yolo_inference(self, frame):
@@ -1849,10 +1760,9 @@ class DistractionDetector:
         Uses ultralytics backend on dev machines, onnxruntime on RPi/edge.
 
         Returns:
-            tuple: (phone_bbox, bottle_bbox, hand_at_ear, hand_gripping)
+            tuple: (phone_bbox, bottle_bbox, hand_at_ear)
                    phone_bbox/bottle_bbox are (x1,y1,x2,y2) or None
-                   hand_at_ear is True if phone was detected via ear gesture
-                   hand_gripping is True if phone was detected via grip pose
+                   hand_at_ear is True if phone was detected via hand-near-face
         """
         t0 = time.time()
         current_phone = None
@@ -1909,30 +1819,21 @@ class DistractionDetector:
                         f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
                     )
 
-        # If YOLO didn't find a phone, use MediaPipe hand fallbacks.
-        # Run hand detection once and share results across both checks.
-        hand_gripping = False
+        # If YOLO didn't find a phone, check for hand near face.
+        # This catches phone-at-ear AND phone held sideways near face.
         if current_phone is None:
-            hand_lms = self._detect_hands(frame)
-
-            # Fallback 1: hand-at-ear (phone call gesture)
-            is_at_ear, hand_bbox = self._detect_hand_at_ear(frame, hand_lms)
-            if is_at_ear:
+            if self.hand_landmarker is None:
+                if self._yolo_completions < 3:
+                    print("HANDS: hand_landmarker not loaded — hand fallbacks disabled")
+            is_near_face, hand_bbox = self._detect_hand_near_face(frame)
+            if is_near_face:
                 current_phone = hand_bbox
                 hand_at_ear = True
-                print("HANDS: Phone at ear detected (hand near ear region)")
-
-            # Fallback 2: hand gripping object at face level (side-on phone)
-            if current_phone is None:
-                is_grip, grip_bbox = self._detect_hand_gripping(frame, hand_lms)
-                if is_grip:
-                    current_phone = grip_bbox
-                    hand_gripping = True
-                    print("HANDS: Gripping object at face level (possible side-on phone)")
+                print("HANDS: Hand near face detected (possible phone use)")
 
         self._yolo_times.append(time.time() - t0)
         self._yolo_completions += 1
-        return current_phone, current_bottle, hand_at_ear, hand_gripping
+        return current_phone, current_bottle, hand_at_ear
 
     def get_yolo_stats(self):
         """Return (avg_ms, fps, completions) for recent YOLO inferences."""
@@ -1960,9 +1861,7 @@ class DistractionDetector:
             color = COLOR_RED if self.phone_detected else COLOR_ORANGE
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             if self.hand_at_ear:
-                label = "PHONE AT EAR!" if self.phone_detected else "Hand at ear"
-            elif self.hand_gripping:
-                label = "PHONE (GRIP)!" if self.phone_detected else "Gripping object"
+                label = "PHONE (HAND)!" if self.phone_detected else "Hand near face"
             else:
                 label = "PHONE - DISTRACTED!" if self.phone_detected else "Phone"
             cv2.putText(frame, label, (x1, y1 - 10), FONT_FAST, 1.0, color, 1)
@@ -3033,7 +2932,6 @@ def main():
             "phone_frames": 0,
             "drinking_frames": 0,
             "hand_at_ear": False,
-            "hand_gripping": False,
         }
 
         # --- Camera-dependent processing ---
