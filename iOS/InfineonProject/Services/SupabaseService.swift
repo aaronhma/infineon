@@ -375,6 +375,10 @@ struct VehicleTrip: Codable, Identifiable {
   // GPS route waypoints
   let routeWaypoints: [RouteWaypoint]?
 
+  // Crash detection
+  let crashDetected: Bool?
+  let crashSeverity: String?
+
   enum CodingKeys: String, CodingKey {
     case id
     case createdAt = "created_at"
@@ -397,6 +401,8 @@ struct VehicleTrip: Codable, Identifiable {
     case phoneDistractionEventCount = "phone_distraction_event_count"
     case drinkingEventCount = "drinking_event_count"
     case routeWaypoints = "route_waypoints"
+    case crashDetected = "crash_detected"
+    case crashSeverity = "crash_severity"
   }
 
   /// Returns the trip status as an enum for easier handling

@@ -76,6 +76,15 @@ except Exception as e:
     print(f"FAILED: {e}")
     sys.exit(1)
 
+GYRO_AVAILABLE = False
+print("  Checking gyroscope...", end=" ", flush=True)
+try:
+    from components.gyroscope import CrashDetector, GyroReader
+    GYRO_AVAILABLE = True
+    print("ok")
+except Exception as e:
+    print(f"unavailable ({e})")
+
 # MediaPipe + scipy are loaded lazily inside FaceAnalyzer.__init__() to avoid
 # segfaults from protobuf conflicts on RPi (a segfault bypasses try/except).
 _MEDIAPIPE_AVAILABLE = None  # determined at runtime in _check_mediapipe()
@@ -515,6 +524,8 @@ class SupabaseUploader:
         self.was_drowsy = False  # Track drowsy state changes
         self.was_excessive_blinking = False  # Track excessive blinking state changes
         self.was_unstable_eyes = False  # Track unstable eyes state changes
+        self.trip_crash_detected = False
+        self.trip_crash_severity = None
 
         # Register vehicle on startup — allow offline operation
         try:
@@ -771,6 +782,13 @@ class SupabaseUploader:
             return "warning"
         return "ok"
 
+    def record_crash(self, crash_event):
+        """Record a crash detection event on the current trip."""
+        self.trip_crash_detected = True
+        self.trip_crash_severity = crash_event.get("severity", "moderate")
+        # Force an immediate sync to persist crash data
+        self._sync_trip_to_db()
+
     def update_trip_stats(
         self,
         speed: int,
@@ -854,6 +872,8 @@ class SupabaseUploader:
             "speed_sample_sum": int(sum(self.trip_speed_samples)),
             "status": self._calculate_trip_status(),
             "route_waypoints": json.dumps(self.trip_waypoints),
+            "crash_detected": self.trip_crash_detected,
+            "crash_severity": self.trip_crash_severity,
         }
         if self.current_driver_profile_id:
             record["driver_profile_id"] = self.current_driver_profile_id
@@ -899,6 +919,8 @@ class SupabaseUploader:
                 "speed_sample_sum": int(sum(self.trip_speed_samples)),
                 "status": self._calculate_trip_status(),
                 "route_waypoints": json.dumps(self.trip_waypoints),
+                "crash_detected": self.trip_crash_detected,
+                "crash_severity": self.trip_crash_severity,
             }
 
             # Add driver profile if identified
@@ -2973,19 +2995,21 @@ def main():
         )
         music_recognizer.start()
 
-    # Optional gyro reader (serial acc/gyro); no hard dependency
+    # Optional gyro reader (serial acc/gyro)
     gyro_reader = None
+    crash_detector = None
     last_effective_risk = None
     GYRO_HARSH_THRESHOLD_DEG_S = 50.0
     GYRO_BUMP = 1
-    try:
-        from components.gyroData import GyroReader
-        _gr = GyroReader()
-        _gr.start(print_from_loop=False)
-        gyro_reader = _gr
-        print("Gyro reader started (serial)")
-    except Exception as e:
-        print(f"Gyro reader unavailable: {e}")
+    if GYRO_AVAILABLE:
+        try:
+            _gr = GyroReader()
+            _gr.start(print_from_loop=False)
+            gyro_reader = _gr
+            crash_detector = CrashDetector()
+            print("Gyro reader started (serial, crash detection enabled)")
+        except Exception as e:
+            print(f"Gyro reader unavailable: {e}")
 
     frame_count = 0
 
@@ -3133,6 +3157,19 @@ def main():
                 gyro_bump = GYRO_BUMP if gyro_mag >= GYRO_HARSH_THRESHOLD_DEG_S else 0
                 effective_risk = min(6, intox_score + gyro_bump)
                 last_effective_risk = effective_risk
+
+                # Crash detection
+                if crash_detector is not None:
+                    crash_detector.feed(
+                        latest["acc_mag"], latest["acc_delta"],
+                        gyro_mag, latest["timestamp"],
+                    )
+                    crash_event = crash_detector.get_crash_event()
+                    if crash_event:
+                        print(f"\n>>> CRASH DETECTED: {crash_event['severity'].upper()} <<<")
+                        print(f"    Peak: {crash_event['peak_g']}g, Gyro: {crash_event['peak_gyro']} deg/s\n")
+                        buzzer.start_continuous("emergency")
+                        supabase_uploader.record_crash(crash_event)
 
         # --- Always: realtime + trip + buzzer ---
         supabase_uploader.update_vehicle_realtime(

@@ -80,6 +80,22 @@ struct TripDetailView: View {
               .foregroundStyle(.red)
             }
 
+            if trip.crashDetected {
+              HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                Text("Crash Detected")
+                  .font(.system(.caption, design: .rounded, weight: .semibold))
+                if let severity = trip.crashSeverity {
+                  Text("(\(severity))")
+                    .font(.system(.caption2, design: .rounded))
+                }
+              }
+              .foregroundStyle(.white)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 6)
+              .background(.red, in: .capsule)
+            }
+
             // Time + duration pills
             HStack(spacing: 8) {
               DetailPill(

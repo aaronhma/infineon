@@ -339,7 +339,11 @@ CREATE TABLE IF NOT EXISTS public.vehicle_trips (
     speed_sample_sum INTEGER DEFAULT 0,
 
     -- GPS route waypoints (JSONB array of {lat, lng, spd, ts})
-    route_waypoints JSONB DEFAULT '[]'::jsonb
+    route_waypoints JSONB DEFAULT '[]'::jsonb,
+
+    -- Crash detection
+    crash_detected BOOLEAN DEFAULT FALSE,
+    crash_severity TEXT DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_vehicle_trips_vehicle_id ON public.vehicle_trips(vehicle_id);

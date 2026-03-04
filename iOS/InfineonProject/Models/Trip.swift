@@ -34,6 +34,9 @@ struct Trip: Identifiable {
   // Distraction events
   var phoneDistractionEventCount: Int { vehicleTrip.phoneDistractionEventCount ?? 0 }
   var drinkingEventCount: Int { vehicleTrip.drinkingEventCount ?? 0 }
+  // Crash detection
+  var crashDetected: Bool { vehicleTrip.crashDetected ?? false }
+  var crashSeverity: String? { vehicleTrip.crashSeverity }
 
   init(vehicleTrip: VehicleTrip) {
     self.vehicleTrip = vehicleTrip
@@ -158,7 +161,9 @@ extension Trip {
       speedSampleSum: 4550,
       phoneDistractionEventCount: 0,
       drinkingEventCount: 0,
-      routeWaypoints: nil
+      routeWaypoints: nil,
+      crashDetected: nil,
+      crashSeverity: nil
     )
   )
 
@@ -184,7 +189,9 @@ extension Trip {
       speedSampleSum: 2750,
       phoneDistractionEventCount: 2,
       drinkingEventCount: 1,
-      routeWaypoints: nil
+      routeWaypoints: nil,
+      crashDetected: nil,
+      crashSeverity: nil
     )
   )
 
@@ -210,7 +217,9 @@ extension Trip {
       speedSampleSum: 2100,
       phoneDistractionEventCount: 5,
       drinkingEventCount: 3,
-      routeWaypoints: nil
+      routeWaypoints: nil,
+      crashDetected: nil,
+      crashSeverity: nil
     )
   )
 }

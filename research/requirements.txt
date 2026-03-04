@@ -5,14 +5,14 @@ scipy
 supabase
 python-dotenv
 insightface  # For face embeddings and clustering similar faces (no dlib dependency)
-#onnxruntime  # Required by insightface for model inference
+onnxruntime  # Required by insightface for model inference
 ultralytics # yolo model
-#ultralytics[export] # yolo model
+ultralytics[export] # yolo model
 pynmea2 # gps
 requests  # For speed limit API calls
 # RPi.GPIO # install on raspberry pi
 pyserial
-#pyaudio  # Microphone audio recording
-#shazamio  # Free Shazam music recognition
+pyaudio  # Microphone audio recording
+shazamio  # Free Shazam music recognition
 ncnn
-#onnxscript
+onnxscript
