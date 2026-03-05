@@ -77,6 +77,14 @@ class BuzzerController:
             except Exception as e:
                 print(f"Error playing buzzer tone: {e}")
 
+    def play_startup_alert(self):
+        """Play 3 rapid beeps to indicate successful startup"""
+        for i in range(3):
+            self._play_tone(frequency=1800, duration=0.08)
+            if i < 2:
+                time.sleep(0.08)
+        print("[BUZZER] Startup alert played (3 rapid beeps)")
+
     def play_speeding_alert(self):
         """Play speeding warning sound (single medium beep)"""
         current_time = time.time()

@@ -1039,7 +1039,8 @@ struct VehicleLiveLocationView: View {
           .safeAreaInset(edge: .bottom) {
             if #available(iOS 26, macOS 26, watchOS 26, tvOS 26, visionOS 26, *) {
               locationInfoCard
-                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 32))
+                .padding()
             } else {
               locationInfoCard
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))

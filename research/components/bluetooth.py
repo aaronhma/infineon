@@ -22,6 +22,7 @@ CHAR_REALTIME_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780001"
 CHAR_SETTINGS_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780002"
 CHAR_BUZZER_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780003"
 CHAR_TRIP_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780004"
+CHAR_RELAY_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780005"
 
 DEVICE_NAME = "InfineonDMS"
 
@@ -45,6 +46,7 @@ class BluetoothServer:
         self._realtime_bytes = b"{}"
         self._settings_bytes = b"{}"
         self._trip_bytes = b"{}"
+        self._relay_bytes = b"{}"
 
     # ------------------------------------------------------------------
     # Public API
@@ -98,6 +100,18 @@ class BluetoothServer:
             self._trip_bytes = payload
         if not self._use_fake and self._server and self._connected:
             self._schedule_notify(CHAR_TRIP_UUID, payload)
+
+    def update_relay(self, data: dict):
+        """Push Supabase-format data for iOS relay — triggers BLE notify.
+
+        When the Pi has no internet, the iOS app reads this characteristic and
+        uploads the data to Supabase on the Pi's behalf.
+        """
+        payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
+        with self._lock:
+            self._relay_bytes = payload
+        if not self._use_fake and self._server and self._connected:
+            self._schedule_notify(CHAR_RELAY_UUID, payload)
 
     @property
     def is_connected(self):
@@ -162,6 +176,14 @@ class BluetoothServer:
             GATTAttributePermissions.readable,
         )
 
+        # Relay — Read + Notify (iOS relays this data to Supabase when Pi is offline)
+        await self._server.add_new_characteristic(
+            SERVICE_UUID, CHAR_RELAY_UUID,
+            GATTCharacteristicProperties.read | GATTCharacteristicProperties.notify,
+            None,
+            GATTAttributePermissions.readable,
+        )
+
         await self._server.start()
         print(f"[BLE] GATT server advertising as '{self._device_name}'")
 
@@ -187,6 +209,8 @@ class BluetoothServer:
                 characteristic.value = self._settings_bytes
             elif uuid == CHAR_TRIP_UUID:
                 characteristic.value = self._trip_bytes
+            elif uuid == CHAR_RELAY_UUID:
+                characteristic.value = self._relay_bytes
 
     def _on_write(self, characteristic, value, **kwargs):
         uuid = str(characteristic.uuid).upper()

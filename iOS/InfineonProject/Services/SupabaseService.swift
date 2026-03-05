@@ -1127,6 +1127,98 @@ class SupabaseService {
     self.vehicleRealtimeData[vehicleId] = realtime
   }
 
+  // MARK: - BLE Relay (upload Pi data to Supabase on its behalf)
+
+  /// Relay BLE data to Supabase. Called by the relay timer when BLE is connected.
+  /// The Pi sends full Supabase-format records via the relay characteristic;
+  /// we upsert them to the database so the Pi works without internet.
+  func relayBLEDataToSupabase(vehicleId: String) async {
+    guard bluetooth.isConnected, let relay = bluetooth.latestRelay else { return }
+
+    // Relay realtime data
+    if let rt = relay.rt {
+      let record = rt.mapValues { Self.toAnyJSON($0) }
+      do {
+        try await client
+          .from("vehicle_realtime")
+          .upsert(record)
+          .execute()
+      } catch {
+        print("[BLE Relay] Error relaying realtime: \(error)")
+      }
+    }
+
+    // Relay trip data
+    if let trip = relay.trip, let tripIdValue = trip["id"] {
+      let record = trip.filter { $0.key != "id" }.mapValues { Self.toAnyJSON($0) }
+      let tripId: String
+      if case .string(let id) = tripIdValue { tripId = id } else { return }
+      do {
+        try await client
+          .from("vehicle_trips")
+          .update(record)
+          .eq("id", value: tripId)
+          .execute()
+      } catch {
+        print("[BLE Relay] Error relaying trip: \(error)")
+      }
+    }
+  }
+
+  private static func toAnyJSON(_ value: AnyCodable) -> AnyJSON {
+    switch value {
+    case .string(let v): .string(v)
+    case .int(let v): .double(Double(v))
+    case .double(let v): .double(v)
+    case .bool(let v): .bool(v)
+    case .null: .null
+    }
+  }
+
+  struct BuzzerRelayState {
+    let active: Bool
+    let type: String
+  }
+
+  /// Fetch buzzer state from Supabase to relay back to Pi via BLE.
+  /// Returns non-nil only when the buzzer state has changed.
+  func fetchBuzzerStateForRelay(vehicleId: String) async -> BuzzerRelayState? {
+    do {
+      struct BuzzerRow: Decodable {
+        let buzzerActive: Bool?
+        let buzzerType: String?
+
+        enum CodingKeys: String, CodingKey {
+          case buzzerActive = "buzzer_active"
+          case buzzerType = "buzzer_type"
+        }
+      }
+
+      let rows: [BuzzerRow] =
+        try await client
+        .from("vehicle_realtime")
+        .select("buzzer_active, buzzer_type")
+        .eq("vehicle_id", value: vehicleId)
+        .execute()
+        .value
+
+      guard let row = rows.first, let active = row.buzzerActive else { return nil }
+      let type = row.buzzerType ?? "alert"
+
+      // Only relay if state changed from what we last relayed
+      let key = "lastRelayedBuzzer_\(vehicleId)"
+      let lastState = UserDefaults.standard.bool(forKey: key)
+      if active != lastState {
+        UserDefaults.standard.set(active, forKey: key)
+        return BuzzerRelayState(active: active, type: type)
+      }
+      return nil
+    } catch {
+      print("[BLE Relay] Error fetching buzzer state: \(error)")
+      return nil
+    }
+  }
+
   func joinVehicleByInviteCode(_ inviteCode: String) async throws -> JoinVehicleResponse {
     let response: JoinVehicleResponse =
       try await client

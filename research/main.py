@@ -527,6 +527,10 @@ class SupabaseUploader:
         self._trip_sync_busy = False
         self._music_upload_busy = False
 
+        # Latest records for BLE relay (iOS uploads to Supabase on Pi's behalf)
+        self.latest_realtime_record = {}
+        self.latest_trip_record = {}
+
         # Driver identification
         self.driver_profiles = {}  # {profile_id: profile_data}
         self.current_driver_name = None
@@ -911,6 +915,12 @@ class SupabaseUploader:
             record["driver_profile_id"] = self.current_driver_profile_id
         trip_id = self.trip_id
 
+        # Store for BLE relay (iOS can upload on Pi's behalf when offline)
+        # Exclude route_waypoints — too large for BLE MTU
+        relay_record = {k: v for k, v in record.items() if k != "route_waypoints"}
+        relay_record["id"] = trip_id
+        self.latest_trip_record = relay_record
+
         def _do_sync():
             try:
                 self.client.table("vehicle_trips").update(record).eq(
@@ -1224,6 +1234,9 @@ class SupabaseUploader:
             record["longitude"] = float(longitude)
             record["satellites"] = int(satellites)
 
+        # Store for BLE relay (iOS can upload on Pi's behalf when offline)
+        self.latest_realtime_record = record
+
         def _do_update():
             try:
                 self.client.table("vehicle_realtime").upsert(record).execute()
@@ -1413,7 +1426,7 @@ class DistractionDetector:
         self._backend = None        # "ultralytics" or "onnx"
 
         if self.enabled:
-            self.confidence_threshold = 0.15
+            self.confidence_threshold = 0.45
 
             # --- Try ultralytics first (dev machines) ---
             if YOLO_AVAILABLE:
@@ -1467,7 +1480,8 @@ class DistractionDetector:
         # Smoothing - require multiple consecutive frames
         self.phone_frames = 0
         self.drinking_frames = 0
-        self.detection_threshold = 1  # Frames needed to confirm detection
+        self.detection_threshold = 1       # Frames for YOLO-detected phone
+        self._hand_ear_threshold = 1       # Frames for hand-at-ear
 
         # Cooldown: once phone_detected goes True, hold it for at least this
         # many seconds before allowing it to drop back to False.
@@ -1507,9 +1521,9 @@ class DistractionDetector:
                     base_options=base_options,
                     running_mode=_mp_vision.RunningMode.IMAGE,
                     num_hands=2,
-                    min_hand_detection_confidence=0.5,
-                    min_hand_presence_confidence=0.5,
-                    min_tracking_confidence=0.5,
+                    min_hand_detection_confidence=0.3,
+                    min_hand_presence_confidence=0.3,
+                    min_tracking_confidence=0.3,
                 )
                 self.hand_landmarker = _mp_vision.HandLandmarker.create_from_options(options)
                 print("MediaPipe HandLandmarker loaded for phone-at-ear detection")
@@ -1692,24 +1706,43 @@ class DistractionDetector:
             print(f"  HANDS: detected hand {i} wrist=({wx:.0f},{wy:.0f})")
         return results.hand_landmarks
 
+    @staticmethod
+    def _fingers_curled(hand_lms):
+        """Check if fingers are curled (gripping a phone-shaped object).
+
+        A finger is "not extended" if its tip is closer to the wrist than
+        the finger's MCP (knuckle) joint.  When gripping a phone the fingers
+        wrap around it — tips come back toward the palm even though they're
+        not in a tight fist.  A generous 1.5× multiplier accounts for this.
+
+        Returns:
+            int: number of curled fingers (0-4, excluding thumb)
+        """
+        wrist = hand_lms[0]
+        # (MCP index, TIP index) for index, middle, ring, pinky
+        finger_joints = [(5, 8), (9, 12), (13, 16), (17, 20)]
+        curled = 0
+        for mcp_idx, tip_idx in finger_joints:
+            mcp = hand_lms[mcp_idx]
+            tip = hand_lms[tip_idx]
+            d_tip = ((tip.x - wrist.x) ** 2 + (tip.y - wrist.y) ** 2) ** 0.5
+            d_mcp = ((mcp.x - wrist.x) ** 2 + (mcp.y - wrist.y) ** 2) ** 0.5
+            if d_tip < d_mcp * 1.5:
+                curled += 1
+        return curled
+
     def _detect_hand_near_face(self, frame, hand_landmarks=None):
-        """Detect a hand raised near the face (phone at ear or held to face).
+        """Detect a curled hand raised near the face → phone at ear.
 
-        Catches two cases YOLO misses:
-        1. Phone pressed to ear (occluded by hand/head)
-        2. Phone held from the side near face (thin edge facing camera)
+        Only two gates:
+          G1 – hand in upper 70% of frame (head level)
+          G2 – wrist near the face (within 1.5× face width/height)
+        Plus the finger-curl check (>= 2 of 4 fingers curled).
 
-        Uses the Tasks API HandLandmarker (RunningMode.IMAGE) in the
-        background thread.  The cached face_bbox from the main thread
-        provides face-region coordinates for proximity checks.
-
-        Args:
-            frame: BGR image (used for dimensions only if hand_landmarks provided)
-            hand_landmarks: pre-computed landmarks from _detect_hands() (optional)
+        No orientation gate — phone can be held portrait OR landscape.
 
         Returns:
             tuple: (is_near_face: bool, hand_bbox: tuple|None)
-                   hand_bbox is (x1, y1, x2, y2) pixel coordinates or None
         """
         if hand_landmarks is None:
             hand_landmarks = self._detect_hands(frame)
@@ -1720,15 +1753,16 @@ class DistractionDetector:
         face = self._last_face_bbox
 
         for hand_lms in hand_landmarks:
-            # Wrist (landmark 0) and middle-finger MCP (landmark 9)
             wrist_x = hand_lms[0].x * w
             wrist_y = hand_lms[0].y * h
-            mcp_x = hand_lms[9].x * w
-            mcp_y = hand_lms[9].y * h
 
-            # --- Gate 1: hand must be in upper 70% of frame (head level) ---
+            # G1: hand must be in upper 70% of frame
             if wrist_y > h * 0.70:
-                print(f"  HANDS: gate1 fail wrist_y={wrist_y:.0f} > {h*0.70:.0f}")
+                continue
+
+            # Finger curl check (works with or without face)
+            curled = self._fingers_curled(hand_lms)
+            if curled < 2:
                 continue
 
             if face is not None:
@@ -1737,39 +1771,21 @@ class DistractionDetector:
                 face_w = face["x_max"] - face["x_min"]
                 face_h = face["y_max"] - face["y_min"]
 
-                # --- Gate 2: wrist must be beside the face (ear zone) ---
-                # Horizontal: 1.5x face width (covers ear + phone offset).
-                # Vertical: tight 0.8x face height (rejects hands above head
-                # like stretching — phone at ear is at the same height as face).
+                # G2: wrist near the face
                 dx = abs(wrist_x - face_cx)
                 dy = abs(wrist_y - face_cy)
-                if dx > face_w * 1.5 or dy > face_h * 0.8:
-                    print(f"  HANDS: gate2 fail wrist=({wrist_x:.0f},{wrist_y:.0f}) "
-                          f"face_c=({face_cx:.0f},{face_cy:.0f}) "
-                          f"dx={dx:.0f}>{face_w*1.5:.0f} dy={dy:.0f}>{face_h*0.8:.0f}")
-                    continue
-
-                # --- Gate 3: hand should be roughly vertical (not flat) ---
-                hand_dy = abs(mcp_y - wrist_y)
-                hand_dx = abs(mcp_x - wrist_x)
-                # Skip clearly horizontal hands (resting on steering wheel)
-                if hand_dx > 0 and hand_dy < hand_dx * 0.3:
-                    print(f"  HANDS: gate3 fail (horizontal) dy={hand_dy:.0f} dx={hand_dx:.0f}")
+                if dx > face_w * 1.5 or dy > face_h * 1.0:
                     continue
             else:
-                # No face bbox available — use frame-relative checks
-                print(f"  HANDS: no face bbox, using frame-relative gates")
                 if wrist_y > h * 0.55:
-                    print(f"  HANDS: no-face gate fail wrist_y={wrist_y:.0f} > {h*0.55:.0f}")
                     continue
                 if wrist_x < w * 0.1 or wrist_x > w * 0.9:
-                    print(f"  HANDS: no-face gate fail wrist_x={wrist_x:.0f} outside 10-90%")
                     continue
 
-            # All gates passed → compute hand bounding box
             xs = [lm.x * w for lm in hand_lms]
             ys = [lm.y * h for lm in hand_lms]
             bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+            print(f"  HANDS: phone-at-ear (curled={curled}/4)")
             return True, bbox
 
         return False, None
@@ -1854,7 +1870,9 @@ class DistractionDetector:
 
             # Phone detection with cooldown: once detected, hold for at least
             # _PHONE_COOLDOWN_SECS to bridge intermittent YOLO misses.
-            raw_phone = self.phone_frames >= self.detection_threshold
+            # Hand-at-ear needs more consecutive frames to confirm.
+            threshold = self._hand_ear_threshold if self.hand_at_ear else self.detection_threshold
+            raw_phone = self.phone_frames >= threshold
             if raw_phone:
                 self.phone_detected = True
                 self._phone_last_seen = now
@@ -1940,9 +1958,14 @@ class DistractionDetector:
                         f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
                     )
 
-        # Hand-at-ear fallback disabled — it cannot distinguish a bare hand
-        # near the face (scratching, stretching, resting chin) from a hand
-        # holding a phone.  Rely on YOLO for phone detection instead.
+        # Hand-at-ear fallback: when YOLO didn't see a phone, check for a
+        # hand in phone-grip posture near the ear.  Uses finger-curl + ear-zone
+        # gates to reject bare-hand gestures (scratching, chin rest, etc.).
+        if current_phone is None and self.hand_landmarker is not None:
+            is_near, hand_bbox = self._detect_hand_near_face(frame)
+            if is_near and hand_bbox is not None:
+                current_phone = hand_bbox
+                hand_at_ear = True
 
         self._yolo_times.append(time.time() - t0)
         self._yolo_completions += 1
@@ -2895,6 +2918,7 @@ def main():
     )
     buzzer = BuzzerController()
     buzzer.start()
+    buzzer.play_startup_alert()
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
 
     # Feature settings from Supabase (falls back to .env)
@@ -3294,6 +3318,16 @@ def main():
                 "phone_events": getattr(supabase_uploader, "trip_phone_events", 0),
                 "max_intox_score": supabase_uploader.trip_max_intox_score,
             })
+
+            # Relay: send full Supabase-format records for iOS to upload
+            # when the Pi has no internet. iOS reads this and upserts to Supabase.
+            relay_data = {}
+            if supabase_uploader.latest_realtime_record:
+                relay_data["rt"] = supabase_uploader.latest_realtime_record
+            if supabase_uploader.latest_trip_record:
+                relay_data["trip"] = supabase_uploader.latest_trip_record
+            if relay_data:
+                ble_server.update_relay(relay_data)
 
         # --- Camera-dependent uploads ---
         if cap is not None:

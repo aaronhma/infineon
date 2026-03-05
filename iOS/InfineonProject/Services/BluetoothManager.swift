@@ -15,6 +15,7 @@ private let realtimeCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780
 private let settingsCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780002")
 private let buzzerCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780003")
 private let tripCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780004")
+private let relayCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780005")
 
 // MARK: - Compact BLE payload models
 
@@ -83,6 +84,50 @@ struct BLETripData: Codable {
   let ix_max: Int
 }
 
+/// Relay data: full Supabase-format records for iOS to upload on Pi's behalf.
+struct BLERelayData: Codable {
+  let rt: [String: AnyCodable]?
+  let trip: [String: AnyCodable]?
+}
+
+/// Type-erased Codable wrapper for relay JSON values.
+enum AnyCodable: Codable {
+  case string(String)
+  case int(Int)
+  case double(Double)
+  case bool(Bool)
+  case null
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.singleValueContainer()
+    if let v = try? container.decode(Bool.self) {
+      self = .bool(v)
+    } else if let v = try? container.decode(Int.self) {
+      self = .int(v)
+    } else if let v = try? container.decode(Double.self) {
+      self = .double(v)
+    } else if let v = try? container.decode(String.self) {
+      self = .string(v)
+    } else if container.decodeNil() {
+      self = .null
+    } else {
+      self = .null
+    }
+  }
+
+  func encode(to encoder: Encoder) throws {
+    var container = encoder.singleValueContainer()
+    switch self {
+    case .string(let v): try container.encode(v)
+    case .int(let v): try container.encode(v)
+    case .double(let v): try container.encode(v)
+    case .bool(let v): try container.encode(v)
+    case .null: try container.encodeNil()
+    }
+  }
+
+}
+
 // MARK: - BluetoothManager
 
 @Observable
@@ -102,6 +147,7 @@ final class BluetoothManager: NSObject {
   private(set) var statusMessage = "Off"
   private(set) var latestRealtime: BLERealtimeData?
   private(set) var latestTrip: BLETripData?
+  private(set) var latestRelay: BLERelayData?
 
   /// Set by the UI when a vehicle profile is selected while BLE is connected.
   /// The data polling timer uses this to feed BLE data into `vehicleRealtimeData`.
@@ -119,6 +165,8 @@ final class BluetoothManager: NSObject {
 
   // BLE → vehicleRealtimeData polling
   private var dataTimer: Timer?
+  // BLE relay → Supabase (upload Pi data on its behalf)
+  private var relayTimer: Timer?
 
   private static let scanTimeout: TimeInterval = 15
   private static let reconnectDelay: TimeInterval = 2
@@ -140,6 +188,28 @@ final class BluetoothManager: NSObject {
   private func stopDataTimer() {
     dataTimer?.invalidate()
     dataTimer = nil
+  }
+
+  // MARK: - Relay Timer (upload Pi data to Supabase + poll buzzer)
+
+  private func startRelayTimer() {
+    guard relayTimer == nil else { return }
+    relayTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+      guard let self, let vid = self.connectedVehicleId else { return }
+      Task {
+        await supabase.relayBLEDataToSupabase(vehicleId: vid)
+        // Poll buzzer state from Supabase and relay back to Pi
+        let buzzerState = await supabase.fetchBuzzerStateForRelay(vehicleId: vid)
+        if let buzzerState {
+          self.writeBuzzerCommand(active: buzzerState.active, type: buzzerState.type)
+        }
+      }
+    }
+  }
+
+  private func stopRelayTimer() {
+    relayTimer?.invalidate()
+    relayTimer = nil
   }
 
   // MARK: - Public Write Methods
@@ -196,12 +266,14 @@ final class BluetoothManager: NSObject {
 
   private func cleanup() {
     stopDataTimer()
+    stopRelayTimer()
     isConnected = false
     connectedPeripheral = nil
     settingsCharacteristic = nil
     buzzerCharacteristic = nil
     latestRealtime = nil
     latestTrip = nil
+    latestRelay = nil
     connectedVehicleId = nil
   }
 
@@ -254,6 +326,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
     isConnected = true
     statusMessage = "Connected"
     startDataTimer()
+    startRelayTimer()
     peripheral.discoverServices([serviceUUID])
   }
 
@@ -284,7 +357,7 @@ extension BluetoothManager: CBPeripheralDelegate {
       return
     }
     peripheral.discoverCharacteristics(
-      [realtimeCharUUID, settingsCharUUID, buzzerCharUUID, tripCharUUID],
+      [realtimeCharUUID, settingsCharUUID, buzzerCharUUID, tripCharUUID, relayCharUUID],
       for: service
     )
   }
@@ -307,6 +380,8 @@ extension BluetoothManager: CBPeripheralDelegate {
       case tripCharUUID:
         peripheral.setNotifyValue(true, for: char)
         peripheral.readValue(for: char)
+      case relayCharUUID:
+        peripheral.setNotifyValue(true, for: char)
       default:
         break
       }
@@ -329,6 +404,10 @@ extension BluetoothManager: CBPeripheralDelegate {
     case tripCharUUID:
       if let parsed = try? decoder.decode(BLETripData.self, from: data) {
         latestTrip = parsed
+      }
+    case relayCharUUID:
+      if let parsed = try? decoder.decode(BLERelayData.self, from: data) {
+        latestRelay = parsed
       }
     default:
       break
