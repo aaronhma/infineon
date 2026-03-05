@@ -1021,6 +1021,11 @@ class SupabaseService {
   }
 
   func loadVehicleRealtimeData(vehicleId: String) async {
+    // BLE takes priority — skip Supabase fetch when connected
+    if bluetooth.isConnected {
+      return
+    }
+
     do {
       let realtimeData: VehicleRealtime =
         try await client
@@ -1038,6 +1043,14 @@ class SupabaseService {
     } catch {
       print("Error loading vehicle realtime data: \(error)")
     }
+  }
+
+  /// Feed BLE realtime data into the shared vehicleRealtimeData dict.
+  /// Call this from a timer or observation when BLE data arrives.
+  func updateFromBLE(vehicleId: String) {
+    guard bluetooth.isConnected, let bleData = bluetooth.latestRealtime else { return }
+    let realtime = bleData.toVehicleRealtime(vehicleId: vehicleId)
+    self.vehicleRealtimeData[vehicleId] = realtime
   }
 
   func joinVehicleByInviteCode(_ inviteCode: String) async throws -> JoinVehicleResponse {

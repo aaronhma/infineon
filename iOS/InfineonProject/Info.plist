@@ -38,9 +38,12 @@
 			<string>com.aaronhma.InfineonProject.feedback</string>
 		</dict>
 	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Bluetooth is used to communicate directly with your vehicle's hardware when nearby.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
+		<string>bluetooth-central</string>
 	</array>
 </dict>
 </plist>

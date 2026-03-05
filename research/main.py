@@ -85,6 +85,15 @@ try:
 except Exception as e:
     print(f"unavailable ({e})")
 
+BLE_AVAILABLE = False
+print("  Checking Bluetooth...", end=" ", flush=True)
+try:
+    from components.bluetooth import BluetoothServer
+    BLE_AVAILABLE = True
+    print("ok")
+except Exception as e:
+    print(f"unavailable ({e})")
+
 # MediaPipe + scipy are loaded lazily inside FaceAnalyzer.__init__() to avoid
 # segfaults from protobuf conflicts on RPi (a segfault bypasses try/except).
 _MEDIAPIPE_AVAILABLE = None  # determined at runtime in _check_mediapipe()
@@ -155,39 +164,56 @@ FONT_FAST = cv2.FONT_HERSHEY_PLAIN
 # Load environment variables from .env file
 load_dotenv()
 
-# Try to import YOLO — tested in subprocess first to survive segfaults
+def _check_yolo():
+    """Test whether ultralytics YOLO can be imported without segfaulting.
+
+    Runs 'from ultralytics import YOLO' in a subprocess. Falls back to
+    ONNX runtime if ultralytics is unavailable.
+    """
+    global YOLO_AVAILABLE, YOLO_ONNX_AVAILABLE
+    print("  Checking YOLO...", end=" ", flush=True)
+    try:
+        import subprocess
+        _yolo_check = subprocess.run(
+            [sys.executable, "-c", "from ultralytics import YOLO"],
+            capture_output=True, timeout=30,
+        )
+        if _yolo_check.returncode == 0:
+            from ultralytics import YOLO
+            globals()["YOLO"] = YOLO
+            YOLO_AVAILABLE = True
+            print("ok (ultralytics)")
+        else:
+            _yolo_err = _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
+            print(f"ultralytics unavailable ({_yolo_err[:80]})")
+    except Exception as e:
+        print(f"ultralytics unavailable ({e})")
+    # On RPi where ultralytics/PyTorch aren't available, check for ONNX fallback
+    if not YOLO_AVAILABLE:
+        _onnx_candidates = [
+            "yolo-models/yolo26n.onnx", "yolo-models/yolo26s.onnx", "yolo-models/yolo26m.onnx",
+        ]
+        _has_onnx_model = any(os.path.isfile(p) for p in _onnx_candidates)
+        if _has_onnx_model:
+            try:
+                import onnxruntime
+                YOLO_ONNX_AVAILABLE = True
+                print(f"  YOLO ONNX fallback available (onnxruntime {onnxruntime.__version__})")
+            except ImportError:
+                print("  No ONNX fallback (onnxruntime not installed)")
+        else:
+            print("  No ONNX models found in yolo-models/ (run export_driver.py to generate)")
+
+
+# Run MediaPipe and YOLO availability checks in parallel — each spawns a
+# subprocess that can segfault safely.  Previously ran sequentially (up to 45s).
 YOLO_AVAILABLE = False
 YOLO_ONNX_AVAILABLE = False
-print("  Checking YOLO...", end=" ", flush=True)
-try:
-    _yolo_check = __import__("subprocess").run(
-        [sys.executable, "-c", "from ultralytics import YOLO"],
-        capture_output=True, timeout=30,
-    )
-    if _yolo_check.returncode == 0:
-        from ultralytics import YOLO
-        YOLO_AVAILABLE = True
-        print("ok (ultralytics)")
-    else:
-        _yolo_err = _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
-        print(f"ultralytics unavailable ({_yolo_err[:80]})")
-except Exception as e:
-    print(f"ultralytics unavailable ({e})")
-# On RPi where ultralytics/PyTorch aren't available, check for ONNX fallback
-if not YOLO_AVAILABLE:
-    _onnx_candidates = [
-        "yolo-models/yolo26n.onnx", "yolo-models/yolo26s.onnx", "yolo-models/yolo26m.onnx",
-    ]
-    _has_onnx_model = any(os.path.isfile(p) for p in _onnx_candidates)
-    if _has_onnx_model:
-        try:
-            import onnxruntime
-            YOLO_ONNX_AVAILABLE = True
-            print(f"  YOLO ONNX fallback available (onnxruntime {onnxruntime.__version__})")
-        except ImportError:
-            print("  No ONNX fallback (onnxruntime not installed)")
-    else:
-        print("  No ONNX models found in yolo-models/ (run export_driver.py to generate)")
+with ThreadPoolExecutor(max_workers=2) as _startup_pool:
+    _mp_future = _startup_pool.submit(_check_mediapipe)
+    _yolo_future = _startup_pool.submit(_check_yolo)
+    _mp_future.result()
+    _yolo_future.result()
 
 # .env overrides: if explicitly set in .env, these take priority over Supabase.
 # If not set, Supabase value is used. Format: {key: (value, is_explicitly_set)}
@@ -530,9 +556,15 @@ class SupabaseUploader:
         # Register vehicle on startup — allow offline operation
         try:
             self._register_vehicle()
-            self._fetch_feature_settings()
-            self._load_driver_profiles()
-            self._create_trip()
+            # After vehicle registered, these three are independent — run in parallel
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                futures = [
+                    pool.submit(self._fetch_feature_settings),
+                    pool.submit(self._load_driver_profiles),
+                    pool.submit(self._create_trip),
+                ]
+                for f in futures:
+                    f.result()
             self._subscribe_to_buzzer_commands()
             self._connected = True
             print(
@@ -1327,9 +1359,8 @@ class DistractionDetector:
     CELL_PHONE = 67
     BOTTLE = 39
     CUP = 41
-    PHONE_CLASSES = {67}                     # cell phone
+    PHONE_CLASSES = {63, 65, 67, 73}         # laptop, remote, cell phone, book
     DRINK_CLASSES = {39, 40, 41}             # bottle, wine glass, cup
-    DEVICE_CLASSES = {63, 65, 67, 73}        # laptop, remote, cell phone, book
 
     # COCO class names (subset used for logging when running ONNX backend)
     COCO_NAMES = {
@@ -1382,7 +1413,7 @@ class DistractionDetector:
         self._backend = None        # "ultralytics" or "onnx"
 
         if self.enabled:
-            self.confidence_threshold = 0.25
+            self.confidence_threshold = 0.15
 
             # --- Try ultralytics first (dev machines) ---
             if YOLO_AVAILABLE:
@@ -1436,7 +1467,12 @@ class DistractionDetector:
         # Smoothing - require multiple consecutive frames
         self.phone_frames = 0
         self.drinking_frames = 0
-        self.detection_threshold = 2  # Frames needed to confirm detection
+        self.detection_threshold = 1  # Frames needed to confirm detection
+
+        # Cooldown: once phone_detected goes True, hold it for at least this
+        # many seconds before allowing it to drop back to False.
+        self._PHONE_COOLDOWN_SECS = 2.0
+        self._phone_last_seen = 0.0
 
         # Async YOLO processing — runs inference in a background thread
         # so the main loop is never blocked by model forward pass
@@ -1701,15 +1737,16 @@ class DistractionDetector:
                 face_w = face["x_max"] - face["x_min"]
                 face_h = face["y_max"] - face["y_min"]
 
-                # --- Gate 2: wrist must be near the face ---
-                # Allow within 1.2x face dimensions from face centre.
-                # This covers ear, cheek, and in-front-of-face positions.
+                # --- Gate 2: wrist must be beside the face (ear zone) ---
+                # Horizontal: 1.5x face width (covers ear + phone offset).
+                # Vertical: tight 0.8x face height (rejects hands above head
+                # like stretching — phone at ear is at the same height as face).
                 dx = abs(wrist_x - face_cx)
                 dy = abs(wrist_y - face_cy)
-                if dx > face_w * 1.2 or dy > face_h * 1.2:
+                if dx > face_w * 1.5 or dy > face_h * 0.8:
                     print(f"  HANDS: gate2 fail wrist=({wrist_x:.0f},{wrist_y:.0f}) "
                           f"face_c=({face_cx:.0f},{face_cy:.0f}) "
-                          f"dx={dx:.0f}>{face_w*1.2:.0f} dy={dy:.0f}>{face_h*1.2:.0f}")
+                          f"dx={dx:.0f}>{face_w*1.5:.0f} dy={dy:.0f}>{face_h*0.8:.0f}")
                     continue
 
                 # --- Gate 3: hand should be roughly vertical (not flat) ---
@@ -1759,7 +1796,7 @@ class DistractionDetector:
         if face_bbox is not None:
             self._last_face_bbox = face_bbox
         # Return empty results if YOLO is disabled
-        if not self.enabled or self.model is None:
+        if not self.enabled or self._backend is None:
             return {
                 "phone_detected": False,
                 "drinking_detected": False,
@@ -1793,11 +1830,14 @@ class DistractionDetector:
 
         # Update smoothing only when we have new YOLO results
         if has_result:
+            now = time.time()
+
             # Phone: detected by YOLO or hand-near-face fallback
             if new_phone is not None:
                 self.phone_bbox = new_phone
                 self.phone_frames += 1
                 self.hand_at_ear = is_hand_at_ear
+                self._phone_last_seen = now
             else:
                 self.phone_frames = max(0, self.phone_frames - 1)
                 if self.phone_frames == 0:
@@ -1812,7 +1852,17 @@ class DistractionDetector:
                 if self.drinking_frames == 0:
                     self.bottle_bbox = None
 
-            self.phone_detected = self.phone_frames >= self.detection_threshold
+            # Phone detection with cooldown: once detected, hold for at least
+            # _PHONE_COOLDOWN_SECS to bridge intermittent YOLO misses.
+            raw_phone = self.phone_frames >= self.detection_threshold
+            if raw_phone:
+                self.phone_detected = True
+                self._phone_last_seen = now
+            elif now - self._phone_last_seen < self._PHONE_COOLDOWN_SECS:
+                self.phone_detected = True
+            else:
+                self.phone_detected = False
+
             self.drinking_detected = self.drinking_frames >= self.detection_threshold
 
         return {
@@ -1860,9 +1910,9 @@ class DistractionDetector:
 
                     class_name = self.model.names[cls]
 
-                    if cls in self.PHONE_CLASSES or cls in self.DEVICE_CLASSES:
+                    if cls in self.PHONE_CLASSES:
                         current_phone = bbox
-                        print(f"YOLO: DEVICE (class {cls}: {class_name}) conf={conf:.2f}")
+                        print(f"YOLO: PHONE (class {cls}: {class_name}) conf={conf:.2f}")
                     elif cls in self.DRINK_CLASSES:
                         current_bottle = bbox
                         print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
@@ -1879,9 +1929,9 @@ class DistractionDetector:
                 bbox = (x1, y1, x2, y2)
                 class_name = self.COCO_NAMES.get(cls, f"class_{cls}")
 
-                if cls in self.PHONE_CLASSES or cls in self.DEVICE_CLASSES:
+                if cls in self.PHONE_CLASSES:
                     current_phone = bbox
-                    print(f"YOLO: DEVICE (class {cls}: {class_name}) conf={conf:.2f}")
+                    print(f"YOLO: PHONE (class {cls}: {class_name}) conf={conf:.2f}")
                 elif cls in self.DRINK_CLASSES:
                     current_bottle = bbox
                     print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
@@ -1890,17 +1940,9 @@ class DistractionDetector:
                         f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
                     )
 
-        # If YOLO didn't find a phone, check for hand near face.
-        # This catches phone-at-ear AND phone held sideways near face.
-        if current_phone is None:
-            if self.hand_landmarker is None:
-                if self._yolo_completions < 3:
-                    print("HANDS: hand_landmarker not loaded — hand fallbacks disabled")
-            is_near_face, hand_bbox = self._detect_hand_near_face(frame)
-            if is_near_face:
-                current_phone = hand_bbox
-                hand_at_ear = True
-                print("HANDS: Hand near face detected (possible phone use)")
+        # Hand-at-ear fallback disabled — it cannot distinguish a bare hand
+        # near the face (scratching, stretching, resting chin) from a hand
+        # holding a phone.  Rely on YOLO for phone detection instead.
 
         self._yolo_times.append(time.time() - t0)
         self._yolo_completions += 1
@@ -2763,66 +2805,47 @@ def draw_dashcam_hud(frame, speed, heading, direction):
 
 
 def draw_distraction_warning(frame, distraction_data, gaze_data=None):
-    """Draw prominent distraction warning banner on frame (optimized)
+    """Draw stacked distraction warning banners on frame.
 
-    Performance optimizations:
-    - Direct numpy array assignment for filled rectangles (3x faster than cv2.rectangle)
-    - FONT_HERSHEY_PLAIN instead of DUPLEX/SIMPLEX (2x faster)
-    - thickness=1 instead of 2 (50% faster)
+    Shows ALL active warnings simultaneously, stacked from the bottom.
+    Each banner is 30px tall with its own color and label.
     """
     if not distraction_data:
         return frame
 
     h, w = frame.shape[:2]
+    banner_h = 30
 
-    # Priority order: eyes-closed impairment > gaze distraction > phone > drinking
+    # Collect all active warnings: (label, color)
+    warnings = []
+
     if gaze_data and gaze_data.get("eyes_closed_impaired"):
         secs = gaze_data["eyes_closed_seconds"]
-        frame[h - 80 : h, 0:w] = COLOR_DARK_RED
-        cv2.putText(
-            frame,
-            f"IMPAIRED: EYES CLOSED ({secs:.1f}s)",
-            (w // 2 - 280, h - 45),
-            FONT_FAST,
-            1.4,
-            COLOR_WHITE,
-            1,
-        )
+        warnings.append((f"IMPAIRED: EYES CLOSED ({secs:.1f}s)", COLOR_DARK_RED))
 
-    elif gaze_data and gaze_data.get("gaze_distracted"):
+    if gaze_data and gaze_data.get("gaze_distracted"):
         direction = gaze_data["gaze_direction"].upper()
         secs = gaze_data["gaze_away_seconds"]
-        frame[h - 80 : h, 0:w] = COLOR_DARK_RED
-        cv2.putText(
-            frame,
-            f"DISTRACTED: LOOKING {direction} ({secs:.1f}s)",
-            (w // 2 - 280, h - 45),
-            FONT_FAST,
-            1.4,
-            COLOR_WHITE,
-            1,
-        )
+        warnings.append((f"DISTRACTED: LOOKING {direction} ({secs:.1f}s)", COLOR_DARK_RED))
 
-    elif distraction_data["phone_detected"]:
-        # Red banner for phone usage
-        frame[h - 80 : h, 0:w] = COLOR_DARK_RED
-        cv2.putText(
-            frame,
-            "WARNING: PHONE",
-            (w // 2 - 280, h - 45),
-            FONT_FAST,
-            1.4,
-            COLOR_WHITE,
-            1,
-        )
+    if distraction_data.get("phone_detected"):
+        warnings.append(("WARNING: PHONE DETECTED", COLOR_DARK_RED))
 
-    elif distraction_data["drinking_detected"]:
-        # Orange banner for drinking
-        frame[h - 60 : h, 0:w] = COLOR_DARK_ORANGE
+    if distraction_data.get("drinking_detected"):
+        warnings.append(("WARNING: DRINKING DETECTED", COLOR_DARK_ORANGE))
+
+    if not warnings:
+        return frame
+
+    # Draw banners stacked from bottom
+    for i, (label, color) in enumerate(warnings):
+        y_top = h - banner_h * (i + 1)
+        y_bot = h - banner_h * i
+        frame[y_top:y_bot, 0:w] = color
         cv2.putText(
             frame,
-            "WARNING: DRINKING",
-            (w // 2 - 180, h - 25),
+            label,
+            (10, y_bot - 8),
             FONT_FAST,
             1.4,
             COLOR_WHITE,
@@ -2882,6 +2905,35 @@ def main():
     enable_camera = settings["enable_camera"]
     enable_dashcam = settings["enable_dashcam"]
 
+    # Initialize BLE GATT server (direct iOS communication)
+    ble_server = None
+    if BLE_AVAILABLE:
+        def _ble_settings_write(data):
+            """Handle settings written from iOS via BLE."""
+            key_map = {
+                "yolo": "enable_yolo", "stream": "enable_stream",
+                "shazam": "enable_shazam", "mic": "enable_microphone",
+                "cam": "enable_camera", "dash": "enable_dashcam",
+            }
+            for short, full in key_map.items():
+                if short in data:
+                    supabase_uploader.feature_settings[full] = bool(data[short])
+            print(f"[BLE] Feature settings updated: {supabase_uploader.feature_settings}")
+
+        def _ble_buzzer_write(data):
+            """Handle buzzer commands from iOS via BLE."""
+            if data.get("active"):
+                buzzer.start_continuous(data.get("type", "alert"))
+            else:
+                buzzer.stop_continuous()
+
+        ble_server = BluetoothServer(
+            on_settings_write=_ble_settings_write,
+            on_buzzer_write=_ble_buzzer_write,
+        )
+        ble_server.start()
+        ble_server.update_settings(settings)
+
     # Open camera if enabled
     cap = None
     analyzer = None
@@ -2931,20 +2983,32 @@ def main():
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             cap.start()
             print(f"Camera opened: {width}x{height} (threaded capture)")
-            if _check_mediapipe():
-                try:
-                    print("  Loading MediaPipe FaceAnalyzer...", end=" ", flush=True)
-                    analyzer = FaceAnalyzer()
-                    print("ok")
-                except Exception as e:
-                    print(f"FAILED ({e})")
-                    print("  Using OpenCV fallback face detector")
-                    analyzer = FallbackFaceDetector()
-            else:
-                analyzer = FallbackFaceDetector()
-            print("  Loading DistractionDetector (YOLO)...", end=" ", flush=True)
-            distraction_detector = DistractionDetector(enabled=enable_yolo)
-            print("ok")
+            # Load FaceAnalyzer and DistractionDetector in parallel — they
+            # are independent and each loads heavy models (MediaPipe, YOLO).
+            def _load_face_analyzer():
+                if _check_mediapipe():
+                    try:
+                        print("  Loading MediaPipe FaceAnalyzer...", end=" ", flush=True)
+                        fa = FaceAnalyzer()
+                        print("ok")
+                        return fa
+                    except Exception as e:
+                        print(f"FAILED ({e})")
+                        print("  Using OpenCV fallback face detector")
+                        return FallbackFaceDetector()
+                return FallbackFaceDetector()
+
+            def _load_distraction_detector():
+                print("  Loading DistractionDetector (YOLO)...", end=" ", flush=True)
+                dd = DistractionDetector(enabled=enable_yolo)
+                print("ok")
+                return dd
+
+            with ThreadPoolExecutor(max_workers=2) as _model_pool:
+                _fa_future = _model_pool.submit(_load_face_analyzer)
+                _dd_future = _model_pool.submit(_load_distraction_detector)
+                analyzer = _fa_future.result()
+                distraction_detector = _dd_future.result()
     else:
         print("Camera disabled via Supabase settings")
 
@@ -3205,6 +3269,32 @@ def main():
 
         supabase_uploader.check_buzzer_commands()
 
+        # --- BLE direct updates (alongside Supabase) ---
+        if ble_server and not ble_server.is_fake:
+            ble_server.update_realtime({
+                "speed_mph": driving_sim.get_speed(),
+                "heading_degrees": driving_sim.get_heading(),
+                "compass_direction": driving_sim.get_compass_direction(),
+                "is_speeding": driving_sim.is_speeding(),
+                "driver_status": driver_status,
+                "intoxication_score": effective_risk,
+                "latitude": driving_sim.get_latitude(),
+                "longitude": driving_sim.get_longitude(),
+                "satellites": driving_sim.get_satellites(),
+                "is_phone_detected": distraction_data["phone_detected"],
+                "is_drinking_detected": distraction_data["drinking_detected"],
+            })
+            ble_server.update_trip({
+                "trip_id": supabase_uploader.trip_id or "",
+                "duration": int(time.time() - supabase_uploader.trip_start_time) if supabase_uploader.trip_start_time else 0,
+                "max_speed": supabase_uploader.trip_max_speed,
+                "avg_speed": sum(supabase_uploader.trip_speed_samples) / max(len(supabase_uploader.trip_speed_samples), 1),
+                "speeding_events": supabase_uploader.trip_speeding_events,
+                "drowsy_events": supabase_uploader.trip_drowsy_events,
+                "phone_events": getattr(supabase_uploader, "trip_phone_events", 0),
+                "max_intox_score": supabase_uploader.trip_max_intox_score,
+            })
+
         # --- Camera-dependent uploads ---
         if cap is not None:
             if detection_data and supabase_uploader.should_upload():
@@ -3349,6 +3439,8 @@ def main():
         music_recognizer.stop()
     if distraction_detector:
         distraction_detector.shutdown()
+    if ble_server:
+        ble_server.stop()
     supabase_uploader.end_trip()
     supabase_uploader.reset_vehicle_realtime()
     buzzer.stop()

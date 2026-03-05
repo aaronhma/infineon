@@ -1581,7 +1581,13 @@ struct VehicleLiveCameraView: View {
       VStack(spacing: 0) {
         // Camera feed
         ZStack {
-          if let frame = currentFrame {
+          if bluetooth.isConnected {
+            ContentUnavailableView {
+              Label("Camera Unavailable", systemImage: "video.slash")
+            } description: {
+              Text("Live camera streaming is not available over Bluetooth.")
+            }
+          } else if let frame = currentFrame {
             Image(uiImage: frame)
               .resizable()
               .aspectRatio(contentMode: .fit)

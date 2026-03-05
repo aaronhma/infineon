@@ -96,6 +96,43 @@ struct VehicleSettingsView: View {
           Text("These changes will take effect when the device restarts.")
         }
 
+        Section {
+          Toggle(isOn: Binding(get: { bluetooth.bleEnabled }, set: { bluetooth.bleEnabled = $0 })) {
+            Label {
+              VStack(alignment: .leading) {
+                Text("Direct Connection")
+                Group {
+                  if bluetooth.isConnected {
+                    Text("Connected")
+                      .foregroundStyle(.green)
+                  } else if bluetooth.bleEnabled {
+                    Text(bluetooth.statusMessage)
+                      .foregroundStyle(
+                        bluetooth.statusMessage.contains("not found")
+                          || bluetooth.statusMessage.contains("not authorized") ? .red : .secondary)
+                  } else {
+                    Text("Off")
+                      .foregroundStyle(.secondary)
+                  }
+                }
+                .font(.caption)
+              }
+            } icon: {
+              SettingsBoxView(
+                icon: bluetooth.isConnected
+                  ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash",
+                color: bluetooth.isConnected ? .green : .gray
+              )
+            }
+          }
+        } header: {
+          Text("Bluetooth")
+        } footer: {
+          Text(
+            "Connect directly to your vehicle over Bluetooth. Live camera streaming is not available over Bluetooth."
+          )
+        }
+
         Section("Hardware") {
           featureToggle(
             "Camera",
@@ -223,6 +260,20 @@ struct VehicleSettingsView: View {
         enableCamera: enableCamera,
         enableDashcam: enableDashcam
       )
+
+      // Write settings to BLE immediately (if connected)
+      if bluetooth.isConnected {
+        bluetooth.writeSettings(
+          BLESettingsData(
+            from: Vehicle(
+              id: vehicle.id, createdAt: vehicle.createdAt, updatedAt: .now,
+              name: vehicleName, description: vehicleDescription,
+              inviteCode: vehicle.inviteCode, ownerId: vehicle.ownerId,
+              enableYolo: enableYolo, enableStream: enableStream,
+              enableShazam: enableShazam, enableMicrophone: enableMicrophone,
+              enableCamera: enableCamera, enableDashcam: enableDashcam
+            )))
+      }
 
       // Update the profile in appData so the UI reflects the change
       await MainActor.run {
