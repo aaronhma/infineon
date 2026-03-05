@@ -85,6 +85,15 @@ class BuzzerController:
                 time.sleep(0.08)
         print("[BUZZER] Startup alert played (3 rapid beeps)")
 
+    def play_error_alert(self):
+        """Play error sound — low-high-low pattern indicating hardware failure"""
+        self._play_tone(frequency=400, duration=0.3)
+        time.sleep(0.1)
+        self._play_tone(frequency=800, duration=0.3)
+        time.sleep(0.1)
+        self._play_tone(frequency=400, duration=0.3)
+        print("[BUZZER] Error alert played (hardware failure)")
+
     def play_speeding_alert(self):
         """Play speeding warning sound (single medium beep)"""
         current_time = time.time()

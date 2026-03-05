@@ -1479,15 +1479,21 @@ class DistractionDetector:
         self.bottle_bbox = None
         self.hand_at_ear = False  # True when phone detected via hand-at-ear
 
-        # Smoothing - require multiple consecutive frames
+        # Two-tier confidence: high confidence anywhere, low confidence near face/hands
+        self._phone_conf_high = 0.30       # Phone-class objects anywhere
+        self._phone_conf_near = 0.18       # Phone-class objects near face/hands
+
+        # Sliding window smoothing — phone detected in N of last W frames
+        self._PHONE_WINDOW = 6
+        self._PHONE_MIN_HITS = 2
+        self._phone_window = deque(maxlen=self._PHONE_WINDOW)  # True/False per YOLO frame
+        self._drink_window = deque(maxlen=self._PHONE_WINDOW)
         self.phone_frames = 0
         self.drinking_frames = 0
-        self.detection_threshold = 1       # Frames for YOLO-detected phone
-        self._hand_ear_threshold = 1       # Frames for hand-at-ear
 
         # Cooldown: once phone_detected goes True, hold it for at least this
         # many seconds before allowing it to drop back to False.
-        self._PHONE_COOLDOWN_SECS = 2.0
+        self._PHONE_COOLDOWN_SECS = 3.0
         self._phone_last_seen = 0.0
 
         # Async YOLO processing — runs inference in a background thread
@@ -1591,9 +1597,14 @@ class DistractionDetector:
         confidences = class_scores[np.arange(len(class_ids)), class_ids]
 
         # Filter by confidence and target classes
+        # Use lower threshold for phone classes (partial visibility / odd angles)
+        phone_set = self.PHONE_CLASSES
         target_set = set(self.TARGET_CLASSES)
         mask = np.array([
-            conf >= self.confidence_threshold and int(cid) in target_set
+            int(cid) in target_set and (
+                conf >= self._phone_conf_near if int(cid) in phone_set
+                else conf >= self.confidence_threshold
+            )
             for conf, cid in zip(confidences, class_ids)
         ])
 
@@ -1734,12 +1745,13 @@ class DistractionDetector:
         return curled
 
     def _detect_hand_near_face(self, frame, hand_landmarks=None):
-        """Detect a curled hand raised near the face → phone at ear.
+        """Detect a hand raised near the face → phone at ear.
 
-        Only two gates:
+        Gates:
           G1 – hand in upper 70% of frame (head level)
-          G2 – wrist near the face (within 1.5× face width/height)
-        Plus the finger-curl check (>= 2 of 4 fingers curled).
+          G2 – wrist near the face (within 2× face width, 1.5× face height)
+        Plus finger-curl check (>= 1 of 4 fingers curled — relaxed for
+        various phone-holding grips including palm-flat and speakerphone).
 
         No orientation gate — phone can be held portrait OR landscape.
 
@@ -1762,9 +1774,10 @@ class DistractionDetector:
             if wrist_y > h * 0.70:
                 continue
 
-            # Finger curl check (works with or without face)
+            # Finger curl check — relaxed: even 1 curled finger suggests
+            # gripping something (some people hold phone with open palm)
             curled = self._fingers_curled(hand_lms)
-            if curled < 2:
+            if curled < 1:
                 continue
 
             if face is not None:
@@ -1773,10 +1786,10 @@ class DistractionDetector:
                 face_w = face["x_max"] - face["x_min"]
                 face_h = face["y_max"] - face["y_min"]
 
-                # G2: wrist near the face
+                # G2: wrist near the face (widened for side-of-head phone holding)
                 dx = abs(wrist_x - face_cx)
                 dy = abs(wrist_y - face_cy)
-                if dx > face_w * 1.5 or dy > face_h * 1.0:
+                if dx > face_w * 2.0 or dy > face_h * 1.5:
                     continue
             else:
                 if wrist_y > h * 0.55:
@@ -1788,6 +1801,52 @@ class DistractionDetector:
             ys = [lm.y * h for lm in hand_lms]
             bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
             print(f"  HANDS: phone-at-ear (curled={curled}/4)")
+            return True, bbox
+
+        return False, None
+
+    def _detect_hand_holding(self, frame, hand_landmarks=None):
+        """Detect a hand holding a phone-sized object (texting posture).
+
+        Unlike hand-at-ear, this catches the phone held in front or below
+        the face — common when texting, scrolling, or checking maps.
+
+        Gates:
+          G1 — hand in upper 75% of frame
+          G2 — at least 3 of 4 fingers curled (tight grip on phone)
+          G3 — hand is roughly in the driver's area (not at frame edges)
+
+        Returns:
+            tuple: (is_holding: bool, hand_bbox: tuple|None)
+        """
+        if hand_landmarks is None:
+            hand_landmarks = self._detect_hands(frame)
+        if hand_landmarks is None:
+            return False, None
+
+        h, w = frame.shape[:2]
+
+        for hand_lms in hand_landmarks:
+            wrist_y = hand_lms[0].y * h
+            wrist_x = hand_lms[0].x * w
+
+            # G1: hand in upper 75% of frame
+            if wrist_y > h * 0.75:
+                continue
+
+            # G2: tight grip (3+ fingers curled)
+            curled = self._fingers_curled(hand_lms)
+            if curled < 3:
+                continue
+
+            # G3: not at extreme edges of frame
+            if wrist_x < w * 0.05 or wrist_x > w * 0.95:
+                continue
+
+            xs = [lm.x * w for lm in hand_lms]
+            ys = [lm.y * h for lm in hand_lms]
+            bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+            print(f"  HANDS: phone-holding (curled={curled}/4)")
             return True, bbox
 
         return False, None
@@ -1850,31 +1909,31 @@ class DistractionDetector:
         if has_result:
             now = time.time()
 
-            # Phone: detected by YOLO or hand-near-face fallback
+            # Sliding window: record hit/miss for this YOLO frame
+            self._phone_window.append(new_phone is not None)
+            self._drink_window.append(new_bottle is not None)
+
+            # Phone: update bbox and hand_at_ear state
             if new_phone is not None:
                 self.phone_bbox = new_phone
-                self.phone_frames += 1
                 self.hand_at_ear = is_hand_at_ear
                 self._phone_last_seen = now
-            else:
-                self.phone_frames = max(0, self.phone_frames - 1)
-                if self.phone_frames == 0:
-                    self.phone_bbox = None
-                    self.hand_at_ear = False
+            elif not any(self._phone_window):
+                # Only clear bbox when no hits in the entire window
+                self.phone_bbox = None
+                self.hand_at_ear = False
 
             if new_bottle is not None:
                 self.bottle_bbox = new_bottle
-                self.drinking_frames += 1
-            else:
-                self.drinking_frames = max(0, self.drinking_frames - 1)
-                if self.drinking_frames == 0:
-                    self.bottle_bbox = None
+            elif not any(self._drink_window):
+                self.bottle_bbox = None
 
-            # Phone detection with cooldown: once detected, hold for at least
-            # _PHONE_COOLDOWN_SECS to bridge intermittent YOLO misses.
-            # Hand-at-ear needs more consecutive frames to confirm.
-            threshold = self._hand_ear_threshold if self.hand_at_ear else self.detection_threshold
-            raw_phone = self.phone_frames >= threshold
+            # Sliding window counts
+            self.phone_frames = sum(self._phone_window)
+            self.drinking_frames = sum(self._drink_window)
+
+            # Phone detection: N hits in last W frames OR within cooldown
+            raw_phone = self.phone_frames >= self._PHONE_MIN_HITS
             if raw_phone:
                 self.phone_detected = True
                 self._phone_last_seen = now
@@ -1883,7 +1942,7 @@ class DistractionDetector:
             else:
                 self.phone_detected = False
 
-            self.drinking_detected = self.drinking_frames >= self.detection_threshold
+            self.drinking_detected = self.drinking_frames >= self._PHONE_MIN_HITS
 
         return {
             "phone_detected": self.phone_detected,
@@ -1899,6 +1958,10 @@ class DistractionDetector:
         """Run YOLO model inference + hand-at-ear detection in background thread.
 
         Uses ultralytics backend on dev machines, onnxruntime on RPi/edge.
+        Two-tier phone detection:
+          - High confidence (0.30+) = phone detected anywhere
+          - Low confidence (0.18+) near face/hands = phone detected
+          - Hand-at-ear fallback when YOLO misses entirely
 
         Returns:
             tuple: (phone_bbox, bottle_bbox, hand_at_ear)
@@ -1909,11 +1972,14 @@ class DistractionDetector:
         current_phone = None
         current_bottle = None
         hand_at_ear = False
+        # Collect all phone candidates for two-tier filtering
+        phone_candidates = []  # (bbox, conf, class_name)
 
         if self._backend == "ultralytics":
             # --- Ultralytics backend (dev machines with PyTorch) ---
+            # Use low confidence to catch partial phones; filter afterwards
             results = self.model(
-                frame, verbose=False, conf=self.confidence_threshold,
+                frame, verbose=False, conf=self._phone_conf_near,
                 classes=self.TARGET_CLASSES,
             )
 
@@ -1927,19 +1993,13 @@ class DistractionDetector:
                     conf = float(box.conf[0])
                     xyxy = box.xyxy[0].cpu().numpy()
                     bbox = (int(xyxy[0]), int(xyxy[1]), int(xyxy[2]), int(xyxy[3]))
-
                     class_name = self.model.names[cls]
 
                     if cls in self.PHONE_CLASSES:
-                        current_phone = bbox
-                        print(f"YOLO: PHONE (class {cls}: {class_name}) conf={conf:.2f}")
-                    elif cls in self.DRINK_CLASSES:
+                        phone_candidates.append((bbox, conf, class_name))
+                    elif cls in self.DRINK_CLASSES and conf >= self.confidence_threshold:
                         current_bottle = bbox
                         print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
-                    elif conf > 0.4:
-                        print(
-                            f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
-                        )
 
         elif self._backend == "onnx":
             # --- ONNX runtime backend (RPi / edge without PyTorch) ---
@@ -1950,24 +2010,44 @@ class DistractionDetector:
                 class_name = self.COCO_NAMES.get(cls, f"class_{cls}")
 
                 if cls in self.PHONE_CLASSES:
-                    current_phone = bbox
-                    print(f"YOLO: PHONE (class {cls}: {class_name}) conf={conf:.2f}")
-                elif cls in self.DRINK_CLASSES:
+                    phone_candidates.append((bbox, conf, class_name))
+                elif cls in self.DRINK_CLASSES and conf >= self.confidence_threshold:
                     current_bottle = bbox
                     print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
-                elif conf > 0.4:
-                    print(
-                        f"YOLO: Other object (class {cls}: {class_name}) conf={conf:.2f}"
-                    )
 
-        # Hand-at-ear fallback: when YOLO didn't see a phone, check for a
-        # hand in phone-grip posture near the ear.  Uses finger-curl + ear-zone
-        # gates to reject bare-hand gestures (scratching, chin rest, etc.).
+        # Two-tier phone filtering:
+        # Tier 1 — high confidence (0.30+): accept anywhere
+        # Tier 2 — low confidence (0.18+): accept only near face or hands
+        face = self._last_face_bbox
+        phone_candidates.sort(key=lambda x: x[1], reverse=True)  # highest conf first
+        for bbox, conf, class_name in phone_candidates:
+            if conf >= self._phone_conf_high:
+                # Tier 1: high confidence — phone anywhere
+                current_phone = bbox
+                print(f"YOLO: PHONE ({class_name}) conf={conf:.2f}")
+                break
+            elif face is not None and self._is_near_face(bbox, face, proximity_ratio=1.0):
+                # Tier 2: low confidence but near the driver's face
+                current_phone = bbox
+                print(f"YOLO: PHONE-NEAR ({class_name}) conf={conf:.2f} [near face]")
+                break
+
+        # Hand-at-ear / hand-holding-phone fallback:
+        # When YOLO didn't see a phone, check for hand gestures
         if current_phone is None and self.hand_landmarker is not None:
-            is_near, hand_bbox = self._detect_hand_near_face(frame)
-            if is_near and hand_bbox is not None:
-                current_phone = hand_bbox
-                hand_at_ear = True
+            hand_landmarks = self._detect_hands(frame)
+            if hand_landmarks is not None:
+                # Check 1: hand near face (phone at ear)
+                is_near, hand_bbox = self._detect_hand_near_face(frame, hand_landmarks)
+                if is_near and hand_bbox is not None:
+                    current_phone = hand_bbox
+                    hand_at_ear = True
+                else:
+                    # Check 2: hand holding object in upper frame (texting posture)
+                    holding, hold_bbox = self._detect_hand_holding(frame, hand_landmarks)
+                    if holding and hold_bbox is not None:
+                        current_phone = hold_bbox
+                        hand_at_ear = False
 
         self._yolo_times.append(time.time() - t0)
         self._yolo_completions += 1
@@ -1998,10 +2078,11 @@ class DistractionDetector:
             x1, y1, x2, y2 = self.phone_bbox
             color = COLOR_RED if self.phone_detected else COLOR_ORANGE
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            hits = f"{self.phone_frames}/{self._PHONE_WINDOW}"
             if self.hand_at_ear:
-                label = "PHONE (HAND)!" if self.phone_detected else "Hand near face"
+                label = f"PHONE (HAND {hits})!" if self.phone_detected else f"Hand near face ({hits})"
             else:
-                label = "PHONE - DISTRACTED!" if self.phone_detected else "Phone"
+                label = f"PHONE ({hits}) - DISTRACTED!" if self.phone_detected else f"Phone ({hits})"
             cv2.putText(frame, label, (x1, y1 - 10), FONT_FAST, 1.0, color, 1)
 
         if self.bottle_bbox:
@@ -3068,7 +3149,6 @@ def main():
     )
     buzzer = BuzzerController()
     buzzer.start()
-    buzzer.play_startup_alert()
     supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
 
     # Feature settings from Supabase (falls back to .env)
@@ -3121,537 +3201,600 @@ def main():
     camera_server.start()
     camera_url = f"http://{camera_server.local_ip}:8554/frame"
 
-    # Open camera if enabled
-    cap = None
-    analyzer = None
-    distraction_detector = None
-    width, height = 0, 0
+    # --- Hardware retry loop ---
+    # If camera or microphone is enabled but fails to open, blast the error
+    # buzzer and retry every second until the hardware is available.
+    # If camera disconnects mid-session, clean up and loop back here.
 
-    # Custom ONNX model inference (replaces MediaPipe EAR + YOLO)
-    # Disabled by default — set ENABLE_CUSTOM_MODELS=true in .env to use
-    driver_system = None
-    if _ENV_ENABLE_CUSTOM_MODELS:
-        print("Loading custom ONNX models...", flush=True)
+    def _try_open_camera(camera_index):
+        """Attempt to open camera. Returns True if openable."""
+        test = cv2.VideoCapture(camera_index)
+        opened = test.isOpened()
+        test.release()
+        return opened
+
+    def _try_open_microphone():
+        """Attempt to open microphone. Returns True if real mic available."""
         try:
-            print("  Importing DriverAwarenessSystem...", end=" ", flush=True)
-            from models.inference import DriverAwarenessSystem
-            print("ok")
+            mic = MicrophoneController(sample_rate=44100, channels=1)
+            mic.start()
+            is_real = not mic.is_fake
+            mic.stop()
+            return is_real
+        except Exception:
+            return False
 
-            eye_path = _find_model(_EYE_CANDIDATES)
-            activity_path = _find_model(_ACTIVITY_CANDIDATES)
-            if eye_path or activity_path:
-                print(f"  Loading eye model: {eye_path}", flush=True)
-                print(f"  Loading activity model: {activity_path}", flush=True)
-                driver_system = DriverAwarenessSystem(
-                    eye_model_path=eye_path,
-                    activity_model_path=activity_path,
-                )
-                health = driver_system.get_health()
-                print(f"  Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}")
-            else:
-                print("  No ONNX model files found in models/checkpoints/")
-        except ImportError as e:
-            print(f"FAILED ({e})")
-            print("  Custom models not available (models package not found)")
-        except Exception as e:
-            print(f"FAILED ({e})")
-            print("  Falling back to MediaPipe + YOLO")
-            driver_system = None
-    else:
-        print("Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)")
-
-    if enable_camera:
-        cap = ThreadedCamera(args.camera)
-        if not cap.isOpened():
-            print("Error: Could not open camera — continuing without it")
-            cap = None
-        else:
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            cap.start()
-            print(f"Camera opened: {width}x{height} (threaded capture)")
-            # Load FaceAnalyzer and DistractionDetector in parallel — they
-            # are independent and each loads heavy models (MediaPipe, YOLO).
-            def _load_face_analyzer():
-                if _check_mediapipe():
-                    try:
-                        print("  Loading MediaPipe FaceAnalyzer...", end=" ", flush=True)
-                        fa = FaceAnalyzer()
-                        print("ok")
-                        return fa
-                    except Exception as e:
-                        print(f"FAILED ({e})")
-                        print("  Using OpenCV fallback face detector")
-                        return FallbackFaceDetector()
-                return FallbackFaceDetector()
-
-            def _load_distraction_detector():
-                print("  Loading DistractionDetector (YOLO)...", end=" ", flush=True)
-                dd = DistractionDetector(enabled=enable_yolo)
-                print("ok")
-                return dd
-
-            with ThreadPoolExecutor(max_workers=2) as _model_pool:
-                _fa_future = _model_pool.submit(_load_face_analyzer)
-                _dd_future = _model_pool.submit(_load_distraction_detector)
-                analyzer = _fa_future.result()
-                distraction_detector = _dd_future.result()
-    else:
-        print("Camera disabled via Supabase settings")
-
-    mode_label = "HEADLESS" if headless else "GUI"
-    print(f"Mode: {mode_label}")
-
-    if cap:
-        if enable_yolo:
-            print("- YOLO ENABLED")
-        else:
-            print("- YOLO DISABLED")
-    else:
-        print("- Camera OFF (face detection, YOLO, streaming unavailable)")
-    if enable_stream and cap:
-        print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
-    if enable_shazam:
-        print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
-    if enable_dashcam and cap:
-        print("- Dashcam recording (local MP4)")
-    if not headless and cap:
-        print("- Press 'X' to simulate speeding (75 MPH)")
-        print("- Press 'C' to reset speed to normal (45 MPH)")
-        print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
-
-    # Video streaming (requires camera)
-    streamer = None
-    if enable_stream and cap:
-        streamer = VideoStreamer(
-            supabase_client=supabase_uploader.client,
-            vehicle_id=supabase_uploader.vehicle_id,
-            quality=STREAM_QUALITY,
-            fps=STREAM_FPS,
-            width=STREAM_WIDTH,
-        )
-        streamer.start()
-
-    # Dashcam recording (requires camera)
-    dashcam = None
-    if enable_dashcam and cap:
-        dashcam = DashcamRecorder()
-        dashcam.start(supabase_uploader.trip_id, width, height)
-
-    # Music recognition (requires microphone)
-    music_recognizer = None
-    if enable_shazam:
-        music_recognizer = MusicRecognizer(
-            recognition_interval=SHAZAM_INTERVAL, debug_save_audio=SHAZAM_DEBUG
-        )
-        music_recognizer.start()
-
-    # Optional gyro reader (serial acc/gyro)
-    gyro_reader = None
-    crash_detector = None
-    last_effective_risk = None
-    GYRO_HARSH_THRESHOLD_DEG_S = 50.0
-    GYRO_BUMP = 1
-    if GYRO_AVAILABLE:
-        try:
-            _gr = GyroReader()
-            _gr.start(print_from_loop=False)
-            gyro_reader = _gr
-            crash_detector = CrashDetector()
-            print("Gyro reader started (serial, crash detection enabled)")
-        except Exception as e:
-            print(f"Gyro reader unavailable: {e}")
-
-    frame_count = 0
-
-    # FPS tracking
-    fps_frame_count = 0
-    fps_start_time = time.time()
-    last_fps_print = time.time()
-
-    process_times = deque(maxlen=100)  # Track last 100 total frame times
-    mediapipe_times = deque(maxlen=100)
-    draw_times = deque(maxlen=100)
+    camera_needed = enable_camera
+    mic_needed = enable_shazam
 
     while not shutdown_requested:
-        frame_start_time = time.time()
+        # --- Phase 1: Wait for hardware ---
+        while not shutdown_requested:
+            camera_ok = not camera_needed or _try_open_camera(args.camera)
+            mic_ok = not mic_needed or _try_open_microphone()
 
-        # Update driving simulation (GPS / speed)
-        driving_sim.update_speed()
-
-        # Defaults when camera is off
-        processed_frame = None
-        detection_data = None
-        intox_data = None
-        awareness = None
-        distraction_data = {
-            "phone_detected": False,
-            "drinking_detected": False,
-            "phone_bbox": None,
-            "bottle_bbox": None,
-            "phone_frames": 0,
-            "drinking_frames": 0,
-            "hand_at_ear": False,
-        }
-
-        # --- Camera-dependent processing ---
-        if cap is not None:
-            ret, frame = cap.read()
-            if not ret:
-                print("Error: Could not read frame")
+            if camera_ok and mic_ok:
                 break
 
-            timestamp_ms = int(frame_count * 33.33)
-            frame_count += 1
-            fps_frame_count += 1
+            missing = []
+            if not camera_ok:
+                missing.append("camera")
+            if not mic_ok:
+                missing.append("microphone")
+            print(f"Waiting for hardware: {', '.join(missing)}...")
+            buzzer.play_error_alert()
+            time.sleep(1)
 
-            # Face detection + annotation drawing (MediaPipe) — run FIRST so
-            # face_bbox is available for hand-at-ear detection in YOLO pass
-            t_mp = time.time()
-            processed_frame, detection_data = analyzer.process_frame(
-                frame, timestamp_ms
-            )
-            mediapipe_times.append(time.time() - t_mp)
+        if shutdown_requested:
+            break
 
-            # YOLO distraction detection (async — no-op when custom models loaded)
-            # Pass face_bbox so hand-at-ear can locate ear regions
-            face_bbox = detection_data.get("face_bbox") if detection_data else None
-            distraction_data = distraction_detector.detect(frame, face_bbox=face_bbox)
+        # Hardware available — play startup sound and begin session
+        buzzer.play_startup_alert()
+        print("\n=== Starting new session ===\n")
 
-            # Custom model inference: override distraction_data and intox_data
-            if driver_system:
-                face_crop = detection_data["face_crop"] if detection_data else None
-                awareness = driver_system.process_frame(
-                    face_crop=face_crop,
-                    upper_body_crop=frame,
-                )
-                # Override YOLO results with activity model output
-                distraction_data = {
-                    "phone_detected": awareness["is_phone_detected"],
-                    "drinking_detected": awareness["is_drinking_detected"],
-                    "phone_bbox": None,
-                    "bottle_bbox": None,
-                    "phone_frames": 0,
-                    "drinking_frames": 0,
-                }
-                # Override MediaPipe EAR intoxication with eye model output
-                intox_data = {
-                    "drowsy": awareness["is_drowsy"],
-                    "excessive_blinking": awareness["is_excessive_blinking"],
-                    "unstable_eyes": awareness["is_unstable_eyes"],
-                    "score": awareness["intoxication_score"],
-                    "ear": awareness["ear_score"],
-                }
-                # Override detection_data fields for Supabase upload
-                if detection_data:
-                    detection_data["intox_data"] = intox_data
-                    detection_data["left_eye_state"] = awareness["left_eye_state"]
-                    detection_data["right_eye_state"] = awareness["right_eye_state"]
-                    detection_data["left_eye_ear"] = awareness["ear_score"]
-                    detection_data["right_eye_ear"] = awareness["ear_score"]
-            else:
-                intox_data = detection_data["intox_data"] if detection_data else None
+        # --- Phase 2: Initialize session resources ---
+        cap = None
+        analyzer = None
+        distraction_detector = None
+        music_recognizer = None
+        streamer = None
+        dashcam = None
+        gyro_reader = None
+        crash_detector = None
+        width, height = 0, 0
 
-            # Extract gaze data from this frame (if available)
-            gaze_data = (
-                detection_data.get("gaze_data") if detection_data else None
-            )
+        # Custom ONNX model inference (replaces MediaPipe EAR + YOLO)
+        # Disabled by default — set ENABLE_CUSTOM_MODELS=true in .env to use
+        driver_system = None
+        if _ENV_ENABLE_CUSTOM_MODELS:
+            print("Loading custom ONNX models...", flush=True)
+            try:
+                print("  Importing DriverAwarenessSystem...", end=" ", flush=True)
+                from models.inference import DriverAwarenessSystem
+                print("ok")
 
-            # Buzzer alerts
-            if intox_data and intox_data["score"] >= 4:
-                buzzer.play_drowsy_alert()
-            if distraction_data["phone_detected"]:
-                buzzer.play_distraction_alert()
-            if gaze_data and gaze_data["eyes_closed_impaired"]:
-                buzzer.play_drowsy_alert()
-            if gaze_data and gaze_data["gaze_distracted"]:
-                buzzer.play_distraction_alert()
-        else:
-            gaze_data = None
-            # Camera off — throttle loop to ~10 Hz
-            time.sleep(0.1)
-
-        # --- Always: driver status ---
-        if awareness:
-            # Custom models provide richer driver state
-            driver_status = awareness["driver_state"]
-            intox_score = awareness["intoxication_score"]
-        elif gaze_data and gaze_data["eyes_closed_impaired"]:
-            driver_status = "impaired"
-            intox_score = intox_data["score"] if intox_data else 0
-        elif gaze_data and gaze_data["gaze_distracted"]:
-            driver_status = "distracted_gaze"
-            intox_score = intox_data["score"] if intox_data else 0
-        elif distraction_data["phone_detected"]:
-            driver_status = "distracted_phone"
-            intox_score = intox_data["score"] if intox_data else 0
-        elif distraction_data["drinking_detected"]:
-            driver_status = "distracted_drinking"
-            intox_score = intox_data["score"] if intox_data else 0
-        elif intox_data:
-            if intox_data["score"] >= 4:
-                driver_status = "impaired"
-            elif intox_data["score"] >= 2:
-                driver_status = "drowsy"
-            else:
-                driver_status = "alert"
-            intox_score = intox_data["score"]
-        else:
-            driver_status = "unknown"
-            intox_score = 0
-
-        # Gyro-weighted risk (optional): bump score when gyro indicates harsh motion
-        effective_risk = intox_score
-        if gyro_reader is not None:
-            latest = gyro_reader.get_latest()
-            if latest is not None:
-                gyro_mag = latest["gyro_mag"]
-                gyro_bump = GYRO_BUMP if gyro_mag >= GYRO_HARSH_THRESHOLD_DEG_S else 0
-                effective_risk = min(6, intox_score + gyro_bump)
-                last_effective_risk = effective_risk
-
-                # Crash detection
-                if crash_detector is not None:
-                    crash_detector.feed(
-                        latest["acc_mag"], latest["acc_delta"],
-                        gyro_mag, latest["timestamp"],
+                eye_path = _find_model(_EYE_CANDIDATES)
+                activity_path = _find_model(_ACTIVITY_CANDIDATES)
+                if eye_path or activity_path:
+                    print(f"  Loading eye model: {eye_path}", flush=True)
+                    print(f"  Loading activity model: {activity_path}", flush=True)
+                    driver_system = DriverAwarenessSystem(
+                        eye_model_path=eye_path,
+                        activity_model_path=activity_path,
                     )
-                    crash_event = crash_detector.get_crash_event()
-                    if crash_event:
-                        print(f"\n>>> CRASH DETECTED: {crash_event['severity'].upper()} <<<")
-                        print(f"    Peak: {crash_event['peak_g']}g, Gyro: {crash_event['peak_gyro']} deg/s\n")
-                        buzzer.start_continuous("emergency")
-                        supabase_uploader.record_crash(crash_event)
+                    health = driver_system.get_health()
+                    print(f"  Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}")
+                else:
+                    print("  No ONNX model files found in models/checkpoints/")
+            except ImportError as e:
+                print(f"FAILED ({e})")
+                print("  Custom models not available (models package not found)")
+            except Exception as e:
+                print(f"FAILED ({e})")
+                print("  Falling back to MediaPipe + YOLO")
+                driver_system = None
+        else:
+            print("Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)")
 
-        # --- Always: realtime + trip + buzzer ---
-        supabase_uploader.update_vehicle_realtime(
-            speed_mph=driving_sim.get_speed(),
-            heading_degrees=driving_sim.get_heading(),
-            compass_direction=driving_sim.get_compass_direction(),
-            is_speeding=driving_sim.is_speeding(),
-            driver_status=driver_status,
-            intoxication_score=effective_risk,
-            latitude=driving_sim.get_latitude(),
-            longitude=driving_sim.get_longitude(),
-            satellites=driving_sim.get_satellites(),
-            is_phone_detected=distraction_data["phone_detected"],
-            is_drinking_detected=distraction_data["drinking_detected"],
-        )
+        if enable_camera:
+            cap = ThreadedCamera(args.camera)
+            if not cap.isOpened():
+                print("Error: Could not open camera — continuing without it")
+                cap = None
+            else:
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cap.start()
+                print(f"Camera opened: {width}x{height} (threaded capture)")
+                # Load FaceAnalyzer and DistractionDetector in parallel — they
+                # are independent and each loads heavy models (MediaPipe, YOLO).
+                def _load_face_analyzer():
+                    if _check_mediapipe():
+                        try:
+                            print("  Loading MediaPipe FaceAnalyzer...", end=" ", flush=True)
+                            fa = FaceAnalyzer()
+                            print("ok")
+                            return fa
+                        except Exception as e:
+                            print(f"FAILED ({e})")
+                            print("  Using OpenCV fallback face detector")
+                            return FallbackFaceDetector()
+                    return FallbackFaceDetector()
 
-        is_drowsy = intox_data["drowsy"] if intox_data else False
-        is_excessive_blinking = (
-            intox_data["excessive_blinking"] if intox_data else False
-        )
-        is_unstable_eyes = intox_data["unstable_eyes"] if intox_data else False
-        supabase_uploader.update_trip_stats(
-            speed=driving_sim.get_speed(),
-            intox_score=effective_risk,
-            is_speeding=driving_sim.is_speeding(),
-            is_drowsy=is_drowsy,
-            is_excessive_blinking=is_excessive_blinking,
-            is_unstable_eyes=is_unstable_eyes,
-            latitude=driving_sim.get_latitude(),
-            longitude=driving_sim.get_longitude(),
-            is_real_gps=driving_sim.is_using_gps() and driving_sim.has_gps_fix(),
-        )
+                def _load_distraction_detector():
+                    print("  Loading DistractionDetector (YOLO)...", end=" ", flush=True)
+                    dd = DistractionDetector(enabled=enable_yolo)
+                    print("ok")
+                    return dd
 
-        supabase_uploader.check_buzzer_commands()
+                with ThreadPoolExecutor(max_workers=2) as _model_pool:
+                    _fa_future = _model_pool.submit(_load_face_analyzer)
+                    _dd_future = _model_pool.submit(_load_distraction_detector)
+                    analyzer = _fa_future.result()
+                    distraction_detector = _dd_future.result()
+        else:
+            print("Camera disabled via Supabase settings")
 
-        # --- BLE direct updates (alongside Supabase) ---
-        if ble_server and not ble_server.is_fake:
-            ble_server.update_realtime({
-                "speed_mph": driving_sim.get_speed(),
-                "heading_degrees": driving_sim.get_heading(),
-                "compass_direction": driving_sim.get_compass_direction(),
-                "is_speeding": driving_sim.is_speeding(),
-                "driver_status": driver_status,
-                "intoxication_score": effective_risk,
-                "latitude": driving_sim.get_latitude(),
-                "longitude": driving_sim.get_longitude(),
-                "satellites": driving_sim.get_satellites(),
-                "is_phone_detected": distraction_data["phone_detected"],
-                "is_drinking_detected": distraction_data["drinking_detected"],
-                "camera_url": camera_url if enable_camera else None,
-            })
-            ble_server.update_trip({
-                "trip_id": supabase_uploader.trip_id or "",
-                "duration": int(time.time() - fps_start_time),
-                "max_speed": supabase_uploader.trip_max_speed,
-                "avg_speed": sum(supabase_uploader.trip_speed_samples) / max(len(supabase_uploader.trip_speed_samples), 1),
-                "speeding_events": supabase_uploader.trip_speeding_events,
-                "drowsy_events": supabase_uploader.trip_drowsy_events,
-                "phone_events": getattr(supabase_uploader, "trip_phone_events", 0),
-                "max_intox_score": supabase_uploader.trip_max_intox_score,
-            })
+        mode_label = "HEADLESS" if headless else "GUI"
+        print(f"Mode: {mode_label}")
 
-            # Relay: send full Supabase-format records for iOS to upload
-            # when the Pi has no internet. iOS reads this and upserts to Supabase.
-            relay_data = {}
-            if supabase_uploader.latest_realtime_record:
-                relay_data["rt"] = supabase_uploader.latest_realtime_record
-            if supabase_uploader.latest_trip_record:
-                relay_data["trip"] = supabase_uploader.latest_trip_record
-            if relay_data:
-                ble_server.update_relay(relay_data)
+        if cap:
+            if enable_yolo:
+                print("- YOLO ENABLED")
+            else:
+                print("- YOLO DISABLED")
+        else:
+            print("- Camera OFF (face detection, YOLO, streaming unavailable)")
+        if enable_stream and cap:
+            print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
+        if enable_shazam:
+            print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
+        if enable_dashcam and cap:
+            print("- Dashcam recording (local MP4)")
+        if not headless and cap:
+            print("- Press 'X' to simulate speeding (75 MPH)")
+            print("- Press 'C' to reset speed to normal (45 MPH)")
+            print("- Press UP/DOWN arrows to adjust speed by 10 MPH")
 
-        # --- Camera-dependent uploads ---
-        if cap is not None:
-            if detection_data and supabase_uploader.should_upload():
-                driving_data = {
-                    "speed": driving_sim.get_speed(),
-                    "heading": driving_sim.get_heading(),
-                    "direction": driving_sim.get_compass_direction(),
-                    "is_speeding": driving_sim.is_speeding(),
-                }
-                supabase_uploader.upload_face_detection(
-                    face_image=detection_data["face_crop"],
-                    face_bbox=detection_data["face_bbox"],
-                    left_eye_state=detection_data["left_eye_state"],
-                    left_eye_ear=detection_data["left_eye_ear"],
-                    right_eye_state=detection_data["right_eye_state"],
-                    right_eye_ear=detection_data["right_eye_ear"],
-                    intox_data=detection_data["intox_data"],
-                    driving_data=driving_data,
-                    distraction_data=distraction_data,
-                )
-                supabase_uploader.increment_face_detection_count()
-
-            if detection_data:
-                supabase_uploader.check_current_driver()
-
-        # Music recognition (independent of camera)
-        if music_recognizer:
-            music_recognizer.recognize_song(
-                callback=supabase_uploader.upload_music_detection
+        # Video streaming (requires camera)
+        if enable_stream and cap:
+            streamer = VideoStreamer(
+                supabase_client=supabase_uploader.client,
+                vehicle_id=supabase_uploader.vehicle_id,
+                quality=STREAM_QUALITY,
+                fps=STREAM_FPS,
+                width=STREAM_WIDTH,
             )
+            streamer.start()
 
-        # --- Drawing / streaming / GUI (camera only) ---
-        if cap is not None and processed_frame is not None:
-            t_draw = time.time()
-            processed_frame = distraction_detector.draw_detections(processed_frame)
-            processed_frame = draw_distraction_warning(
-                processed_frame, distraction_data, gaze_data=gaze_data
+        # Dashcam recording (requires camera)
+        if enable_dashcam and cap:
+            dashcam = DashcamRecorder()
+            dashcam.start(supabase_uploader.trip_id, width, height)
+
+        # Music recognition (requires microphone)
+        if enable_shazam:
+            music_recognizer = MusicRecognizer(
+                recognition_interval=SHAZAM_INTERVAL, debug_save_audio=SHAZAM_DEBUG
             )
-            draw_times.append(time.time() - t_draw)
+            music_recognizer.start()
 
-            # Track total frame processing time
-            frame_end_time = time.time()
-            process_times.append(frame_end_time - frame_start_time)
+        # Optional gyro reader (serial acc/gyro)
+        last_effective_risk = None
+        GYRO_HARSH_THRESHOLD_DEG_S = 50.0
+        GYRO_BUMP = 1
+        if GYRO_AVAILABLE:
+            try:
+                _gr = GyroReader()
+                _gr.start(print_from_loop=False)
+                gyro_reader = _gr
+                crash_detector = CrashDetector()
+                print("Gyro reader started (serial, crash detection enabled)")
+            except Exception as e:
+                print(f"Gyro reader unavailable: {e}")
 
-            # Print FPS stats every 5 seconds
-            current_time = time.time()
-            if current_time - last_fps_print >= 5.0:
-                elapsed = current_time - fps_start_time
-                capture_fps = fps_frame_count / elapsed if elapsed > 0 else 0
-                avg_total = (
-                    sum(process_times) / len(process_times) if process_times else 0
-                )
-                loop_fps = 1.0 / avg_total if avg_total > 0 else 0
-                avg_mp = (
-                    sum(mediapipe_times) / len(mediapipe_times)
-                    if mediapipe_times
-                    else 0
-                )
-                avg_draw = (
-                    sum(draw_times) / len(draw_times) if draw_times else 0
-                )
+        frame_count = 0
 
-                # YOLO stats from the async executor
-                yolo_ms, yolo_fps, yolo_runs = (
-                    distraction_detector.get_yolo_stats()
-                    if distraction_detector
-                    else (0, 0, 0)
-                )
-                yolo_label = (
-                    f"YOLO: {yolo_fps:.1f} FPS ({yolo_ms:.1f}ms, "
-                    f"{yolo_runs} runs)"
-                    if distraction_detector and distraction_detector.enabled
-                    else "YOLO: OFF"
-                )
+        # FPS tracking
+        fps_frame_count = 0
+        fps_start_time = time.time()
+        last_fps_print = time.time()
 
-                stats_lines = (
-                    f"\n[STATS] Loop: {loop_fps:.1f} FPS "
-                    f"({avg_total*1000:.1f}ms/frame) | "
-                    f"Camera: {capture_fps:.1f} FPS | "
-                    f"{yolo_label}\n"
-                    f"        MediaPipe: {avg_mp*1000:.1f}ms | "
-                    f"Draw: {avg_draw*1000:.1f}ms | "
-                    f"Resolution: {width}x{height}\n"
-                )
-                if gyro_reader is not None:
-                    gyro_latest = gyro_reader.get_latest()
-                    if gyro_latest is not None:
-                        gyro_part = f"        Gyro: {gyro_latest['gyro_mag']:.2f} deg/s"
-                        if last_effective_risk is not None:
-                            gyro_part += f" | risk+gyro: {last_effective_risk}"
-                        stats_lines += gyro_part + "\n"
-                print(stats_lines)
+        process_times = deque(maxlen=100)  # Track last 100 total frame times
+        mediapipe_times = deque(maxlen=100)
+        draw_times = deque(maxlen=100)
 
-                if distraction_detector:
-                    distraction_detector.reset_yolo_stats()
-                fps_frame_count = 0
-                fps_start_time = current_time
-                last_fps_print = current_time
+        # --- Phase 3: Main processing loop ---
+        while not shutdown_requested:
+            frame_start_time = time.time()
 
-            if streamer:
-                streamer.update_frame(processed_frame)
+            # Update driving simulation (GPS / speed)
+            driving_sim.update_speed()
 
-            # HTTP camera server: always update with latest frame
-            camera_server.update_frame(processed_frame)
+            # Defaults when camera is off
+            processed_frame = None
+            detection_data = None
+            intox_data = None
+            awareness = None
+            distraction_data = {
+                "phone_detected": False,
+                "drinking_detected": False,
+                "phone_bbox": None,
+                "bottle_bbox": None,
+                "phone_frames": 0,
+                "drinking_frames": 0,
+                "hand_at_ear": False,
+            }
 
-            if dashcam:
-                hud_frame = processed_frame.copy()
-                draw_dashcam_hud(
-                    hud_frame,
-                    speed=driving_sim.get_speed(),
-                    heading=driving_sim.get_heading(),
-                    direction=driving_sim.get_compass_direction(),
-                )
-                dashcam.write_frame(hud_frame)
-
-            if not headless:
-                cv2.imshow("Infineon Project - Winter 2026", processed_frame)
-                key = cv2.waitKey(1) & 0xFF
-
-                if key == ord("q"):
+            # --- Camera-dependent processing ---
+            if cap is not None:
+                ret, frame = cap.read()
+                if not ret:
+                    print("Error: Could not read frame — camera disconnected")
                     break
-                elif key == 82 or key == 0:
-                    driving_sim.manual_speed_increase(10)
-                    print(f"Speed increased to: {driving_sim.get_speed()} MPH")
-                elif key == 84 or key == 1:
-                    driving_sim.manual_speed_decrease(10)
-                    print(f"Speed decreased to: {driving_sim.get_speed()} MPH")
-                elif key == ord("x"):
-                    driving_sim.set_speeding_mode()
-                    print(
-                        f"SPEEDING MODE: Speed set to {driving_sim.get_speed()} MPH"
-                    )
-                elif key == ord("c"):
-                    driving_sim.reset_speed()
-                    print(f"Speed reset to: {driving_sim.get_speed()} MPH")
 
-    # End trip and release resources
-    if dashcam:
-        dashcam.stop()
-    if streamer:
-        streamer.stop()
-    if gyro_reader is not None:
-        gyro_reader.stop()
-    if music_recognizer:
-        music_recognizer.stop()
-    if distraction_detector:
-        distraction_detector.shutdown()
+                timestamp_ms = int(frame_count * 33.33)
+                frame_count += 1
+                fps_frame_count += 1
+
+                # Face detection + annotation drawing (MediaPipe) — run FIRST so
+                # face_bbox is available for hand-at-ear detection in YOLO pass
+                t_mp = time.time()
+                processed_frame, detection_data = analyzer.process_frame(
+                    frame, timestamp_ms
+                )
+                mediapipe_times.append(time.time() - t_mp)
+
+                # YOLO distraction detection (async — no-op when custom models loaded)
+                # Pass face_bbox so hand-at-ear can locate ear regions
+                face_bbox = detection_data.get("face_bbox") if detection_data else None
+                distraction_data = distraction_detector.detect(frame, face_bbox=face_bbox)
+
+                # Custom model inference: override distraction_data and intox_data
+                if driver_system:
+                    face_crop = detection_data["face_crop"] if detection_data else None
+                    awareness = driver_system.process_frame(
+                        face_crop=face_crop,
+                        upper_body_crop=frame,
+                    )
+                    # Override YOLO results with activity model output
+                    distraction_data = {
+                        "phone_detected": awareness["is_phone_detected"],
+                        "drinking_detected": awareness["is_drinking_detected"],
+                        "phone_bbox": None,
+                        "bottle_bbox": None,
+                        "phone_frames": 0,
+                        "drinking_frames": 0,
+                    }
+                    # Override MediaPipe EAR intoxication with eye model output
+                    intox_data = {
+                        "drowsy": awareness["is_drowsy"],
+                        "excessive_blinking": awareness["is_excessive_blinking"],
+                        "unstable_eyes": awareness["is_unstable_eyes"],
+                        "score": awareness["intoxication_score"],
+                        "ear": awareness["ear_score"],
+                    }
+                    # Override detection_data fields for Supabase upload
+                    if detection_data:
+                        detection_data["intox_data"] = intox_data
+                        detection_data["left_eye_state"] = awareness["left_eye_state"]
+                        detection_data["right_eye_state"] = awareness["right_eye_state"]
+                        detection_data["left_eye_ear"] = awareness["ear_score"]
+                        detection_data["right_eye_ear"] = awareness["ear_score"]
+                else:
+                    intox_data = detection_data["intox_data"] if detection_data else None
+
+                # Extract gaze data from this frame (if available)
+                gaze_data = (
+                    detection_data.get("gaze_data") if detection_data else None
+                )
+
+                # Buzzer alerts
+                if intox_data and intox_data["score"] >= 4:
+                    buzzer.play_drowsy_alert()
+                if distraction_data["phone_detected"]:
+                    buzzer.play_distraction_alert()
+                if gaze_data and gaze_data["eyes_closed_impaired"]:
+                    buzzer.play_drowsy_alert()
+                if gaze_data and gaze_data["gaze_distracted"]:
+                    buzzer.play_distraction_alert()
+            else:
+                gaze_data = None
+                # Camera off — throttle loop to ~10 Hz
+                time.sleep(0.1)
+
+            # --- Always: driver status ---
+            if awareness:
+                # Custom models provide richer driver state
+                driver_status = awareness["driver_state"]
+                intox_score = awareness["intoxication_score"]
+            elif gaze_data and gaze_data["eyes_closed_impaired"]:
+                driver_status = "impaired"
+                intox_score = intox_data["score"] if intox_data else 0
+            elif gaze_data and gaze_data["gaze_distracted"]:
+                driver_status = "distracted_gaze"
+                intox_score = intox_data["score"] if intox_data else 0
+            elif distraction_data["phone_detected"]:
+                driver_status = "distracted_phone"
+                intox_score = intox_data["score"] if intox_data else 0
+            elif distraction_data["drinking_detected"]:
+                driver_status = "distracted_drinking"
+                intox_score = intox_data["score"] if intox_data else 0
+            elif intox_data:
+                if intox_data["score"] >= 4:
+                    driver_status = "impaired"
+                elif intox_data["score"] >= 2:
+                    driver_status = "drowsy"
+                else:
+                    driver_status = "alert"
+                intox_score = intox_data["score"]
+            else:
+                driver_status = "unknown"
+                intox_score = 0
+
+            # Gyro-weighted risk (optional): bump score when gyro indicates harsh motion
+            effective_risk = intox_score
+            if gyro_reader is not None:
+                latest = gyro_reader.get_latest()
+                if latest is not None:
+                    gyro_mag = latest["gyro_mag"]
+                    gyro_bump = GYRO_BUMP if gyro_mag >= GYRO_HARSH_THRESHOLD_DEG_S else 0
+                    effective_risk = min(6, intox_score + gyro_bump)
+                    last_effective_risk = effective_risk
+
+                    # Crash detection
+                    if crash_detector is not None:
+                        crash_detector.feed(
+                            latest["acc_mag"], latest["acc_delta"],
+                            gyro_mag, latest["timestamp"],
+                        )
+                        crash_event = crash_detector.get_crash_event()
+                        if crash_event:
+                            print(f"\n>>> CRASH DETECTED: {crash_event['severity'].upper()} <<<")
+                            print(f"    Peak: {crash_event['peak_g']}g, Gyro: {crash_event['peak_gyro']} deg/s\n")
+                            buzzer.start_continuous("emergency")
+                            supabase_uploader.record_crash(crash_event)
+
+            # --- Always: realtime + trip + buzzer ---
+            supabase_uploader.update_vehicle_realtime(
+                speed_mph=driving_sim.get_speed(),
+                heading_degrees=driving_sim.get_heading(),
+                compass_direction=driving_sim.get_compass_direction(),
+                is_speeding=driving_sim.is_speeding(),
+                driver_status=driver_status,
+                intoxication_score=effective_risk,
+                latitude=driving_sim.get_latitude(),
+                longitude=driving_sim.get_longitude(),
+                satellites=driving_sim.get_satellites(),
+                is_phone_detected=distraction_data["phone_detected"],
+                is_drinking_detected=distraction_data["drinking_detected"],
+            )
+
+            is_drowsy = intox_data["drowsy"] if intox_data else False
+            is_excessive_blinking = (
+                intox_data["excessive_blinking"] if intox_data else False
+            )
+            is_unstable_eyes = intox_data["unstable_eyes"] if intox_data else False
+            supabase_uploader.update_trip_stats(
+                speed=driving_sim.get_speed(),
+                intox_score=effective_risk,
+                is_speeding=driving_sim.is_speeding(),
+                is_drowsy=is_drowsy,
+                is_excessive_blinking=is_excessive_blinking,
+                is_unstable_eyes=is_unstable_eyes,
+                latitude=driving_sim.get_latitude(),
+                longitude=driving_sim.get_longitude(),
+                is_real_gps=driving_sim.is_using_gps() and driving_sim.has_gps_fix(),
+            )
+
+            supabase_uploader.check_buzzer_commands()
+
+            # --- BLE direct updates (alongside Supabase) ---
+            if ble_server and not ble_server.is_fake:
+                ble_server.update_realtime({
+                    "speed_mph": driving_sim.get_speed(),
+                    "heading_degrees": driving_sim.get_heading(),
+                    "compass_direction": driving_sim.get_compass_direction(),
+                    "is_speeding": driving_sim.is_speeding(),
+                    "driver_status": driver_status,
+                    "intoxication_score": effective_risk,
+                    "latitude": driving_sim.get_latitude(),
+                    "longitude": driving_sim.get_longitude(),
+                    "satellites": driving_sim.get_satellites(),
+                    "is_phone_detected": distraction_data["phone_detected"],
+                    "is_drinking_detected": distraction_data["drinking_detected"],
+                    "camera_url": camera_url if enable_camera else None,
+                })
+                ble_server.update_trip({
+                    "trip_id": supabase_uploader.trip_id or "",
+                    "duration": int(time.time() - fps_start_time),
+                    "max_speed": supabase_uploader.trip_max_speed,
+                    "avg_speed": sum(supabase_uploader.trip_speed_samples) / max(len(supabase_uploader.trip_speed_samples), 1),
+                    "speeding_events": supabase_uploader.trip_speeding_events,
+                    "drowsy_events": supabase_uploader.trip_drowsy_events,
+                    "phone_events": getattr(supabase_uploader, "trip_phone_events", 0),
+                    "max_intox_score": supabase_uploader.trip_max_intox_score,
+                })
+
+                # Relay: send full Supabase-format records for iOS to upload
+                # when the Pi has no internet. iOS reads this and upserts to Supabase.
+                relay_data = {}
+                if supabase_uploader.latest_realtime_record:
+                    relay_data["rt"] = supabase_uploader.latest_realtime_record
+                if supabase_uploader.latest_trip_record:
+                    relay_data["trip"] = supabase_uploader.latest_trip_record
+                if relay_data:
+                    ble_server.update_relay(relay_data)
+
+            # --- Camera-dependent uploads ---
+            if cap is not None:
+                if detection_data and supabase_uploader.should_upload():
+                    driving_data = {
+                        "speed": driving_sim.get_speed(),
+                        "heading": driving_sim.get_heading(),
+                        "direction": driving_sim.get_compass_direction(),
+                        "is_speeding": driving_sim.is_speeding(),
+                    }
+                    supabase_uploader.upload_face_detection(
+                        face_image=detection_data["face_crop"],
+                        face_bbox=detection_data["face_bbox"],
+                        left_eye_state=detection_data["left_eye_state"],
+                        left_eye_ear=detection_data["left_eye_ear"],
+                        right_eye_state=detection_data["right_eye_state"],
+                        right_eye_ear=detection_data["right_eye_ear"],
+                        intox_data=detection_data["intox_data"],
+                        driving_data=driving_data,
+                        distraction_data=distraction_data,
+                    )
+                    supabase_uploader.increment_face_detection_count()
+
+                if detection_data:
+                    supabase_uploader.check_current_driver()
+
+            # Music recognition (independent of camera)
+            if music_recognizer:
+                music_recognizer.recognize_song(
+                    callback=supabase_uploader.upload_music_detection
+                )
+
+            # --- Drawing / streaming / GUI (camera only) ---
+            if cap is not None and processed_frame is not None:
+                t_draw = time.time()
+                processed_frame = distraction_detector.draw_detections(processed_frame)
+                processed_frame = draw_distraction_warning(
+                    processed_frame, distraction_data, gaze_data=gaze_data
+                )
+                draw_times.append(time.time() - t_draw)
+
+                # Track total frame processing time
+                frame_end_time = time.time()
+                process_times.append(frame_end_time - frame_start_time)
+
+                # Print FPS stats every 5 seconds
+                current_time = time.time()
+                if current_time - last_fps_print >= 5.0:
+                    elapsed = current_time - fps_start_time
+                    capture_fps = fps_frame_count / elapsed if elapsed > 0 else 0
+                    avg_total = (
+                        sum(process_times) / len(process_times) if process_times else 0
+                    )
+                    loop_fps = 1.0 / avg_total if avg_total > 0 else 0
+                    avg_mp = (
+                        sum(mediapipe_times) / len(mediapipe_times)
+                        if mediapipe_times
+                        else 0
+                    )
+                    avg_draw = (
+                        sum(draw_times) / len(draw_times) if draw_times else 0
+                    )
+
+                    # YOLO stats from the async executor
+                    yolo_ms, yolo_fps, yolo_runs = (
+                        distraction_detector.get_yolo_stats()
+                        if distraction_detector
+                        else (0, 0, 0)
+                    )
+                    yolo_label = (
+                        f"YOLO: {yolo_fps:.1f} FPS ({yolo_ms:.1f}ms, "
+                        f"{yolo_runs} runs)"
+                        if distraction_detector and distraction_detector.enabled
+                        else "YOLO: OFF"
+                    )
+
+                    stats_lines = (
+                        f"\n[STATS] Loop: {loop_fps:.1f} FPS "
+                        f"({avg_total*1000:.1f}ms/frame) | "
+                        f"Camera: {capture_fps:.1f} FPS | "
+                        f"{yolo_label}\n"
+                        f"        MediaPipe: {avg_mp*1000:.1f}ms | "
+                        f"Draw: {avg_draw*1000:.1f}ms | "
+                        f"Resolution: {width}x{height}\n"
+                    )
+                    if gyro_reader is not None:
+                        gyro_latest = gyro_reader.get_latest()
+                        if gyro_latest is not None:
+                            gyro_part = f"        Gyro: {gyro_latest['gyro_mag']:.2f} deg/s"
+                            if last_effective_risk is not None:
+                                gyro_part += f" | risk+gyro: {last_effective_risk}"
+                            stats_lines += gyro_part + "\n"
+                    print(stats_lines)
+
+                    if distraction_detector:
+                        distraction_detector.reset_yolo_stats()
+                    fps_frame_count = 0
+                    fps_start_time = current_time
+                    last_fps_print = current_time
+
+                if streamer:
+                    streamer.update_frame(processed_frame)
+
+                # HTTP camera server: always update with latest frame
+                camera_server.update_frame(processed_frame)
+
+                if dashcam:
+                    hud_frame = processed_frame.copy()
+                    draw_dashcam_hud(
+                        hud_frame,
+                        speed=driving_sim.get_speed(),
+                        heading=driving_sim.get_heading(),
+                        direction=driving_sim.get_compass_direction(),
+                    )
+                    dashcam.write_frame(hud_frame)
+
+                if not headless:
+                    cv2.imshow("Infineon Project - Winter 2026", processed_frame)
+                    key = cv2.waitKey(1) & 0xFF
+
+                    if key == ord("q"):
+                        shutdown_requested = True
+                        break
+                    elif key == 82 or key == 0:
+                        driving_sim.manual_speed_increase(10)
+                        print(f"Speed increased to: {driving_sim.get_speed()} MPH")
+                    elif key == 84 or key == 1:
+                        driving_sim.manual_speed_decrease(10)
+                        print(f"Speed decreased to: {driving_sim.get_speed()} MPH")
+                    elif key == ord("x"):
+                        driving_sim.set_speeding_mode()
+                        print(
+                            f"SPEEDING MODE: Speed set to {driving_sim.get_speed()} MPH"
+                        )
+                    elif key == ord("c"):
+                        driving_sim.reset_speed()
+                        print(f"Speed reset to: {driving_sim.get_speed()} MPH")
+
+        # --- Per-session cleanup ---
+        print("\n=== Session ended, cleaning up ===\n")
+        if dashcam:
+            dashcam.stop()
+        if streamer:
+            streamer.stop()
+        if gyro_reader is not None:
+            gyro_reader.stop()
+        if music_recognizer:
+            music_recognizer.stop()
+        if distraction_detector:
+            distraction_detector.shutdown()
+        if cap is not None:
+            cap.release()
+        if not headless and cap is not None:
+            cv2.destroyAllWindows()
+
+        # If shutdown was requested (Ctrl+C / 'q'), exit the outer loop
+        if shutdown_requested:
+            break
+
+        # Otherwise camera/mic disconnected — loop back to hardware retry
+        print("Hardware lost — will retry...\n")
+
+    # --- Final cleanup (runs once on exit) ---
+    supabase_uploader.end_trip()
+    supabase_uploader.reset_vehicle_realtime()
     if ble_server:
         ble_server.stop()
     camera_server.stop()
-    supabase_uploader.end_trip()
-    supabase_uploader.reset_vehicle_realtime()
     buzzer.stop()
     gps_reader.stop()
-    if cap is not None:
-        cap.release()
-    if not headless and cap is not None:
-        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
