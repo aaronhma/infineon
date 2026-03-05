@@ -3286,7 +3286,7 @@ def main():
             })
             ble_server.update_trip({
                 "trip_id": supabase_uploader.trip_id or "",
-                "duration": int(time.time() - supabase_uploader.trip_start_time) if supabase_uploader.trip_start_time else 0,
+                "duration": int(time.time() - fps_start_time),
                 "max_speed": supabase_uploader.trip_max_speed,
                 "avg_speed": sum(supabase_uploader.trip_speed_samples) / max(len(supabase_uploader.trip_speed_samples), 1),
                 "speeding_events": supabase_uploader.trip_speeding_events,
