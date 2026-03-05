@@ -229,7 +229,7 @@ _ENV_ENABLE_STREAM, _ENV_STREAM_SET = _parse_env_bool("ENABLE_STREAM", False)
 _ENV_ENABLE_SHAZAM, _ENV_SHAZAM_SET = _parse_env_bool("ENABLE_SHAZAM", True)
 _ENV_ENABLE_CAMERA, _ENV_CAMERA_SET = _parse_env_bool("ENABLE_CAMERA", True)
 _ENV_ENABLE_MICROPHONE, _ENV_MIC_SET = _parse_env_bool("ENABLE_MICROPHONE", True)
-_ENV_ENABLE_DASHCAM, _ENV_DASHCAM_SET = _parse_env_bool("ENABLE_DASHCAM", False)
+_ENV_ENABLE_DASHCAM, _ENV_DASHCAM_SET = _parse_env_bool("ENABLE_DASHCAM", True)
 _ENV_ENABLE_CUSTOM_MODELS, _ = _parse_env_bool("ENABLE_CUSTOM_MODELS", False)
 
 # Stream / Shazam parameters (always from .env)
@@ -655,7 +655,7 @@ class SupabaseUploader:
             "enable_shazam":     (_ENV_ENABLE_SHAZAM,     _ENV_SHAZAM_SET, "enable_shazam",     True),
             "enable_microphone": (_ENV_ENABLE_MICROPHONE, _ENV_MIC_SET,    "enable_microphone", True),
             "enable_camera":     (_ENV_ENABLE_CAMERA,     _ENV_CAMERA_SET, "enable_camera",     True),
-            "enable_dashcam":    (_ENV_ENABLE_DASHCAM,    _ENV_DASHCAM_SET, "enable_dashcam",   False),
+            "enable_dashcam":    (_ENV_ENABLE_DASHCAM,    _ENV_DASHCAM_SET, "enable_dashcam",   True),
         }
 
         self.feature_settings = {}
@@ -903,7 +903,7 @@ class SupabaseUploader:
             "speed_sample_count": len(self.trip_speed_samples),
             "speed_sample_sum": int(sum(self.trip_speed_samples)),
             "status": self._calculate_trip_status(),
-            "route_waypoints": json.dumps(self.trip_waypoints),
+            "route_waypoints": self.trip_waypoints,
             "crash_detected": self.trip_crash_detected,
             "crash_severity": self.trip_crash_severity,
         }
@@ -950,7 +950,7 @@ class SupabaseUploader:
                 "speed_sample_count": len(self.trip_speed_samples),
                 "speed_sample_sum": int(sum(self.trip_speed_samples)),
                 "status": self._calculate_trip_status(),
-                "route_waypoints": json.dumps(self.trip_waypoints),
+                "route_waypoints": self.trip_waypoints,
                 "crash_detected": self.trip_crash_detected,
                 "crash_severity": self.trip_crash_severity,
             }

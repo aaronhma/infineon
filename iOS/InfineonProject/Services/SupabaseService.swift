@@ -405,6 +405,80 @@ struct VehicleTrip: Codable, Identifiable {
     case crashSeverity = "crash_severity"
   }
 
+  init(
+    id: UUID, createdAt: Date, vehicleId: String, sessionId: UUID, driverProfileId: UUID?,
+    startedAt: Date, endedAt: Date?, status: String, maxSpeedMph: Int, avgSpeedMph: Double,
+    maxIntoxicationScore: Int, speedingEventCount: Int, drowsyEventCount: Int,
+    excessiveBlinkingEventCount: Int, unstableEyesEventCount: Int, faceDetectionCount: Int,
+    speedSampleCount: Int, speedSampleSum: Int, phoneDistractionEventCount: Int?,
+    drinkingEventCount: Int?, routeWaypoints: [RouteWaypoint]?, crashDetected: Bool?,
+    crashSeverity: String?
+  ) {
+    self.id = id
+    self.createdAt = createdAt
+    self.vehicleId = vehicleId
+    self.sessionId = sessionId
+    self.driverProfileId = driverProfileId
+    self.startedAt = startedAt
+    self.endedAt = endedAt
+    self.status = status
+    self.maxSpeedMph = maxSpeedMph
+    self.avgSpeedMph = avgSpeedMph
+    self.maxIntoxicationScore = maxIntoxicationScore
+    self.speedingEventCount = speedingEventCount
+    self.drowsyEventCount = drowsyEventCount
+    self.excessiveBlinkingEventCount = excessiveBlinkingEventCount
+    self.unstableEyesEventCount = unstableEyesEventCount
+    self.faceDetectionCount = faceDetectionCount
+    self.speedSampleCount = speedSampleCount
+    self.speedSampleSum = speedSampleSum
+    self.phoneDistractionEventCount = phoneDistractionEventCount
+    self.drinkingEventCount = drinkingEventCount
+    self.routeWaypoints = routeWaypoints
+    self.crashDetected = crashDetected
+    self.crashSeverity = crashSeverity
+  }
+
+  init(from decoder: Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    id = try c.decode(UUID.self, forKey: .id)
+    createdAt = try c.decode(Date.self, forKey: .createdAt)
+    vehicleId = try c.decode(String.self, forKey: .vehicleId)
+    sessionId = try c.decode(UUID.self, forKey: .sessionId)
+    driverProfileId = try c.decodeIfPresent(UUID.self, forKey: .driverProfileId)
+    startedAt = try c.decode(Date.self, forKey: .startedAt)
+    endedAt = try c.decodeIfPresent(Date.self, forKey: .endedAt)
+    status = try c.decode(String.self, forKey: .status)
+    maxSpeedMph = try c.decode(Int.self, forKey: .maxSpeedMph)
+    avgSpeedMph = try c.decode(Double.self, forKey: .avgSpeedMph)
+    maxIntoxicationScore = try c.decode(Int.self, forKey: .maxIntoxicationScore)
+    speedingEventCount = try c.decode(Int.self, forKey: .speedingEventCount)
+    drowsyEventCount = try c.decode(Int.self, forKey: .drowsyEventCount)
+    excessiveBlinkingEventCount = try c.decode(Int.self, forKey: .excessiveBlinkingEventCount)
+    unstableEyesEventCount = try c.decode(Int.self, forKey: .unstableEyesEventCount)
+    faceDetectionCount = try c.decode(Int.self, forKey: .faceDetectionCount)
+    speedSampleCount = try c.decode(Int.self, forKey: .speedSampleCount)
+    speedSampleSum = try c.decode(Int.self, forKey: .speedSampleSum)
+    phoneDistractionEventCount = try c.decodeIfPresent(
+      Int.self, forKey: .phoneDistractionEventCount)
+    drinkingEventCount = try c.decodeIfPresent(Int.self, forKey: .drinkingEventCount)
+
+    // Handle route_waypoints: may be a JSON array or a double-encoded JSON string
+    if let waypoints = try? c.decodeIfPresent([RouteWaypoint].self, forKey: .routeWaypoints) {
+      routeWaypoints = waypoints
+    } else if let waypointsString = try? c.decodeIfPresent(String.self, forKey: .routeWaypoints),
+      let data = waypointsString.data(using: .utf8),
+      let decoded = try? JSONDecoder().decode([RouteWaypoint].self, from: data)
+    {
+      routeWaypoints = decoded
+    } else {
+      routeWaypoints = nil
+    }
+
+    crashDetected = try c.decodeIfPresent(Bool.self, forKey: .crashDetected)
+    crashSeverity = try c.decodeIfPresent(String.self, forKey: .crashSeverity)
+  }
+
   /// Returns the trip status as an enum for easier handling
   var tripStatus: TripStatus {
     TripStatus(rawValue: status) ?? .ok
@@ -1553,24 +1627,31 @@ class SupabaseService {
     // Load initial realtime data
     await loadVehicleRealtimeData(vehicleId: vehicleId)
 
-    let channel = client.realtimeV2.channel("vehicle_realtime_\(vehicleId)")
+    // If BLE is connected, data flows via the BLE polling timer — skip Supabase realtime
+    guard !bluetooth.isConnected else { return }
 
-    let changes = channel.postgresChange(
-      AnyAction.self,
-      schema: "public",
-      table: "vehicle_realtime",
-      filter: "vehicle_id=eq.\(vehicleId)"
-    )
+    do {
+      let channel = client.realtimeV2.channel("vehicle_realtime_\(vehicleId)")
 
-    await channel.subscribe()
+      let changes = channel.postgresChange(
+        AnyAction.self,
+        schema: "public",
+        table: "vehicle_realtime",
+        filter: "vehicle_id=eq.\(vehicleId)"
+      )
 
-    self.realtimeChannel = channel
+      await channel.subscribe()
 
-    // Listen for changes
-    Task {
-      for await change in changes {
-        await handleRealtimeChange(change)
+      self.realtimeChannel = channel
+
+      // Listen for changes
+      Task {
+        for await change in changes {
+          await handleRealtimeChange(change)
+        }
       }
+    } catch {
+      print("Realtime subscription failed (BLE may provide data): \(error)")
     }
   }
 

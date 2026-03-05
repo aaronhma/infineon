@@ -103,6 +103,10 @@ final class BluetoothManager: NSObject {
   private(set) var latestRealtime: BLERealtimeData?
   private(set) var latestTrip: BLETripData?
 
+  /// Set by the UI when a vehicle profile is selected while BLE is connected.
+  /// The data polling timer uses this to feed BLE data into `vehicleRealtimeData`.
+  var connectedVehicleId: String?
+
   // CoreBluetooth
   private var centralManager: CBCentralManager?
   private var connectedPeripheral: CBPeripheral?
@@ -113,11 +117,29 @@ final class BluetoothManager: NSObject {
   private var scanTimer: Timer?
   private var reconnectWorkItem: DispatchWorkItem?
 
+  // BLE → vehicleRealtimeData polling
+  private var dataTimer: Timer?
+
   private static let scanTimeout: TimeInterval = 15
   private static let reconnectDelay: TimeInterval = 2
 
   override init() {
     super.init()
+  }
+
+  // MARK: - Data Polling Timer
+
+  private func startDataTimer() {
+    guard dataTimer == nil else { return }
+    dataTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+      guard let self, let vid = self.connectedVehicleId else { return }
+      supabase.updateFromBLE(vehicleId: vid)
+    }
+  }
+
+  private func stopDataTimer() {
+    dataTimer?.invalidate()
+    dataTimer = nil
   }
 
   // MARK: - Public Write Methods
@@ -173,12 +195,14 @@ final class BluetoothManager: NSObject {
   }
 
   private func cleanup() {
+    stopDataTimer()
     isConnected = false
     connectedPeripheral = nil
     settingsCharacteristic = nil
     buzzerCharacteristic = nil
     latestRealtime = nil
     latestTrip = nil
+    connectedVehicleId = nil
   }
 
   private func scheduleReconnect() {
@@ -229,6 +253,7 @@ extension BluetoothManager: CBCentralManagerDelegate {
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
     isConnected = true
     statusMessage = "Connected"
+    startDataTimer()
     peripheral.discoverServices([serviceUUID])
   }
 

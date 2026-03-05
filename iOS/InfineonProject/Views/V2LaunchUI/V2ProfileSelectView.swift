@@ -70,31 +70,34 @@ struct V2ProfileSelectView: View {
   @State private var showingDeleteVehicleConfirmation = false
 
   func prefetchStatus() async {
-    do {
-      let count = try await supabase.getUnidentifiedFacesCount(
-        for: appData.watchingProfile!.vehicleId
-      )
+    let vehicleId = appData.watchingProfile!.vehicleId
 
-      await supabase
-        .subscribeToVehicleRealtime(
-          vehicleId: appData.watchingProfile!.vehicleId
-        )
-      await supabase
-        .loadVehicleRealtimeData(
-          vehicleId: appData.watchingProfile!.vehicleId
-        )
-
-      await MainActor.run {
-        withAnimation {
-          appData.watchingProfile!.unidentifiedFacesCount = count
-          print(
-            "unidentified face count: \(appData.watchingProfile!.unidentifiedFacesCount)"
-          )
-        }
-      }
-    } catch {
-      print("Error loading unidentified count: \(error)")
+    // Set BLE vehicle ID so the data polling timer feeds realtime data
+    if bluetooth.isConnected {
+      bluetooth.connectedVehicleId = vehicleId
     }
+
+    // Each call is independent — one failing shouldn't block the others
+
+    // 1. Unidentified faces count (Supabase-only, skip when offline + BLE)
+    if !bluetooth.isConnected {
+      do {
+        let count = try await supabase.getUnidentifiedFacesCount(for: vehicleId)
+        await MainActor.run {
+          withAnimation {
+            appData.watchingProfile!.unidentifiedFacesCount = count
+          }
+        }
+      } catch {
+        print("Error loading unidentified count: \(error)")
+      }
+    }
+
+    // 2. Subscribe to realtime (will skip Supabase channel if BLE connected)
+    await supabase.subscribeToVehicleRealtime(vehicleId: vehicleId)
+
+    // 3. Load initial realtime data (from Supabase cache or BLE)
+    await supabase.loadVehicleRealtimeData(vehicleId: vehicleId)
   }
 
   func animateCard() async {

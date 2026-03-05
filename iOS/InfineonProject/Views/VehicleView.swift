@@ -96,6 +96,23 @@ struct VehicleView: View {
             Color.clear.frame(height: 290)
 
             VStack(alignment: .leading, spacing: 25) {
+              // BLE connected banner
+              if bluetooth.isConnected {
+                Label {
+                  VStack(alignment: .leading) {
+                    Text("Bluetooth Connection")
+                      .bold()
+                    Text("Offline mode enabled")
+                      .font(.caption)
+                  }
+                } icon: {
+                  SettingsBoxView(icon: "antenna.radiowaves.left.and.right", color: .blue)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.blue.opacity(0.15), in: .rect(cornerRadius: 10))
+              }
+
               // Currently playing song
               if let currentSong {
                 VStack(spacing: 0) {
@@ -699,6 +716,9 @@ struct VehicleView: View {
   }
 
   private func fetchBuzzerStatus() async {
+    // When BLE is connected, buzzer state is local — skip Supabase fetch
+    guard !bluetooth.isConnected else { return }
+
     do {
       let response: [VehicleRealtime] = try await supabase.client
         .from("vehicle_realtime")
@@ -1481,6 +1501,9 @@ struct VehicleAlertControlView: View {
   }
 
   private func fetchBuzzerState() async {
+    // When BLE is connected, buzzer state is managed locally — skip Supabase
+    guard !bluetooth.isConnected else { return }
+
     do {
       let response: [VehicleRealtime] = try await supabase.client
         .from("vehicle_realtime")
@@ -1506,9 +1529,24 @@ struct VehicleAlertControlView: View {
     isLoading = true
     errorMessage = nil
 
+    // Use BLE direct command when connected
+    if bluetooth.isConnected {
+      if buzzerActive {
+        bluetooth.writeBuzzerCommand(active: false)
+        buzzerActive = false
+        Haptics.notification(.success)
+      } else {
+        bluetooth.writeBuzzerCommand(active: true, type: buzzerType.rawValue)
+        buzzerActive = true
+        Haptics.notification(.warning)
+      }
+      isLoading = false
+      return
+    }
+
+    // Fall back to Supabase RPC
     do {
       if buzzerActive {
-        // Deactivate buzzer
         struct DeactivateResponse: Codable {
           let success: Bool
         }
@@ -1521,7 +1559,6 @@ struct VehicleAlertControlView: View {
         buzzerActive = false
         Haptics.notification(.success)
       } else {
-        // Activate buzzer
         struct ActivateResponse: Codable {
           let success: Bool
         }
