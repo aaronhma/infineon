@@ -27,6 +27,7 @@ struct VehicleView: View {
   @State private var showingShazamHistorySheet = false
   @State private var showingLiveLocationSheet = false
   @State private var showingVehicleSettingsSheet = false
+  @State private var showingBluetoothSheet = false
 
   @State private var showingVehicleAccessSheet = false
   @State private var showingAccountSheet = false
@@ -376,6 +377,39 @@ struct VehicleView: View {
                   }
 
                   Button {
+                    showingBluetoothSheet.toggle()
+                  } label: {
+                    Label {
+                      HStack {
+                        Text("Phone Connection")
+                        Spacer()
+                        if bluetooth.isConnected {
+                          Text("Connected")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                        } else if bluetooth.bleEnabled {
+                          Text(bluetooth.statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                      }
+                    } icon: {
+                      SettingsBoxView(
+                        icon: bluetooth.isConnected
+                          ? "antenna.radiowaves.left.and.right"
+                          : "antenna.radiowaves.left.and.right.slash",
+                        color: bluetooth.isConnected ? .green : .gray
+                      )
+                    }
+                  }
+                  .tint(.primary)
+                  .contentShape(.rect)
+                  .buttonStyle(
+                    FluidZoomTransitionStyle(
+                      id: "bluetoothSheet", namespace: namespace, shape: .rect,
+                      applyGlass: false))
+
+                  Button {
                     showingVehicleSettingsSheet.toggle()
                   } label: {
                     Label {
@@ -586,6 +620,10 @@ struct VehicleView: View {
     .sheet(isPresented: $showingVehicleSettingsSheet) {
       VehicleSettingsView(vehicle: vehicle.vehicle)
         .navigationTransition(.zoom(sourceID: "vehicleSettingsSheet", in: namespace))
+    }
+    .sheet(isPresented: $showingBluetoothSheet) {
+      BluetoothConnectionView()
+        .navigationTransition(.zoom(sourceID: "bluetoothSheet", in: namespace))
     }
     .sheet(isPresented: $showingAlertSheet) {
       VehicleAlertControlView(
@@ -1276,16 +1314,25 @@ struct VehicleAlertControlView: View {
   @State private var policeRotation: Double = 0
   @State private var policeLightsOn = true
 
+  // Custom equalizer parameters
+  @State private var customFrequency: Double = 800
+  @State private var customOnDuration: Double = 0.5
+  @State private var customOffDuration: Double = 0.5
+  @State private var customDutyCycle: Double = 50
+  @State private var isCustomExpanded = false
+
   enum BuzzerType: String, CaseIterable {
     case alert = "alert"
     case emergency = "emergency"
     case warning = "warning"
+    case custom = "custom"
 
     var icon: String {
       switch self {
       case .alert: return "bell.fill"
       case .emergency: return "exclamationmark.triangle.fill"
       case .warning: return "exclamationmark.circle.fill"
+      case .custom: return "slider.horizontal.3"
       }
     }
 
@@ -1294,11 +1341,17 @@ struct VehicleAlertControlView: View {
       case .alert: return .orange
       case .emergency: return .red
       case .warning: return .yellow
+      case .custom: return .purple
       }
     }
 
     var displayName: String {
       rawValue.capitalized
+    }
+
+    /// Cases shown in the segmented picker (excludes custom — it has its own UI)
+    static var pickerCases: [BuzzerType] {
+      [.alert, .emergency, .warning]
     }
   }
 
@@ -1395,7 +1448,7 @@ struct VehicleAlertControlView: View {
         if !buzzerActive {
           Section {
             Picker("Type", selection: $buzzerType) {
-              ForEach(BuzzerType.allCases, id: \.self) { type in
+              ForEach(BuzzerType.pickerCases, id: \.self) { type in
                 Text(type.displayName)
                   .tag(type)
               }
@@ -1405,6 +1458,107 @@ struct VehicleAlertControlView: View {
             Text("Buzzer Type")
           } footer: {
             Text(buzzerTypeDescription)
+          }
+
+          // Custom Equalizer
+          Section {
+            DisclosureGroup("Custom Equalizer", isExpanded: $isCustomExpanded) {
+              VStack(spacing: 20) {
+                // Equalizer bars
+                HStack(alignment: .bottom, spacing: 12) {
+                  EqualizerBar(
+                    label: "FREQ",
+                    value: $customFrequency,
+                    range: 100...5000,
+                    unit: "Hz",
+                    displayValue: "\(Int(customFrequency))",
+                    color: frequencyColor
+                  )
+
+                  EqualizerBar(
+                    label: "ON",
+                    value: $customOnDuration,
+                    range: 0.05...2.0,
+                    unit: "s",
+                    displayValue: String(format: "%.2f", customOnDuration),
+                    color: .green
+                  )
+
+                  EqualizerBar(
+                    label: "OFF",
+                    value: $customOffDuration,
+                    range: 0.05...2.0,
+                    unit: "s",
+                    displayValue: String(format: "%.2f", customOffDuration),
+                    color: .blue
+                  )
+
+                  EqualizerBar(
+                    label: "DUTY",
+                    value: $customDutyCycle,
+                    range: 10...100,
+                    unit: "%",
+                    displayValue: "\(Int(customDutyCycle))",
+                    color: .purple
+                  )
+                }
+                .frame(height: 200)
+                .padding(.vertical, 8)
+
+                // Presets
+                ScrollView(.horizontal) {
+                  HStack(spacing: 8) {
+                    ForEach(BuzzerPreset.allCases, id: \.self) { preset in
+                      Button {
+                        withAnimation(.snappy) {
+                          customFrequency = Double(preset.frequency)
+                          customOnDuration = preset.onDuration
+                          customOffDuration = preset.offDuration
+                          customDutyCycle = Double(preset.dutyCycle)
+                        }
+                        Haptics.impact()
+                      } label: {
+                        Text(preset.name)
+                          .font(.caption)
+                          .bold()
+                          .padding(.horizontal, 12)
+                          .padding(.vertical, 6)
+                          .background(preset.color.opacity(0.2))
+                          .foregroundStyle(preset.color)
+                          .clipShape(.capsule)
+                      }
+                    }
+                  }
+                }
+                .scrollIndicators(.hidden)
+
+                // Play custom button
+                Button {
+                  Haptics.impact()
+                  buzzerType = .custom
+                  Task { await toggleBuzzer() }
+                } label: {
+                  HStack {
+                    Image(systemName: "play.fill")
+                    Text("Play Custom Tone")
+                      .bold()
+                  }
+                  .frame(maxWidth: .infinity)
+                  .padding(.vertical, 10)
+                  .foregroundStyle(.white)
+                  .background(frequencyColor.gradient, in: .rect(cornerRadius: 32))
+                }
+                .buttonStyle(.plain)
+              }
+            }
+            .tint(frequencyColor)
+          } header: {
+            Text("Sound Design")
+          } footer: {
+            Text(
+              "Drag the bars to customize frequency, timing, and intensity. "
+                + "The buzzer hardware resonates best around 4000Hz."
+            )
           }
         }
 
@@ -1490,6 +1644,13 @@ struct VehicleAlertControlView: View {
     }
   }
 
+  private var frequencyColor: Color {
+    let normalized = (customFrequency - 100) / 4900
+    if normalized < 0.33 { return .blue }
+    if normalized < 0.66 { return .purple }
+    return .red
+  }
+
   private var buzzerTypeDescription: String {
     switch buzzerType {
     case .alert:
@@ -1498,6 +1659,9 @@ struct VehicleAlertControlView: View {
       return "High urgency - 1200Hz, fast 0.3s pattern"
     case .warning:
       return "Low urgency - 600Hz, slow 0.7s pattern"
+    case .custom:
+      return
+        "Custom - \(Int(customFrequency))Hz, \(String(format: "%.2f", customOnDuration))s pattern"
     }
   }
 
@@ -1536,6 +1700,16 @@ struct VehicleAlertControlView: View {
         bluetooth.writeBuzzerCommand(active: false)
         buzzerActive = false
         Haptics.notification(.success)
+      } else if buzzerType == .custom {
+        bluetooth.writeCustomBuzzerCommand(
+          active: true,
+          frequency: Int(customFrequency),
+          onDuration: customOnDuration,
+          offDuration: customOffDuration,
+          dutyCycle: Int(customDutyCycle)
+        )
+        buzzerActive = true
+        Haptics.notification(.warning)
       } else {
         bluetooth.writeBuzzerCommand(active: true, type: buzzerType.rawValue)
         buzzerActive = true
@@ -1585,6 +1759,165 @@ struct VehicleAlertControlView: View {
   }
 }
 
+// MARK: - Equalizer Bar
+
+private struct EqualizerBar: View {
+  let label: String
+  @Binding var value: Double
+  let range: ClosedRange<Double>
+  let unit: String
+  let displayValue: String
+  let color: Color
+
+  @State private var isDragging = false
+
+  private var normalized: Double {
+    (value - range.lowerBound) / (range.upperBound - range.lowerBound)
+  }
+
+  var body: some View {
+    VStack(spacing: 6) {
+      // Value label
+      Text(displayValue)
+        .font(.system(.caption2, design: .monospaced, weight: .bold))
+        .foregroundStyle(isDragging ? color : .primary)
+
+      Text(unit)
+        .font(.system(size: 9))
+        .foregroundStyle(.secondary)
+
+      // Vertical bar
+      GeometryReader { geo in
+        let barHeight = geo.size.height
+        let fillHeight = barHeight * normalized
+
+        ZStack(alignment: .bottom) {
+          // Background track
+          RoundedRectangle(cornerRadius: 6)
+            .fill(Color(.tertiarySystemFill))
+
+          // Filled portion
+          RoundedRectangle(cornerRadius: 6)
+            .fill(
+              LinearGradient(
+                colors: [color.opacity(0.6), color],
+                startPoint: .bottom,
+                endPoint: .top
+              )
+            )
+            .frame(height: fillHeight)
+
+          // Glow effect at the top of the bar
+          RoundedRectangle(cornerRadius: 6)
+            .fill(color)
+            .frame(height: max(4, fillHeight))
+            .blur(radius: isDragging ? 8 : 4)
+            .opacity(isDragging ? 0.8 : 0.4)
+            .frame(height: fillHeight, alignment: .top)
+            .clipped()
+
+          // Knob indicator
+          Circle()
+            .fill(.white)
+            .shadow(color: color.opacity(0.6), radius: isDragging ? 6 : 3)
+            .frame(width: isDragging ? 20 : 14, height: isDragging ? 20 : 14)
+            .offset(y: -(fillHeight - 7))
+        }
+        .clipShape(.rect(cornerRadius: 6))
+        .gesture(
+          DragGesture(minimumDistance: 0)
+            .onChanged { drag in
+              isDragging = true
+              let fraction = 1.0 - (drag.location.y / barHeight)
+              let clamped = min(max(fraction, 0), 1)
+              value = range.lowerBound + clamped * (range.upperBound - range.lowerBound)
+            }
+            .onEnded { _ in
+              isDragging = false
+              Haptics.impact()
+            }
+        )
+      }
+      .frame(maxWidth: .infinity)
+
+      // Label
+      Text(label)
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(.secondary)
+    }
+  }
+}
+
+// MARK: - Buzzer Presets
+
+private enum BuzzerPreset: CaseIterable {
+  case siren
+  case heartbeat
+  case alarm
+  case gentle
+  case rapid
+
+  var name: String {
+    switch self {
+    case .siren: "Siren"
+    case .heartbeat: "Heartbeat"
+    case .alarm: "Alarm"
+    case .gentle: "Gentle"
+    case .rapid: "Rapid"
+    }
+  }
+
+  var frequency: Int {
+    switch self {
+    case .siren: 1500
+    case .heartbeat: 400
+    case .alarm: 2500
+    case .gentle: 300
+    case .rapid: 1000
+    }
+  }
+
+  var onDuration: Double {
+    switch self {
+    case .siren: 0.3
+    case .heartbeat: 0.15
+    case .alarm: 0.1
+    case .gentle: 1.0
+    case .rapid: 0.08
+    }
+  }
+
+  var offDuration: Double {
+    switch self {
+    case .siren: 0.3
+    case .heartbeat: 0.6
+    case .alarm: 0.1
+    case .gentle: 1.0
+    case .rapid: 0.08
+    }
+  }
+
+  var dutyCycle: Int {
+    switch self {
+    case .siren: 60
+    case .heartbeat: 40
+    case .alarm: 80
+    case .gentle: 30
+    case .rapid: 50
+    }
+  }
+
+  var color: Color {
+    switch self {
+    case .siren: .red
+    case .heartbeat: .pink
+    case .alarm: .orange
+    case .gentle: .mint
+    case .rapid: .indigo
+    }
+  }
+}
+
 #Preview("Alert Control") {
   NavigationStack {
     VehicleAlertControlView(
@@ -1619,12 +1952,24 @@ struct VehicleLiveCameraView: View {
       VStack(spacing: 0) {
         // Camera feed
         ZStack {
-          if bluetooth.isConnected {
-            ContentUnavailableView {
-              Label("Camera Unavailable", systemImage: "video.slash")
-            } description: {
-              Text("Live camera streaming is not available over Bluetooth.")
-            }
+          if bluetooth.isConnected, let bleFrame = bluetooth.latestCameraFrame {
+            Image(uiImage: bleFrame)
+              .resizable()
+              .aspectRatio(contentMode: .fit)
+              .overlay(alignment: .topLeading) {
+                Text("BLE")
+                  .font(.caption2)
+                  .fontWeight(.bold)
+                  .padding(.horizontal, 6)
+                  .padding(.vertical, 2)
+                  .background(.blue.opacity(0.8))
+                  .foregroundStyle(.white)
+                  .clipShape(Capsule())
+                  .padding(8)
+              }
+          } else if bluetooth.isConnected {
+            ProgressView("Waiting for camera feed...")
+              .controlSize(.extraLarge)
           } else if let frame = currentFrame {
             Image(uiImage: frame)
               .resizable()
@@ -1649,7 +1994,7 @@ struct VehicleLiveCameraView: View {
         }
 
         // Vehicle stats
-        if currentFrame != nil, let data = vehicleData {
+        if currentFrame != nil || bluetooth.latestCameraFrame != nil, let data = vehicleData {
           ScrollView {
             VStack(spacing: 12) {
               // Speed row
@@ -1775,6 +2120,11 @@ struct VehicleLiveCameraView: View {
 
   private func startPolling() {
     stopPolling()
+    // BLE camera frames arrive via notifications — no Supabase polling needed
+    guard !bluetooth.isConnected else {
+      isStreaming = true
+      return
+    }
     isStreaming = true
     consecutiveErrors = 0
 

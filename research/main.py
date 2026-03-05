@@ -2947,7 +2947,15 @@ def main():
         def _ble_buzzer_write(data):
             """Handle buzzer commands from iOS via BLE."""
             if data.get("active"):
-                buzzer.start_continuous(data.get("type", "alert"))
+                custom_params = None
+                if data.get("type") == "custom":
+                    custom_params = {
+                        "freq": data.get("freq", 800),
+                        "on": data.get("on", 0.5),
+                        "off": data.get("off", 0.5),
+                        "duty": data.get("duty", 50),
+                    }
+                buzzer.start_continuous(data.get("type", "alert"), custom_params=custom_params)
             else:
                 buzzer.stop_continuous()
 
@@ -3105,6 +3113,10 @@ def main():
     fps_frame_count = 0
     fps_start_time = time.time()
     last_fps_print = time.time()
+
+    # BLE camera throttle
+    BLE_CAMERA_INTERVAL = 0.5  # 2 fps over BLE
+    ble_last_camera_send = 0
     process_times = deque(maxlen=100)  # Track last 100 total frame times
     mediapipe_times = deque(maxlen=100)
     draw_times = deque(maxlen=100)
@@ -3430,6 +3442,26 @@ def main():
 
             if streamer:
                 streamer.update_frame(processed_frame)
+
+            # BLE camera: send compressed frames when connected
+            if ble_server and ble_server.is_connected:
+                if current_time - ble_last_camera_send >= BLE_CAMERA_INTERVAL:
+                    ble_last_camera_send = current_time
+                    h, w = processed_frame.shape[:2]
+                    ble_w = 160
+                    if w > ble_w:
+                        scale = ble_w / w
+                        ble_cam_frame = cv2.resize(
+                            processed_frame,
+                            (ble_w, int(h * scale)),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    else:
+                        ble_cam_frame = processed_frame
+                    _, ble_buf = cv2.imencode(
+                        ".jpg", ble_cam_frame, [cv2.IMWRITE_JPEG_QUALITY, 20]
+                    )
+                    ble_server.update_camera_frame(ble_buf.tobytes())
 
             if dashcam:
                 hud_frame = processed_frame.copy()

@@ -114,36 +114,43 @@ class BuzzerController:
             print("[BUZZER] Distraction alert played")
             self.last_drowsy_alert = current_time
 
-    def _continuous_buzzer_loop(self, buzzer_type):
+    def _continuous_buzzer_loop(self, buzzer_type, custom_params=None):
         """Background thread to play continuous buzzer pattern
 
         Args:
-            buzzer_type: 'alert', 'emergency', or 'warning'
+            buzzer_type: 'alert', 'emergency', 'warning', or 'custom'
+            custom_params: dict with 'freq', 'on', 'off', 'duty' for custom type
         """
         # Define patterns for different types
         patterns = {
-            "alert": (800, 0.5, 0.5),  # 800Hz, 0.5s on, 0.5s off
-            "emergency": (1200, 0.3, 0.3),  # 1200Hz, 0.3s on, 0.3s off (faster)
-            "warning": (600, 0.7, 0.7),  # 600Hz, 0.7s on, 0.7s off (slower)
+            "alert": (800, 0.5, 0.5, 50),  # 800Hz, 0.5s on, 0.5s off, 50% duty
+            "emergency": (1200, 0.3, 0.3, 50),  # 1200Hz, 0.3s on, 0.3s off
+            "warning": (600, 0.7, 0.7, 50),  # 600Hz, 0.7s on, 0.7s off
         }
 
-        frequency, duration_on, duration_off = patterns.get(
-            buzzer_type, patterns["alert"]
-        )
+        if buzzer_type == "custom" and custom_params:
+            frequency = max(100, min(5000, int(custom_params.get("freq", 800))))
+            duration_on = max(0.05, min(2.0, float(custom_params.get("on", 0.5))))
+            duration_off = max(0.05, min(2.0, float(custom_params.get("off", 0.5))))
+            duty_cycle = max(10, min(100, int(custom_params.get("duty", 50))))
+        else:
+            frequency, duration_on, duration_off, duty_cycle = patterns.get(
+                buzzer_type, patterns["alert"]
+            )
 
-        print(f"[BUZZER] Starting continuous {buzzer_type} buzzer ({frequency}Hz)")
+        print(f"[BUZZER] Starting continuous {buzzer_type} buzzer ({frequency}Hz, duty={duty_cycle}%)")
 
         while self.continuous_active:
             # Play tone
             if self.use_fake:
-                print(f"[BUZZER SIMULATED] Continuous {buzzer_type} beep")
+                print(f"[BUZZER SIMULATED] Continuous {buzzer_type} beep ({frequency}Hz)")
             else:
                 try:
                     with self._lock:
                         if not self.continuous_active:
                             break
                         self.pwm = self.gpio.PWM(self.pin, frequency)
-                        self.pwm.start(50)
+                        self.pwm.start(duty_cycle)
 
                     # Sleep for duration_on
                     time.sleep(duration_on)
@@ -163,22 +170,29 @@ class BuzzerController:
 
         print(f"[BUZZER] Stopped continuous {buzzer_type} buzzer")
 
-    def start_continuous(self, buzzer_type="alert"):
+    def start_continuous(self, buzzer_type="alert", custom_params=None):
         """Start continuous buzzer (for remote activation)
 
         Args:
-            buzzer_type: 'alert', 'emergency', or 'warning'
+            buzzer_type: 'alert', 'emergency', 'warning', or 'custom'
+            custom_params: dict with 'freq', 'on', 'off', 'duty' for custom type
         """
         if self.continuous_active:
-            print("[BUZZER] Continuous buzzer already active")
-            return
+            # If already active, stop first then restart with new params
+            self.stop_continuous()
 
         self.continuous_active = True
         self.continuous_thread = threading.Thread(
-            target=self._continuous_buzzer_loop, args=(buzzer_type,), daemon=True
+            target=self._continuous_buzzer_loop, args=(buzzer_type,),
+            kwargs={"custom_params": custom_params}, daemon=True
         )
         self.continuous_thread.start()
-        print(f"[BUZZER] Remote continuous buzzer activated ({buzzer_type})")
+        if custom_params:
+            print(f"[BUZZER] Custom buzzer activated ({custom_params['freq']}Hz, "
+                  f"{custom_params['on']}s on, {custom_params['off']}s off, "
+                  f"{custom_params['duty']}% duty)")
+        else:
+            print(f"[BUZZER] Remote continuous buzzer activated ({buzzer_type})")
 
     def stop_continuous(self):
         """Stop continuous buzzer"""

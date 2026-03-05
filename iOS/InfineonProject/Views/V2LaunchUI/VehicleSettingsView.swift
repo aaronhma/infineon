@@ -96,43 +96,6 @@ struct VehicleSettingsView: View {
           Text("These changes will take effect when the device restarts.")
         }
 
-        Section {
-          Toggle(isOn: Binding(get: { bluetooth.bleEnabled }, set: { bluetooth.bleEnabled = $0 })) {
-            Label {
-              VStack(alignment: .leading) {
-                Text("Direct Connection")
-                Group {
-                  if bluetooth.isConnected {
-                    Text("Connected")
-                      .foregroundStyle(.green)
-                  } else if bluetooth.bleEnabled {
-                    Text(bluetooth.statusMessage)
-                      .foregroundStyle(
-                        bluetooth.statusMessage.contains("not found")
-                          || bluetooth.statusMessage.contains("not authorized") ? .red : .secondary)
-                  } else {
-                    Text("Off")
-                      .foregroundStyle(.secondary)
-                  }
-                }
-                .font(.caption)
-              }
-            } icon: {
-              SettingsBoxView(
-                icon: bluetooth.isConnected
-                  ? "antenna.radiowaves.left.and.right" : "antenna.radiowaves.left.and.right.slash",
-                color: bluetooth.isConnected ? .green : .gray
-              )
-            }
-          }
-        } header: {
-          Text("Bluetooth")
-        } footer: {
-          Text(
-            "Connect directly to your vehicle over Bluetooth. Live camera streaming is not available over Bluetooth."
-          )
-        }
-
         Section("Hardware") {
           featureToggle(
             "Camera",

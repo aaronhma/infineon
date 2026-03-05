@@ -7,6 +7,7 @@
 
 import CoreBluetooth
 import Foundation
+import UIKit
 
 // MARK: - UUIDs (must match RPi bluetooth.py)
 
@@ -16,6 +17,7 @@ private let settingsCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780
 private let buzzerCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780003")
 private let tripCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780004")
 private let relayCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780005")
+private let cameraCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780006")
 
 // MARK: - Compact BLE payload models
 
@@ -128,6 +130,24 @@ enum AnyCodable: Codable {
 
 }
 
+// MARK: - Discovered BLE device
+
+struct DiscoveredBLEDevice: Identifiable {
+  let id: UUID
+  let peripheral: CBPeripheral
+  let name: String
+  var rssi: Int
+  let isVehicle: Bool
+
+  init(peripheral: CBPeripheral, rssi: Int, isVehicle: Bool) {
+    self.id = peripheral.identifier
+    self.peripheral = peripheral
+    self.name = peripheral.name ?? "Unknown Device"
+    self.rssi = rssi
+    self.isVehicle = isVehicle
+  }
+}
+
 // MARK: - BluetoothManager
 
 @Observable
@@ -144,10 +164,14 @@ final class BluetoothManager: NSObject {
   }
 
   private(set) var isConnected = false
+  private(set) var isScanning = false
   private(set) var statusMessage = "Off"
   private(set) var latestRealtime: BLERealtimeData?
   private(set) var latestTrip: BLETripData?
   private(set) var latestRelay: BLERelayData?
+  private(set) var discoveredDevices: [DiscoveredBLEDevice] = []
+  private(set) var connectedDeviceName: String?
+  private(set) var latestCameraFrame: UIImage?
 
   /// Set by the UI when a vehicle profile is selected while BLE is connected.
   /// The data polling timer uses this to feed BLE data into `vehicleRealtimeData`.
@@ -158,6 +182,12 @@ final class BluetoothManager: NSObject {
   private var connectedPeripheral: CBPeripheral?
   private var settingsCharacteristic: CBCharacteristic?
   private var buzzerCharacteristic: CBCharacteristic?
+
+  // Camera frame assembly
+  private var cameraFrameBuffer = Data()
+  private var cameraFrameId: UInt8 = 255
+  private var cameraExpectedChunks: UInt8 = 0
+  private var cameraReceivedChunks: UInt8 = 0
 
   // Reconnect / timeout
   private var scanTimer: Timer?
@@ -227,6 +257,31 @@ final class BluetoothManager: NSObject {
     peripheral.writeValue(data, for: char, type: .withResponse)
   }
 
+  func writeCustomBuzzerCommand(
+    active: Bool, frequency: Int, onDuration: Double, offDuration: Double, dutyCycle: Int
+  ) {
+    guard let char = buzzerCharacteristic, let peripheral = connectedPeripheral else { return }
+    let payload: [String: Any] = [
+      "active": active, "type": "custom",
+      "freq": frequency, "on": onDuration, "off": offDuration, "duty": dutyCycle,
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+    peripheral.writeValue(data, for: char, type: .withResponse)
+  }
+
+  // MARK: - Public Connect
+
+  func connectToDevice(_ device: DiscoveredBLEDevice) {
+    guard let cm = centralManager else { return }
+    cm.stopScan()
+    isScanning = false
+    scanTimer?.invalidate()
+    statusMessage = "Connecting..."
+    connectedPeripheral = device.peripheral
+    device.peripheral.delegate = self
+    cm.connect(device.peripheral, options: nil)
+  }
+
   // MARK: - Scanning
 
   private func startScanning() {
@@ -240,8 +295,11 @@ final class BluetoothManager: NSObject {
 
   private func beginScan() {
     guard let cm = centralManager, cm.state == .poweredOn else { return }
+    discoveredDevices = []
+    isScanning = true
     statusMessage = "Scanning..."
-    cm.scanForPeripherals(withServices: [serviceUUID], options: nil)
+    cm.scanForPeripherals(
+      withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
 
     // Scan timeout
     scanTimer?.invalidate()
@@ -249,11 +307,16 @@ final class BluetoothManager: NSObject {
       [weak self] _ in
       guard let self, !self.isConnected else { return }
       self.centralManager?.stopScan()
-      self.statusMessage = "Device not found"
+      self.isScanning = false
+      if self.discoveredDevices.isEmpty {
+        self.statusMessage = "Device not found"
+      } else {
+        self.statusMessage = "Select a device"
+      }
     }
   }
 
-  private func disconnect() {
+  func disconnect() {
     scanTimer?.invalidate()
     reconnectWorkItem?.cancel()
     if let peripheral = connectedPeripheral {
@@ -261,20 +324,32 @@ final class BluetoothManager: NSObject {
     }
     centralManager?.stopScan()
     cleanup()
-    statusMessage = "Off"
+    if bleEnabled {
+      beginScan()
+    } else {
+      statusMessage = "Off"
+    }
   }
 
   private func cleanup() {
     stopDataTimer()
     stopRelayTimer()
     isConnected = false
+    isScanning = false
     connectedPeripheral = nil
     settingsCharacteristic = nil
     buzzerCharacteristic = nil
     latestRealtime = nil
     latestTrip = nil
     latestRelay = nil
+    latestCameraFrame = nil
     connectedVehicleId = nil
+    connectedDeviceName = nil
+    discoveredDevices = []
+    cameraFrameBuffer = Data()
+    cameraFrameId = 255
+    cameraExpectedChunks = 0
+    cameraReceivedChunks = 0
   }
 
   private func scheduleReconnect() {
@@ -314,17 +389,39 @@ extension BluetoothManager: CBCentralManagerDelegate {
     advertisementData: [String: Any],
     rssi RSSI: NSNumber
   ) {
-    central.stopScan()
-    scanTimer?.invalidate()
-    statusMessage = "Connecting..."
-    connectedPeripheral = peripheral
-    peripheral.delegate = self
-    central.connect(peripheral, options: nil)
+    let rssi = RSSI.intValue
+    guard rssi != 127 else { return }  // Invalid RSSI
+    let advertisedServices =
+      advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
+    let isVehicle = advertisedServices.contains(serviceUUID)
+
+    // Update existing or add new
+    if let idx = discoveredDevices.firstIndex(where: {
+      $0.peripheral.identifier == peripheral.identifier
+    }) {
+      discoveredDevices[idx].rssi = rssi
+    } else {
+      let device = DiscoveredBLEDevice(peripheral: peripheral, rssi: rssi, isVehicle: isVehicle)
+      // Insert vehicles at the top, others at the bottom
+      if isVehicle {
+        discoveredDevices.insert(device, at: 0)
+      } else {
+        discoveredDevices.append(device)
+      }
+
+      // Auto-connect to vehicle devices
+      if isVehicle {
+        connectToDevice(device)
+      }
+    }
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
     isConnected = true
+    isScanning = false
+    connectedDeviceName = peripheral.name ?? "Unknown Device"
     statusMessage = "Connected"
+    discoveredDevices = []
     startDataTimer()
     startRelayTimer()
     peripheral.discoverServices([serviceUUID])
@@ -357,7 +454,10 @@ extension BluetoothManager: CBPeripheralDelegate {
       return
     }
     peripheral.discoverCharacteristics(
-      [realtimeCharUUID, settingsCharUUID, buzzerCharUUID, tripCharUUID, relayCharUUID],
+      [
+        realtimeCharUUID, settingsCharUUID, buzzerCharUUID, tripCharUUID, relayCharUUID,
+        cameraCharUUID,
+      ],
       for: service
     )
   }
@@ -381,6 +481,8 @@ extension BluetoothManager: CBPeripheralDelegate {
         peripheral.setNotifyValue(true, for: char)
         peripheral.readValue(for: char)
       case relayCharUUID:
+        peripheral.setNotifyValue(true, for: char)
+      case cameraCharUUID:
         peripheral.setNotifyValue(true, for: char)
       default:
         break
@@ -409,8 +511,40 @@ extension BluetoothManager: CBPeripheralDelegate {
       if let parsed = try? decoder.decode(BLERelayData.self, from: data) {
         latestRelay = parsed
       }
+    case cameraCharUUID:
+      handleCameraChunk(data)
     default:
       break
+    }
+  }
+
+  private func handleCameraChunk(_ data: Data) {
+    guard data.count >= 3 else { return }
+    let frameId = data[0]
+    let chunkIndex = data[1]
+    let totalChunks = data[2]
+    let chunkData = data.subdata(in: 3..<data.count)
+
+    if frameId != cameraFrameId {
+      // New frame — reset buffer
+      cameraFrameId = frameId
+      cameraFrameBuffer = Data()
+      cameraExpectedChunks = totalChunks
+      cameraReceivedChunks = 0
+    }
+
+    // Accept chunks in order
+    if chunkIndex == cameraReceivedChunks {
+      cameraFrameBuffer.append(chunkData)
+      cameraReceivedChunks += 1
+
+      if cameraReceivedChunks == cameraExpectedChunks {
+        // Frame complete — decode JPEG
+        if let image = UIImage(data: cameraFrameBuffer) {
+          latestCameraFrame = image
+        }
+        cameraFrameBuffer = Data()
+      }
     }
   }
 }
