@@ -204,13 +204,17 @@ class BluetoothServer:
         uuid = str(characteristic.uuid).upper()
         with self._lock:
             if uuid == CHAR_REALTIME_UUID:
-                characteristic.value = self._realtime_bytes
+                val = self._realtime_bytes
             elif uuid == CHAR_SETTINGS_UUID:
-                characteristic.value = self._settings_bytes
+                val = self._settings_bytes
             elif uuid == CHAR_TRIP_UUID:
-                characteristic.value = self._trip_bytes
+                val = self._trip_bytes
             elif uuid == CHAR_RELAY_UUID:
-                characteristic.value = self._relay_bytes
+                val = self._relay_bytes
+            else:
+                val = b"{}"
+        characteristic.value = val
+        return val
 
     def _on_write(self, characteristic, value, **kwargs):
         uuid = str(characteristic.uuid).upper()
