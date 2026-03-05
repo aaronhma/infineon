@@ -7,7 +7,6 @@
 
 import CoreBluetooth
 import Foundation
-import UIKit
 
 // MARK: - UUIDs (must match RPi bluetooth.py)
 
@@ -17,8 +16,6 @@ private let settingsCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780
 private let buzzerCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780003")
 private let tripCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780004")
 private let relayCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780005")
-private let cameraCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780006")
-
 // MARK: - Compact BLE payload models
 
 struct BLERealtimeData: Codable {
@@ -33,6 +30,7 @@ struct BLERealtimeData: Codable {
   let ix: Int
   let sp: Bool
   let sat: Int
+  let cam: String?
 
   /// Convert compact BLE JSON to the app's existing VehicleRealtime model.
   func toVehicleRealtime(vehicleId: String) -> VehicleRealtime {
@@ -171,7 +169,6 @@ final class BluetoothManager: NSObject {
   private(set) var latestRelay: BLERelayData?
   private(set) var discoveredDevices: [DiscoveredBLEDevice] = []
   private(set) var connectedDeviceName: String?
-  private(set) var latestCameraFrame: UIImage?
 
   /// Set by the UI when a vehicle profile is selected while BLE is connected.
   /// The data polling timer uses this to feed BLE data into `vehicleRealtimeData`.
@@ -182,12 +179,6 @@ final class BluetoothManager: NSObject {
   private var connectedPeripheral: CBPeripheral?
   private var settingsCharacteristic: CBCharacteristic?
   private var buzzerCharacteristic: CBCharacteristic?
-
-  // Camera frame assembly
-  private var cameraFrameBuffer = Data()
-  private var cameraFrameId: UInt8 = 255
-  private var cameraExpectedChunks: UInt8 = 0
-  private var cameraReceivedChunks: UInt8 = 0
 
   // Reconnect / timeout
   private var scanTimer: Timer?
@@ -342,14 +333,9 @@ final class BluetoothManager: NSObject {
     latestRealtime = nil
     latestTrip = nil
     latestRelay = nil
-    latestCameraFrame = nil
     connectedVehicleId = nil
     connectedDeviceName = nil
     discoveredDevices = []
-    cameraFrameBuffer = Data()
-    cameraFrameId = 255
-    cameraExpectedChunks = 0
-    cameraReceivedChunks = 0
   }
 
   private func scheduleReconnect() {
@@ -454,10 +440,7 @@ extension BluetoothManager: CBPeripheralDelegate {
       return
     }
     peripheral.discoverCharacteristics(
-      [
-        realtimeCharUUID, settingsCharUUID, buzzerCharUUID, tripCharUUID, relayCharUUID,
-        cameraCharUUID,
-      ],
+      [realtimeCharUUID, settingsCharUUID, buzzerCharUUID, tripCharUUID, relayCharUUID],
       for: service
     )
   }
@@ -481,8 +464,6 @@ extension BluetoothManager: CBPeripheralDelegate {
         peripheral.setNotifyValue(true, for: char)
         peripheral.readValue(for: char)
       case relayCharUUID:
-        peripheral.setNotifyValue(true, for: char)
-      case cameraCharUUID:
         peripheral.setNotifyValue(true, for: char)
       default:
         break
@@ -511,42 +492,11 @@ extension BluetoothManager: CBPeripheralDelegate {
       if let parsed = try? decoder.decode(BLERelayData.self, from: data) {
         latestRelay = parsed
       }
-    case cameraCharUUID:
-      handleCameraChunk(data)
     default:
       break
     }
   }
 
-  private func handleCameraChunk(_ data: Data) {
-    guard data.count >= 3 else { return }
-    let frameId = data[0]
-    let chunkIndex = data[1]
-    let totalChunks = data[2]
-    let chunkData = data.subdata(in: 3..<data.count)
-
-    if frameId != cameraFrameId {
-      // New frame — reset buffer
-      cameraFrameId = frameId
-      cameraFrameBuffer = Data()
-      cameraExpectedChunks = totalChunks
-      cameraReceivedChunks = 0
-    }
-
-    // Accept chunks in order
-    if chunkIndex == cameraReceivedChunks {
-      cameraFrameBuffer.append(chunkData)
-      cameraReceivedChunks += 1
-
-      if cameraReceivedChunks == cameraExpectedChunks {
-        // Frame complete — decode JPEG
-        if let image = UIImage(data: cameraFrameBuffer) {
-          latestCameraFrame = image
-        }
-        cameraFrameBuffer = Data()
-      }
-    }
-  }
 }
 
 // MARK: - Global singleton

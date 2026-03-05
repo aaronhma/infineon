@@ -1946,10 +1946,12 @@ struct VehicleLiveCameraView: View {
   @State private var lastFrameDate = Date.now
   @State private var vehicleData: VehicleRealtime?
   @State private var dataTask: Task<Void, Never>?
+  @State private var httpCameraFrame: UIImage?
+  @State private var httpPollTask: Task<Void, Never>?
 
   private var activeFrame: UIImage? {
     if bluetooth.isConnected {
-      return bluetooth.latestCameraFrame
+      return httpCameraFrame
     }
     return currentFrame
   }
@@ -2124,9 +2126,33 @@ struct VehicleLiveCameraView: View {
 
   private func startPolling() {
     stopPolling()
-    // BLE camera frames arrive via notifications — no Supabase polling needed
-    guard !bluetooth.isConnected else {
+    // BLE: poll HTTP camera server on the Pi's local network
+    if bluetooth.isConnected {
       isStreaming = true
+      httpPollTask = Task {
+        while !Task.isCancelled {
+          if let camURL = bluetooth.latestRealtime?.cam,
+            let url = URL(string: camURL)
+          {
+            do {
+              let (data, _) = try await URLSession.shared.data(from: url)
+              if let image = UIImage(data: data) {
+                httpCameraFrame = image
+                lastFrameDate = .now
+                consecutiveErrors = 0
+              }
+            } catch {
+              consecutiveErrors += 1
+              if consecutiveErrors > 15 && httpCameraFrame == nil {
+                self.error = "Cannot reach camera server on Pi."
+                isStreaming = false
+                return
+              }
+            }
+          }
+          try? await Task.sleep(for: .milliseconds(200))
+        }
+      }
       return
     }
     isStreaming = true
@@ -2197,6 +2223,8 @@ struct VehicleLiveCameraView: View {
     pollTask = nil
     fallbackPollTask?.cancel()
     fallbackPollTask = nil
+    httpPollTask?.cancel()
+    httpPollTask = nil
     isStreaming = false
   }
 

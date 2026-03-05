@@ -23,12 +23,8 @@ CHAR_SETTINGS_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780002"
 CHAR_BUZZER_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780003"
 CHAR_TRIP_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780004"
 CHAR_RELAY_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780005"
-CHAR_CAMERA_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780006"
 
 DEVICE_NAME = "InfineonDMS"
-
-# Camera frame chunking
-CAMERA_CHUNK_SIZE = 495  # bytes of JPEG data per BLE notification
 
 
 class BluetoothServer:
@@ -51,10 +47,6 @@ class BluetoothServer:
         self._settings_bytes = b"{}"
         self._trip_bytes = b"{}"
         self._relay_bytes = b"{}"
-
-        # Camera frame state
-        self._frame_id = 0
-        self._camera_sending = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -120,24 +112,6 @@ class BluetoothServer:
             self._relay_bytes = payload
         if not self._use_fake and self._server and self._connected:
             self._schedule_notify(CHAR_RELAY_UUID, payload)
-
-    def update_camera_frame(self, jpeg_bytes: bytes):
-        """Send a JPEG frame over BLE using chunked notifications.
-
-        Each notification carries a 3-byte header:
-          [frame_id (uint8), chunk_index (uint8), total_chunks (uint8)]
-        followed by up to CAMERA_CHUNK_SIZE bytes of JPEG data.
-        """
-        if self._use_fake or not self._server or not self._connected:
-            return
-        if self._camera_sending:
-            return  # Previous frame still in flight
-        self._frame_id = (self._frame_id + 1) % 256
-        if self._loop and self._loop.is_running():
-            self._loop.call_soon_threadsafe(
-                self._loop.create_task,
-                self._send_camera_chunks(jpeg_bytes),
-            )
 
     @property
     def is_connected(self):
@@ -210,14 +184,6 @@ class BluetoothServer:
             GATTAttributePermissions.readable,
         )
 
-        # Camera — Notify only (chunked JPEG frames)
-        await self._server.add_new_characteristic(
-            SERVICE_UUID, CHAR_CAMERA_UUID,
-            GATTCharacteristicProperties.notify,
-            None,
-            GATTAttributePermissions.readable,
-        )
-
         await self._server.start()
         print(f"[BLE] GATT server advertising as '{self._device_name}'")
 
@@ -283,31 +249,6 @@ class BluetoothServer:
             except Exception as e:
                 print(f"[BLE] Notify error ({char_uuid[-4:]}): {e}")
 
-    async def _send_camera_chunks(self, jpeg_bytes: bytes):
-        """Send JPEG data as chunked BLE notifications."""
-        self._camera_sending = True
-        try:
-            total = len(jpeg_bytes)
-            total_chunks = (total + CAMERA_CHUNK_SIZE - 1) // CAMERA_CHUNK_SIZE
-            if total_chunks > 255:
-                return  # Frame too large for protocol
-
-            for i in range(total_chunks):
-                if not self._connected:
-                    break
-                offset = i * CAMERA_CHUNK_SIZE
-                chunk_data = jpeg_bytes[offset:offset + CAMERA_CHUNK_SIZE]
-                header = bytes([self._frame_id, i, total_chunks])
-                payload = header + chunk_data
-
-                self._server.get_characteristic(CHAR_CAMERA_UUID).value = payload
-                self._server.update_value(SERVICE_UUID, CHAR_CAMERA_UUID)
-                await asyncio.sleep(0.008)  # 8ms between chunks
-        except Exception as e:
-            print(f"[BLE] Camera frame send error: {e}")
-        finally:
-            self._camera_sending = False
-
     # ------------------------------------------------------------------
     # Compact JSON builders — keep payloads <200 bytes for BLE MTU
     # ------------------------------------------------------------------
@@ -327,6 +268,10 @@ class BluetoothServer:
             "sp": bool(d.get("is_speeding", False)),
             "sat": int(d.get("satellites", 0)),
         }
+        # Include camera server URL if provided
+        cam_url = d.get("camera_url")
+        if cam_url:
+            compact["cam"] = cam_url
         return json.dumps(compact, separators=(",", ":")).encode("utf-8")
 
     @staticmethod

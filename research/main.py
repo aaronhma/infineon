@@ -94,6 +94,8 @@ try:
 except Exception as e:
     print(f"unavailable ({e})")
 
+from components.camera_server import CameraServer
+
 # MediaPipe + scipy are loaded lazily inside FaceAnalyzer.__init__() to avoid
 # segfaults from protobuf conflicts on RPi (a segfault bypasses try/except).
 _MEDIAPIPE_AVAILABLE = None  # determined at runtime in _check_mediapipe()
@@ -3114,6 +3116,11 @@ def main():
         ble_server.start()
         ble_server.update_settings(settings)
 
+    # HTTP camera server (serves frames to iOS over local network)
+    camera_server = CameraServer(port=8554, quality=50, width=480)
+    camera_server.start()
+    camera_url = f"http://{camera_server.local_ip}:8554/frame"
+
     # Open camera if enabled
     cap = None
     analyzer = None
@@ -3262,9 +3269,6 @@ def main():
     fps_start_time = time.time()
     last_fps_print = time.time()
 
-    # BLE camera throttle
-    BLE_CAMERA_INTERVAL = 0.5  # 2 fps over BLE
-    ble_last_camera_send = 0
     process_times = deque(maxlen=100)  # Track last 100 total frame times
     mediapipe_times = deque(maxlen=100)
     draw_times = deque(maxlen=100)
@@ -3467,6 +3471,7 @@ def main():
                 "satellites": driving_sim.get_satellites(),
                 "is_phone_detected": distraction_data["phone_detected"],
                 "is_drinking_detected": distraction_data["drinking_detected"],
+                "camera_url": camera_url if enable_camera else None,
             })
             ble_server.update_trip({
                 "trip_id": supabase_uploader.trip_id or "",
@@ -3591,25 +3596,8 @@ def main():
             if streamer:
                 streamer.update_frame(processed_frame)
 
-            # BLE camera: send compressed frames when connected
-            if ble_server and ble_server.is_connected:
-                if current_time - ble_last_camera_send >= BLE_CAMERA_INTERVAL:
-                    ble_last_camera_send = current_time
-                    h, w = processed_frame.shape[:2]
-                    ble_w = 160
-                    if w > ble_w:
-                        scale = ble_w / w
-                        ble_cam_frame = cv2.resize(
-                            processed_frame,
-                            (ble_w, int(h * scale)),
-                            interpolation=cv2.INTER_AREA,
-                        )
-                    else:
-                        ble_cam_frame = processed_frame
-                    _, ble_buf = cv2.imencode(
-                        ".jpg", ble_cam_frame, [cv2.IMWRITE_JPEG_QUALITY, 20]
-                    )
-                    ble_server.update_camera_frame(ble_buf.tobytes())
+            # HTTP camera server: always update with latest frame
+            camera_server.update_frame(processed_frame)
 
             if dashcam:
                 hud_frame = processed_frame.copy()
@@ -3655,6 +3643,7 @@ def main():
         distraction_detector.shutdown()
     if ble_server:
         ble_server.stop()
+    camera_server.stop()
     supabase_uploader.end_trip()
     supabase_uploader.reset_vehicle_realtime()
     buzzer.stop()
