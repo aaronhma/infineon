@@ -1947,35 +1947,39 @@ struct VehicleLiveCameraView: View {
   @State private var vehicleData: VehicleRealtime?
   @State private var dataTask: Task<Void, Never>?
 
+  private var activeFrame: UIImage? {
+    if bluetooth.isConnected {
+      return bluetooth.latestCameraFrame
+    }
+    return currentFrame
+  }
+
+  private var isBLE: Bool { bluetooth.isConnected }
+
   var body: some View {
     NavigationStack {
       VStack(spacing: 0) {
         // Camera feed
         ZStack {
-          if bluetooth.isConnected, let bleFrame = bluetooth.latestCameraFrame {
-            Image(uiImage: bleFrame)
-              .resizable()
-              .aspectRatio(contentMode: .fit)
-              .overlay(alignment: .topLeading) {
-                Text("BLE")
-                  .font(.caption2)
-                  .fontWeight(.bold)
-                  .padding(.horizontal, 6)
-                  .padding(.vertical, 2)
-                  .background(.blue.opacity(0.8))
-                  .foregroundStyle(.white)
-                  .clipShape(Capsule())
-                  .padding(8)
-              }
-          } else if bluetooth.isConnected {
-            ProgressView("Waiting for camera feed...")
-              .controlSize(.extraLarge)
-          } else if let frame = currentFrame {
+          if let frame = activeFrame {
             Image(uiImage: frame)
               .resizable()
               .aspectRatio(contentMode: .fit)
+              .overlay(alignment: .topLeading) {
+                if isBLE {
+                  Text("BLE")
+                    .font(.caption2)
+                    .fontWeight(.bold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.blue.opacity(0.8))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+                    .padding(8)
+                }
+              }
           } else if isStreaming {
-            ProgressView("Connecting to camera...")
+            ProgressView(isBLE ? "Waiting for camera feed..." : "Connecting to camera...")
               .controlSize(.extraLarge)
           } else if let error {
             ContentUnavailableView {
@@ -1993,8 +1997,8 @@ struct VehicleLiveCameraView: View {
           }
         }
 
-        // Vehicle stats
-        if currentFrame != nil || bluetooth.latestCameraFrame != nil, let data = vehicleData {
+        // Vehicle stats — always visible
+        if let data = vehicleData {
           ScrollView {
             VStack(spacing: 12) {
               // Speed row
@@ -2103,7 +2107,7 @@ struct VehicleLiveCameraView: View {
 
         ToolbarItem(placement: .topBarTrailing) {
           Circle()
-            .fill(currentFrame != nil ? .green : (isStreaming ? .yellow : .red))
+            .fill(activeFrame != nil ? .green : (isStreaming ? .yellow : .red))
             .frame(width: 15, height: 15)
         }
       }
@@ -2201,19 +2205,24 @@ struct VehicleLiveCameraView: View {
 
     dataTask = Task {
       while !Task.isCancelled {
-        do {
-          let response: [VehicleRealtime] = try await supabase.client
-            .from("vehicle_realtime")
-            .select()
-            .eq("vehicle_id", value: vehicleId)
-            .execute()
-            .value
+        if bluetooth.isConnected, let rt = bluetooth.latestRealtime {
+          // Use BLE realtime data directly
+          vehicleData = rt.toVehicleRealtime(vehicleId: vehicleId)
+        } else {
+          do {
+            let response: [VehicleRealtime] = try await supabase.client
+              .from("vehicle_realtime")
+              .select()
+              .eq("vehicle_id", value: vehicleId)
+              .execute()
+              .value
 
-          if let data = response.first {
-            vehicleData = data
+            if let data = response.first {
+              vehicleData = data
+            }
+          } catch {
+            // Silently continue if fetch fails
           }
-        } catch {
-          // Silently continue if fetch fails
         }
 
         try? await Task.sleep(for: .milliseconds(500))

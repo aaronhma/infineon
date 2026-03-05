@@ -13,6 +13,11 @@ class SpeedLimitChecker:
     Checks speed limits for roads at given coordinates using OpenStreetMap Overpass API
     """
 
+    OVERPASS_URLS = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+    ]
+
     def __init__(self, search_radius: int = 50):
         """
         Initialize the speed limit checker
@@ -21,11 +26,14 @@ class SpeedLimitChecker:
             search_radius: Radius in meters to search for roads (default: 50m)
         """
         self.search_radius = search_radius
-        self.overpass_url = "https://overpass-api.de/api/interpreter"
+        self.overpass_url = self.OVERPASS_URLS[0]
+        self._last_good_limit: Optional[int] = None
+        self._consecutive_failures = 0
 
     def get_speed_limit(self, latitude: float, longitude: float) -> Optional[int]:
         """
-        Get the speed limit at the given coordinates
+        Get the speed limit at the given coordinates.
+        Tries multiple Overpass mirrors and returns cached result on failure.
 
         Args:
             latitude: Latitude coordinate
@@ -34,45 +42,52 @@ class SpeedLimitChecker:
         Returns:
             Speed limit in MPH, or None if not found
         """
-        try:
-            # Build Overpass query to find roads near the coordinates
-            query = f"""
-            [out:json];
-            (
-              way(around:{self.search_radius},{latitude},{longitude})["highway"];
-            );
-            out body;
-            """
+        # Back off after repeated failures (wait longer between retries)
+        if self._consecutive_failures >= 3:
+            self._consecutive_failures = 0  # Reset so next call tries again
 
-            response = requests.post(
-                self.overpass_url,
-                data={"data": query},
-                timeout=10
-            )
+        query = f"""
+        [out:json];
+        (
+          way(around:{self.search_radius},{latitude},{longitude})["highway"];
+        );
+        out body;
+        """
 
-            if response.status_code != 200:
-                print(f"API request failed with status {response.status_code}")
-                return None
+        for url in self.OVERPASS_URLS:
+            try:
+                response = requests.post(
+                    url, data={"data": query}, timeout=8
+                )
 
-            data = response.json()
+                if response.status_code != 200:
+                    continue  # Try next mirror
 
-            if not data.get("elements"):
-                return None
+                data = response.json()
+                self._consecutive_failures = 0
 
-            # Get the closest road with a speed limit
-            for element in data["elements"]:
-                if "tags" in element and "maxspeed" in element["tags"]:
-                    maxspeed = element["tags"]["maxspeed"]
-                    return self._parse_speed_limit(maxspeed)
+                if not data.get("elements"):
+                    return self._last_good_limit
 
-            return None
+                for element in data["elements"]:
+                    if "tags" in element and "maxspeed" in element["tags"]:
+                        limit = self._parse_speed_limit(element["tags"]["maxspeed"])
+                        if limit is not None:
+                            self._last_good_limit = limit
+                        return limit
 
-        except requests.exceptions.RequestException as e:
-            print(f"Network error: {e}")
-            return None
-        except Exception as e:
-            print(f"Error getting speed limit: {e}")
-            return None
+                return self._last_good_limit
+
+            except requests.exceptions.RequestException:
+                continue  # Try next mirror
+            except Exception:
+                continue
+
+        # All mirrors failed — return cached result
+        self._consecutive_failures += 1
+        if self._consecutive_failures <= 1:
+            print("Speed limit API unavailable, using cached value")
+        return self._last_good_limit
 
     def _parse_speed_limit(self, maxspeed: str) -> Optional[int]:
         """

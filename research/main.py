@@ -2295,6 +2295,19 @@ class FaceAnalyzer:
         self.LEFT_EYE = [362, 385, 387, 263, 373, 380]
         self.RIGHT_EYE = [33, 160, 158, 133, 153, 144]
 
+        # Head pose estimation: 6-point 3D face model (generic proportions)
+        # Indices: nose tip=1, chin=152, left eye outer=263, right eye outer=33,
+        #          left mouth corner=287, right mouth corner=57
+        self.POSE_LANDMARKS = [1, 152, 263, 33, 287, 57]
+        self.POSE_MODEL_3D = np.array([
+            [0.0, 0.0, 0.0],          # Nose tip
+            [0.0, -63.6, -12.5],       # Chin
+            [-43.3, 32.7, -26.0],      # Left eye outer
+            [43.3, 32.7, -26.0],       # Right eye outer
+            [-28.9, -28.9, -24.1],     # Left mouth corner
+            [28.9, -28.9, -24.1],      # Right mouth corner
+        ], dtype=np.float64)
+
         # Thresholds
         self.EAR_THRESHOLD = 0.21
         self.DROWSINESS_FRAMES = 20
@@ -2305,6 +2318,9 @@ class FaceAnalyzer:
         self.GAZE_THRESHOLD = 0.35
         # Both eyeBlink blendshapes above this = eyes closed
         self.BLINK_CLOSED_THRESHOLD = 0.55
+        # Head pose thresholds (degrees) for distraction
+        self.HEAD_YAW_THRESHOLD = 30     # Looking left/right
+        self.HEAD_PITCH_THRESHOLD = 25   # Looking up/down
         # Seconds of sustained gaze-away before flagging as distracted
         self.GAZE_DISTRACTION_SECONDS = 2.0
         # Seconds of sustained eyes-closed before flagging as impaired
@@ -2343,33 +2359,84 @@ class FaceAnalyzer:
             landmarks.append((x, y))
         return landmarks
 
-    def analyze_gaze(self, blendshapes):
-        """Analyze gaze direction and eye closure from face blendshapes.
+    def estimate_head_pose(self, face_landmarks, w, h):
+        """Estimate head yaw/pitch from face landmarks using solvePnP.
 
-        Uses MediaPipe blendshape scores to determine:
-        - Gaze direction: straight, left, right, or down
-        - Whether both eyes are closed
-        - Sustained duration of each state (wall-clock)
+        Uses the nose-tip landmark projected against the face plane to get
+        a simple, stable left/right and up/down angle that reads 0 when
+        the driver faces the camera.
 
-        Blendshape convention (per-eye, relative to that eye):
-            eyeLookInLeft  = left eye looking toward nose  → person looking RIGHT
-            eyeLookOutLeft = left eye looking away from nose → person looking LEFT
-            eyeLookInRight = right eye looking toward nose → person looking LEFT
-            eyeLookOutRight= right eye looking away from nose → person looking RIGHT
+        Returns:
+            dict with yaw, pitch (degrees), or None if estimation fails.
+            Positive yaw = looking right, negative = looking left.
+            Positive pitch = looking down, negative = looking up.
+        """
+        # Extract 2D landmark positions for the 6 key points
+        image_points = np.array([
+            [face_landmarks[idx].x * w, face_landmarks[idx].y * h]
+            for idx in self.POSE_LANDMARKS
+        ], dtype=np.float64)
+
+        # Approximate camera matrix (assume center principal point)
+        focal_length = w
+        camera_matrix = np.array([
+            [focal_length, 0, w / 2],
+            [0, focal_length, h / 2],
+            [0, 0, 1],
+        ], dtype=np.float64)
+
+        success, rvec, tvec = cv2.solvePnP(
+            self.POSE_MODEL_3D, image_points, camera_matrix, None,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if not success:
+            return None
+
+        # Project the nose tip forward to get a direction vector
+        nose_end_3d = np.array([[0.0, 0.0, 500.0]])
+        nose_2d, _ = cv2.projectPoints(
+            nose_end_3d, rvec, tvec, camera_matrix, None
+        )
+
+        # Direction from nose base (image_points[0]) to projected nose end
+        nose_base = image_points[0]
+        nose_tip_proj = nose_2d[0][0]
+        dx = nose_tip_proj[0] - nose_base[0]
+        dy = nose_tip_proj[1] - nose_base[1]
+
+        # Convert pixel displacement to approximate degrees
+        # The focal length normalizes the displacement
+        yaw = np.degrees(np.arctan2(dx, focal_length))
+        pitch = np.degrees(np.arctan2(dy, focal_length))
+
+        return {"yaw": round(yaw, 1), "pitch": round(pitch, 1)}
+
+    def analyze_gaze(self, blendshapes, head_pose=None):
+        """Analyze gaze direction from blendshapes + head pose.
+
+        Combines two signals:
+        1. Eye blendshapes — iris/pupil direction within the eye socket
+        2. Head pose (yaw/pitch) — physical head rotation
+
+        Either signal alone can trigger a "looking away" detection:
+        - Eyes looking left while head faces forward = distracted
+        - Head turned 30+ degrees while eyes face forward = distracted
+        - Both = definitely distracted
 
         Args:
             blendshapes: list of mediapipe blendshape categories for one face
+            head_pose: dict with 'yaw' and 'pitch' in degrees, or None
 
         Returns:
             dict with gaze_direction, gaze_distracted, eyes_both_closed,
-                 gaze_away_seconds, eyes_closed_seconds
+                 gaze_away_seconds, eyes_closed_seconds, head_yaw, head_pitch
         """
         now = time.time()
 
         # Build a quick lookup: category_name → score
         bs = {b.category_name: b.score for b in blendshapes}
 
-        # --- Gaze direction ---
+        # --- Eye-based gaze direction (blendshapes) ---
         look_left = (
             bs.get("eyeLookOutLeft", 0) + bs.get("eyeLookInRight", 0)
         ) / 2
@@ -2379,14 +2446,39 @@ class FaceAnalyzer:
         look_down = (
             bs.get("eyeLookDownLeft", 0) + bs.get("eyeLookDownRight", 0)
         ) / 2
+        look_up = (
+            bs.get("eyeLookUpLeft", 0) + bs.get("eyeLookUpRight", 0)
+        ) / 2
 
-        gaze_direction = "straight"
+        eye_direction = "straight"
         if look_down > self.GAZE_THRESHOLD and look_down >= max(look_left, look_right):
-            gaze_direction = "down"
+            eye_direction = "down"
+        elif look_up > self.GAZE_THRESHOLD and look_up >= max(look_left, look_right):
+            eye_direction = "up"
         elif look_left > self.GAZE_THRESHOLD and look_left >= look_right:
-            gaze_direction = "left"
+            eye_direction = "left"
         elif look_right > self.GAZE_THRESHOLD:
-            gaze_direction = "right"
+            eye_direction = "right"
+
+        # --- Head pose direction ---
+        head_direction = "straight"
+        head_yaw = 0.0
+        head_pitch = 0.0
+        if head_pose:
+            head_yaw = head_pose["yaw"]
+            head_pitch = head_pose["pitch"]
+            if abs(head_yaw) > self.HEAD_YAW_THRESHOLD:
+                head_direction = "left" if head_yaw < 0 else "right"
+            elif abs(head_pitch) > self.HEAD_PITCH_THRESHOLD:
+                head_direction = "up" if head_pitch > 0 else "down"
+
+        # --- Combined gaze direction: either signal triggers ---
+        if eye_direction != "straight":
+            gaze_direction = eye_direction
+        elif head_direction != "straight":
+            gaze_direction = head_direction
+        else:
+            gaze_direction = "straight"
 
         # --- Eyes closed (both eyes) ---
         blink_left = bs.get("eyeBlinkLeft", 0)
@@ -2430,8 +2522,52 @@ class FaceAnalyzer:
             "look_left": round(look_left, 3),
             "look_right": round(look_right, 3),
             "look_down": round(look_down, 3),
+            "look_up": round(look_up, 3),
             "blink_left": round(blink_left, 3),
             "blink_right": round(blink_right, 3),
+            "head_yaw": head_yaw,
+            "head_pitch": head_pitch,
+        }
+
+    def analyze_gaze_from_head_pose(self, head_pose):
+        """Fallback gaze analysis using only head pose (no blendshapes available).
+
+        Used when the face is turned far enough that MediaPipe can still detect
+        landmarks but blendshapes are unreliable (e.g. side profile).
+        """
+        now = time.time()
+        yaw = head_pose["yaw"]
+        pitch = head_pose["pitch"]
+
+        gaze_direction = "straight"
+        if abs(yaw) > self.HEAD_YAW_THRESHOLD:
+            gaze_direction = "left" if yaw < 0 else "right"
+        elif abs(pitch) > self.HEAD_PITCH_THRESHOLD:
+            gaze_direction = "up" if pitch > 0 else "down"
+
+        # Temporal tracking
+        if gaze_direction != "straight":
+            if self._gaze_away_start is None:
+                self._gaze_away_start = now
+            gaze_away_seconds = now - self._gaze_away_start
+        else:
+            self._gaze_away_start = None
+            gaze_away_seconds = 0.0
+
+        gaze_distracted = gaze_away_seconds >= self.GAZE_DISTRACTION_SECONDS
+        self._last_gaze_direction = gaze_direction
+
+        return {
+            "gaze_direction": gaze_direction,
+            "gaze_distracted": gaze_distracted,
+            "gaze_away_seconds": round(gaze_away_seconds, 2),
+            "eyes_both_closed": False,
+            "eyes_closed_impaired": False,
+            "eyes_closed_seconds": 0.0,
+            "look_left": 0, "look_right": 0, "look_down": 0, "look_up": 0,
+            "blink_left": 0, "blink_right": 0,
+            "head_yaw": yaw,
+            "head_pitch": pitch,
         }
 
     def detect_intoxication(self, left_ear, right_ear):
@@ -2533,13 +2669,21 @@ class FaceAnalyzer:
                 # Detect intoxication
                 intox_data = self.detect_intoxication(left_ear, right_ear)
 
-                # Gaze direction + eyes-closed analysis from blendshapes
+                # Head pose estimation (yaw/pitch from solvePnP)
+                head_pose = self.estimate_head_pose(face_landmarks, w, h)
+
+                # Gaze direction + eyes-closed analysis from blendshapes + head pose
                 gaze_data = None
                 if (
                     results.face_blendshapes
                     and face_idx < len(results.face_blendshapes)
                 ):
-                    gaze_data = self.analyze_gaze(results.face_blendshapes[face_idx])
+                    gaze_data = self.analyze_gaze(
+                        results.face_blendshapes[face_idx], head_pose=head_pose
+                    )
+                elif head_pose:
+                    # No blendshapes (e.g. side profile) — use head pose only
+                    gaze_data = self.analyze_gaze_from_head_pose(head_pose)
 
                 # Extract face crop for upload (with padding)
                 padding = 20
@@ -2584,20 +2728,24 @@ class FaceAnalyzer:
                 # Show gaze direction above the eye info
                 if gaze_data:
                     gaze_dir = gaze_data["gaze_direction"].upper()
+                    head_info = ""
+                    if gaze_data.get("head_yaw") or gaze_data.get("head_pitch"):
+                        head_info = f" [Y:{gaze_data['head_yaw']:.0f} P:{gaze_data['head_pitch']:.0f}]"
+
                     if gaze_data["eyes_closed_impaired"]:
                         gaze_label = f"EYES CLOSED ({gaze_data['eyes_closed_seconds']:.1f}s) - IMPAIRED"
                         gaze_color = COLOR_RED
                     elif gaze_data["gaze_distracted"]:
-                        gaze_label = f"LOOKING {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s) - DISTRACTED"
+                        gaze_label = f"LOOKING {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s) - DISTRACTED{head_info}"
                         gaze_color = COLOR_RED
                     elif gaze_data["eyes_both_closed"]:
                         gaze_label = f"EYES CLOSED ({gaze_data['eyes_closed_seconds']:.1f}s)"
                         gaze_color = COLOR_ORANGE
                     elif gaze_dir != "STRAIGHT":
-                        gaze_label = f"Gaze: {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s)"
+                        gaze_label = f"Gaze: {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s){head_info}"
                         gaze_color = COLOR_ORANGE
                     else:
-                        gaze_label = f"Gaze: {gaze_dir}"
+                        gaze_label = f"Gaze: {gaze_dir}{head_info}"
                         gaze_color = COLOR_GREEN
 
                     cv2.putText(
