@@ -120,32 +120,45 @@ def _get_ort_providers():
 
 
 def _check_mediapipe():
-    """Test whether MediaPipe can be imported without segfaulting.
+    """Test whether MediaPipe can be imported.
 
-    Runs 'import mediapipe' in a subprocess — if it segfaults the subprocess
-    dies but our process survives.
+    On ARM Linux (RPi), runs the import in a subprocess to survive segfaults
+    from protobuf conflicts.  On other platforms, imports directly (much faster).
     """
     global _MEDIAPIPE_AVAILABLE
     if _MEDIAPIPE_AVAILABLE is not None:
         return _MEDIAPIPE_AVAILABLE
     print("  Checking MediaPipe availability...", end=" ", flush=True)
-    try:
-        import subprocess
-        result = subprocess.run(
-            [sys.executable, "-c", "import mediapipe"],
-            capture_output=True, timeout=15,
-        )
-        _MEDIAPIPE_AVAILABLE = result.returncode == 0
-        if not _MEDIAPIPE_AVAILABLE:
-            stderr = result.stderr.decode(errors="replace").strip()
-            print(f"FAILED (exit {result.returncode})")
-            if stderr:
-                print(f"    {stderr[:200]}")
-        else:
+
+    if _IS_ARM_LINUX:
+        # RPi: subprocess check to survive potential protobuf segfaults
+        try:
+            import subprocess
+            result = subprocess.run(
+                [sys.executable, "-c", "import mediapipe"],
+                capture_output=True, timeout=15,
+            )
+            _MEDIAPIPE_AVAILABLE = result.returncode == 0
+            if not _MEDIAPIPE_AVAILABLE:
+                stderr = result.stderr.decode(errors="replace").strip()
+                print(f"FAILED (exit {result.returncode})")
+                if stderr:
+                    print(f"    {stderr[:200]}")
+            else:
+                print("ok")
+        except Exception as e:
+            _MEDIAPIPE_AVAILABLE = False
+            print(f"FAILED ({e})")
+    else:
+        # macOS / x86: direct import (no segfault risk, avoids ~15s subprocess)
+        try:
+            import mediapipe as _mp_test  # noqa: F401
+            _MEDIAPIPE_AVAILABLE = True
             print("ok")
-    except Exception as e:
-        _MEDIAPIPE_AVAILABLE = False
-        print(f"FAILED ({e})")
+        except Exception as e:
+            _MEDIAPIPE_AVAILABLE = False
+            print(f"FAILED ({e})")
+
     if not _MEDIAPIPE_AVAILABLE:
         print("  Will use OpenCV fallback face detector")
     return _MEDIAPIPE_AVAILABLE
@@ -167,44 +180,58 @@ FONT_FAST = cv2.FONT_HERSHEY_PLAIN
 load_dotenv()
 
 def _check_yolo():
-    """Test whether ultralytics YOLO can be imported without segfaulting.
+    """Test whether ultralytics YOLO can be imported.
 
-    Runs 'from ultralytics import YOLO' in a subprocess. Falls back to
-    ONNX runtime if ultralytics is unavailable.
+    On ARM Linux (RPi), runs the import in a subprocess to survive segfaults.
+    On other platforms, imports directly (much faster — avoids ~30s subprocess).
     """
     global YOLO_AVAILABLE, YOLO_ONNX_AVAILABLE
     print("  Checking YOLO...", end=" ", flush=True)
-    try:
-        import subprocess
-        _yolo_check = subprocess.run(
-            [sys.executable, "-c", "from ultralytics import YOLO"],
-            capture_output=True, timeout=30,
-        )
-        if _yolo_check.returncode == 0:
+
+    if _IS_ARM_LINUX:
+        # RPi: subprocess check to survive potential segfaults
+        try:
+            import subprocess
+            _yolo_check = subprocess.run(
+                [sys.executable, "-c", "from ultralytics import YOLO"],
+                capture_output=True, timeout=30,
+            )
+            if _yolo_check.returncode == 0:
+                from ultralytics import YOLO
+                globals()["YOLO"] = YOLO
+                YOLO_AVAILABLE = True
+                print("ok (ultralytics)")
+            else:
+                _yolo_err = _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
+                print(f"ultralytics unavailable ({_yolo_err[:80]})")
+        except Exception as e:
+            print(f"ultralytics unavailable ({e})")
+    else:
+        # macOS / x86: direct import (avoids ~30s subprocess)
+        try:
             from ultralytics import YOLO
             globals()["YOLO"] = YOLO
             YOLO_AVAILABLE = True
             print("ok (ultralytics)")
-        else:
-            _yolo_err = _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
-            print(f"ultralytics unavailable ({_yolo_err[:80]})")
-    except Exception as e:
-        print(f"ultralytics unavailable ({e})")
-    # On RPi where ultralytics/PyTorch aren't available, check for ONNX fallback
-    if not YOLO_AVAILABLE:
-        _onnx_candidates = [
-            "yolo-models/yolo26n.onnx", "yolo-models/yolo26s.onnx", "yolo-models/yolo26m.onnx",
-        ]
-        _has_onnx_model = any(os.path.isfile(p) for p in _onnx_candidates)
-        if _has_onnx_model:
-            try:
-                import onnxruntime
-                YOLO_ONNX_AVAILABLE = True
+        except Exception as e:
+            print(f"ultralytics unavailable ({e})")
+
+    # Check for ONNX fallback (also used as primary on macOS for speed)
+    _onnx_candidates = [
+        "yolo-models/yolo26n.onnx", "yolo-models/yolo26s.onnx", "yolo-models/yolo26m.onnx",
+    ]
+    _has_onnx_model = any(os.path.isfile(p) for p in _onnx_candidates)
+    if _has_onnx_model:
+        try:
+            import onnxruntime
+            YOLO_ONNX_AVAILABLE = True
+            if not YOLO_AVAILABLE:
                 print(f"  YOLO ONNX fallback available (onnxruntime {onnxruntime.__version__})")
-            except ImportError:
+        except ImportError:
+            if not YOLO_AVAILABLE:
                 print("  No ONNX fallback (onnxruntime not installed)")
-        else:
-            print("  No ONNX models found in yolo-models/ (run export_driver.py to generate)")
+    elif not YOLO_AVAILABLE:
+        print("  No ONNX models found in yolo-models/ (run export_driver.py to generate)")
 
 
 # Run MediaPipe and YOLO availability checks in parallel — each spawns a
@@ -1393,9 +1420,10 @@ class DistractionDetector:
     def __init__(self, model_path=None, enabled=True):
         """Initialize YOLO model for object detection.
 
-        Tries ultralytics first (for dev machines with PyTorch).  If that
-        isn't available, falls back to onnxruntime with an exported .onnx
-        model — this is the path used on Raspberry Pi.
+        On macOS (Apple Silicon), prefers ONNX+CoreML for ~3-5x faster inference
+        than PyTorch CPU.  Auto-exports .pt → .onnx if needed (one-time).
+        On RPi, uses ONNX runtime with CPU provider.
+        Falls back to ultralytics PyTorch if ONNX is unavailable.
 
         Args:
             model_path: Path to YOLO model weights (.pt or .onnx).
@@ -1420,18 +1448,34 @@ class DistractionDetector:
         #  0=person, 39=bottle, 40=wine glass, 41=cup,
         # 63=laptop, 65=remote, 67=cell phone, 73=book
 
+        # Pre-computed numpy arrays for vectorized ONNX post-processing
+        self._target_set_arr = np.array(self.TARGET_CLASSES, dtype=np.intp)
+        self._phone_set_arr = np.array(list(self.PHONE_CLASSES), dtype=np.intp)
+
         # Backend state: exactly one of these will be set
         self.model = None           # ultralytics YOLO model (if available)
         self._onnx_session = None   # onnxruntime session (RPi fallback)
         self._onnx_input_name = None
-        self._onnx_img_size = 480   # must match export imgsz
+        self._onnx_img_size = 640   # overridden from model metadata
+        self._onnx_padded = None    # pre-allocated letterbox buffer
         self._backend = None        # "ultralytics" or "onnx"
 
         if self.enabled:
             self.confidence_threshold = 0.45
 
-            # --- Try ultralytics first (dev machines) ---
-            if YOLO_AVAILABLE:
+            # --- On macOS, prefer ONNX+CoreML (much faster than PyTorch CPU) ---
+            # Try even if no ONNX file exists yet — auto-export will create one.
+            if _IS_MACOS:
+                try:
+                    import onnxruntime  # noqa: F401
+                    onnx_path = self._find_or_export_onnx(model_path)
+                    if onnx_path and self._try_load_onnx(onnx_path):
+                        print("YOLO model loaded (onnx+CoreML, fastest path)")
+                except ImportError:
+                    pass  # onnxruntime not installed, skip to ultralytics
+
+            # --- Fallback: ultralytics PyTorch (dev machines without ONNX) ---
+            if self._backend is None and YOLO_AVAILABLE:
                 try:
                     print(f"Loading YOLO model (ultralytics): {model_path}")
                     self.model = YOLO(model_path)
@@ -1440,31 +1484,11 @@ class DistractionDetector:
                 except Exception as e:
                     print(f"  ultralytics YOLO failed: {e}")
 
-            # --- Fallback to ONNX runtime (RPi / edge) ---
+            # --- Fallback: ONNX runtime (RPi / edge) ---
             if self._backend is None:
                 onnx_path = self._find_onnx_model(model_path)
                 if onnx_path:
-                    try:
-                        import onnxruntime as ort
-                        providers = _get_ort_providers()
-                        print(f"Loading YOLO model (onnxruntime): {onnx_path}")
-                        print(f"  Execution providers: {providers}")
-                        opts = ort.SessionOptions()
-                        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-                        opts.intra_op_num_threads = 4
-                        opts.inter_op_num_threads = 1
-                        self._onnx_session = ort.InferenceSession(
-                            onnx_path, sess_options=opts,
-                            providers=providers,
-                        )
-                        inp = self._onnx_session.get_inputs()[0]
-                        self._onnx_input_name = inp.name
-                        self._onnx_img_size = inp.shape[2]  # H from [1,3,H,W]
-                        self._backend = "onnx"
-                        print(f"YOLO model loaded successfully (onnx backend, "
-                              f"input {inp.shape})")
-                    except Exception as e:
-                        print(f"  ONNX YOLO failed: {e}")
+                    self._try_load_onnx(onnx_path)
 
             if self._backend is None:
                 print("YOLO detection disabled - no backend available")
@@ -1503,10 +1527,16 @@ class DistractionDetector:
         else:
             self._yolo_executor = None
         self._yolo_future = None
+        self._yolo_upscale = 1.0  # Scale factor for pre-downscaled frames
 
         # YOLO performance tracking
         self._yolo_times = deque(maxlen=50)
         self._yolo_completions = 0
+
+        # Hand detection throttling: run every Nth YOLO cycle to save overhead.
+        # At ~25 YOLO FPS, interval=8 means hand check ~3x/sec (sufficient for phone detection).
+        self._hand_detect_interval = 8
+        self._hand_detect_counter = 0
 
         # MediaPipe Hands for hand-at-ear (phone call) detection.
         # When a phone is held against the ear, YOLO can't see it — but
@@ -1553,6 +1583,69 @@ class DistractionDetector:
                 return candidate
         return None
 
+    def _find_or_export_onnx(self, model_path):
+        """Find the matching ONNX model or auto-export from .pt (one-time on macOS).
+
+        Prioritizes the exact matching model (e.g. yolo26m.onnx for yolo26m.pt)
+        to preserve accuracy.  Falls back to any available ONNX only if export fails.
+
+        Returns the ONNX path if found or exported, None otherwise.
+        """
+        # Check if the matching ONNX already exists (e.g. yolo26m.onnx for yolo26m.pt)
+        if model_path.endswith(".pt"):
+            onnx_variant = model_path.replace(".pt", ".onnx")
+            if os.path.isfile(onnx_variant):
+                return onnx_variant
+
+        # If model_path is already .onnx, use it directly
+        if model_path.endswith(".onnx") and os.path.isfile(model_path):
+            return model_path
+
+        # Auto-export .pt → .onnx if ultralytics is available (one-time operation)
+        if YOLO_AVAILABLE and model_path.endswith(".pt") and os.path.isfile(model_path):
+            try:
+                print(f"  Auto-exporting {model_path} → ONNX (one-time, for CoreML acceleration)...")
+                exported = YOLO(model_path).export(format="onnx", half=True, simplify=True)
+                print(f"  Exported: {exported}")
+                return str(exported)
+            except Exception as e:
+                print(f"  Auto-export failed ({e}), will try fallback")
+
+        # Fall back to any available ONNX model
+        return self._find_onnx_model(model_path)
+
+    def _try_load_onnx(self, onnx_path):
+        """Load an ONNX model with the best available execution provider.
+
+        Returns True if loaded successfully, False otherwise.
+        """
+        try:
+            import onnxruntime as ort
+            providers = _get_ort_providers()
+            print(f"Loading YOLO model (onnxruntime): {onnx_path}")
+            print(f"  Execution providers: {providers}")
+            opts = ort.SessionOptions()
+            opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            opts.intra_op_num_threads = 4
+            opts.inter_op_num_threads = 1
+            self._onnx_session = ort.InferenceSession(
+                onnx_path, sess_options=opts,
+                providers=providers,
+            )
+            inp = self._onnx_session.get_inputs()[0]
+            self._onnx_input_name = inp.name
+            self._onnx_img_size = inp.shape[2]  # H from [1,3,H,W]
+            # Pre-allocate letterbox buffer (reused every inference)
+            self._onnx_padded = np.full(
+                (self._onnx_img_size, self._onnx_img_size, 3), 114, dtype=np.uint8
+            )
+            self._backend = "onnx"
+            print(f"YOLO model loaded successfully (onnx backend, input {inp.shape})")
+            return True
+        except Exception as e:
+            print(f"  ONNX YOLO failed: {e}")
+            return False
+
     def _run_onnx_inference(self, frame):
         """Run YOLO inference using onnxruntime (no ultralytics/PyTorch needed).
 
@@ -1570,15 +1663,22 @@ class DistractionDetector:
         new_w, new_h = int(orig_w * scale), int(orig_h * scale)
         resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
-        # Pad to square
+        # Pad to square (reuse pre-allocated buffer, skip full fill if padding unchanged)
         pad_w = (img_size - new_w) // 2
         pad_h = (img_size - new_h) // 2
-        padded = np.full((img_size, img_size, 3), 114, dtype=np.uint8)
+        padded = self._onnx_padded
+        # Only fill padding strips (not the center) — saves ~1ms for 640x640 buffer
+        if pad_h > 0:
+            padded[:pad_h, :] = 114
+            padded[pad_h + new_h:, :] = 114
+        if pad_w > 0:
+            padded[pad_h:pad_h + new_h, :pad_w] = 114
+            padded[pad_h:pad_h + new_h, pad_w + new_w:] = 114
         padded[pad_h:pad_h + new_h, pad_w:pad_w + new_w] = resized
 
         # BGR → RGB, HWC → CHW, normalize to 0-1, add batch dim
-        blob = padded[:, :, ::-1].astype(np.float32) / 255.0
-        blob = np.transpose(blob, (2, 0, 1))[np.newaxis]  # [1, 3, H, W]
+        blob = padded[:, :, ::-1].astype(np.float32) * (1.0 / 255.0)
+        blob = np.ascontiguousarray(np.transpose(blob, (2, 0, 1))[np.newaxis])
 
         # --- Inference ---
         outputs = self._onnx_session.run(None, {self._onnx_input_name: blob})
@@ -1587,7 +1687,7 @@ class DistractionDetector:
         # Transpose to [N, 84]
         preds = preds[0].T  # [N, 84]
 
-        # --- Post-process ---
+        # --- Post-process (vectorized numpy — no Python loops) ---
         # Split box coords and class scores
         cx, cy, bw, bh = preds[:, 0], preds[:, 1], preds[:, 2], preds[:, 3]
         class_scores = preds[:, 4:]  # [N, 80]
@@ -1596,17 +1696,15 @@ class DistractionDetector:
         class_ids = np.argmax(class_scores, axis=1)
         confidences = class_scores[np.arange(len(class_ids)), class_ids]
 
-        # Filter by confidence and target classes
-        # Use lower threshold for phone classes (partial visibility / odd angles)
-        phone_set = self.PHONE_CLASSES
-        target_set = set(self.TARGET_CLASSES)
-        mask = np.array([
-            int(cid) in target_set and (
-                conf >= self._phone_conf_near if int(cid) in phone_set
-                else conf >= self.confidence_threshold
-            )
-            for conf, cid in zip(confidences, class_ids)
-        ])
+        # Vectorized filter: target classes + confidence thresholds
+        target_mask = np.isin(class_ids, self._target_set_arr)
+        phone_mask = np.isin(class_ids, self._phone_set_arr)
+        conf_mask = np.where(
+            phone_mask,
+            confidences >= self._phone_conf_near,
+            confidences >= self.confidence_threshold,
+        )
+        mask = target_mask & conf_mask
 
         if not np.any(mask):
             return []
@@ -1899,14 +1997,35 @@ class DistractionDetector:
                 self._yolo_future = None
                 has_result = True
 
-        # Submit new YOLO inference if not busy (copy frame for thread safety)
+        # Submit new YOLO inference if not busy.
+        # Pre-downscale large frames → cv2.resize creates a new array (thread-safe)
+        # and the smaller frame is faster to process in the ONNX pipeline.
         if self._yolo_future is None:
+            h, w = frame.shape[:2]
+            max_dim = max(h, w)
+            if max_dim > self._onnx_img_size and self._backend == "onnx":
+                self._yolo_upscale = max_dim / self._onnx_img_size
+                yolo_frame = cv2.resize(
+                    frame,
+                    (int(w / self._yolo_upscale), int(h / self._yolo_upscale)),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            else:
+                self._yolo_upscale = 1.0
+                yolo_frame = frame.copy()
             self._yolo_future = self._yolo_executor.submit(
-                self._run_yolo_inference, frame.copy()
+                self._run_yolo_inference, yolo_frame
             )
 
         # Update smoothing only when we have new YOLO results
         if has_result:
+            # Rescale bboxes if frame was pre-downscaled for YOLO
+            s = self._yolo_upscale
+            if s != 1.0:
+                if new_phone is not None:
+                    new_phone = tuple(int(v * s) for v in new_phone)
+                if new_bottle is not None:
+                    new_bottle = tuple(int(v * s) for v in new_bottle)
             now = time.time()
 
             # Sliding window: record hit/miss for this YOLO frame
@@ -2033,8 +2152,16 @@ class DistractionDetector:
                 break
 
         # Hand-at-ear / hand-holding-phone fallback:
-        # When YOLO didn't see a phone, check for hand gestures
-        if current_phone is None and self.hand_landmarker is not None:
+        # When YOLO didn't see a phone, check for hand gestures.
+        # Throttled to every Nth YOLO cycle to reduce per-cycle overhead.
+        self._hand_detect_counter += 1
+        run_hands = (
+            current_phone is None
+            and self.hand_landmarker is not None
+            and self._hand_detect_counter >= self._hand_detect_interval
+        )
+        if run_hands:
+            self._hand_detect_counter = 0
             hand_landmarks = self._detect_hands(frame)
             if hand_landmarks is not None:
                 # Check 1: hand near face (phone at ear)
