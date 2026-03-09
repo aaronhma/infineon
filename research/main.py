@@ -220,6 +220,7 @@ _ENV_ENABLE_CAMERA, _ENV_CAMERA_SET = _parse_env_bool("ENABLE_CAMERA", True)
 _ENV_ENABLE_MICROPHONE, _ENV_MIC_SET = _parse_env_bool("ENABLE_MICROPHONE", True)
 _ENV_ENABLE_DASHCAM, _ENV_DASHCAM_SET = _parse_env_bool("ENABLE_DASHCAM", True)
 _ENV_ENABLE_CUSTOM_MODELS, _ = _parse_env_bool("ENABLE_CUSTOM_MODELS", False)
+_ENV_MIRROR_CAMERA, _ = _parse_env_bool("MIRROR_CAMERA", False)
 
 # Stream / Shazam parameters (always from .env)
 STREAM_QUALITY = int(os.environ.get("STREAM_QUALITY", "50"))
@@ -4091,6 +4092,9 @@ def main():
                 if not ret:
                     print("Error: Could not read frame — camera disconnected")
                     break
+
+                if _ENV_MIRROR_CAMERA:
+                    frame = cv2.flip(frame, 1)
 
                 timestamp_ms = int(frame_count * 33.33)
                 frame_count += 1
