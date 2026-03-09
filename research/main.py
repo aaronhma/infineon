@@ -1451,6 +1451,7 @@ class DistractionDetector:
         # Pre-computed numpy arrays for vectorized ONNX post-processing
         self._target_set_arr = np.array(self.TARGET_CLASSES, dtype=np.intp)
         self._phone_set_arr = np.array(list(self.PHONE_CLASSES), dtype=np.intp)
+        self._drink_set_arr = np.array(list(self.DRINK_CLASSES), dtype=np.intp)
 
         # Backend state: exactly one of these will be set
         self.model = None           # ultralytics YOLO model (if available)
@@ -1506,6 +1507,7 @@ class DistractionDetector:
         # Two-tier confidence: high confidence anywhere, low confidence near face/hands
         self._phone_conf_high = 0.30       # Phone-class objects anywhere
         self._phone_conf_near = 0.18       # Phone-class objects near face/hands
+        self._drink_conf = 0.30            # Drink-class objects (bottle/cup/wine glass)
 
         # Sliding window smoothing — phone detected in N of last W frames
         self._PHONE_WINDOW = 6
@@ -1696,15 +1698,17 @@ class DistractionDetector:
         class_ids = np.argmax(class_scores, axis=1)
         confidences = class_scores[np.arange(len(class_ids)), class_ids]
 
-        # Vectorized filter: target classes + confidence thresholds
+        # Vectorized filter: target classes + per-class confidence thresholds
         target_mask = np.isin(class_ids, self._target_set_arr)
         phone_mask = np.isin(class_ids, self._phone_set_arr)
-        conf_mask = np.where(
-            phone_mask,
-            confidences >= self._phone_conf_near,
-            confidences >= self.confidence_threshold,
-        )
-        mask = target_mask & conf_mask
+        drink_mask = np.isin(class_ids, self._drink_set_arr)
+        # Phone classes: lowest threshold (0.18) to catch partial/angled phones
+        # Drink classes: moderate threshold (0.30) for bottles/cups
+        # Other target classes: standard threshold (0.45)
+        conf_thresholds = np.full(len(confidences), self.confidence_threshold)
+        conf_thresholds[phone_mask] = self._phone_conf_near
+        conf_thresholds[drink_mask] = self._drink_conf
+        mask = target_mask & (confidences >= conf_thresholds)
 
         if not np.any(mask):
             return []
@@ -1725,10 +1729,11 @@ class DistractionDetector:
         x2 = ((x2 - pad_w) / scale).clip(0, orig_w)
         y2 = ((y2 - pad_h) / scale).clip(0, orig_h)
 
-        # NMS per class using OpenCV
+        # NMS — use the lowest admitted threshold so low-conf phone detections
+        # survive (class-specific filtering was already applied above).
         boxes_list = np.stack([x1, y1, x2 - x1, y2 - y1], axis=1).tolist()
         conf_list = confidences.tolist()
-        indices = cv2.dnn.NMSBoxes(boxes_list, conf_list, self.confidence_threshold, 0.45)
+        indices = cv2.dnn.NMSBoxes(boxes_list, conf_list, self._phone_conf_near, 0.45)
 
         detections = []
         if len(indices) > 0:
@@ -2130,7 +2135,7 @@ class DistractionDetector:
 
                 if cls in self.PHONE_CLASSES:
                     phone_candidates.append((bbox, conf, class_name))
-                elif cls in self.DRINK_CLASSES and conf >= self.confidence_threshold:
+                elif cls in self.DRINK_CLASSES and conf >= self._drink_conf:
                     current_bottle = bbox
                     print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
 
@@ -2547,6 +2552,11 @@ class FaceAnalyzer:
         self._eyes_closed_start = None    # time.time() when both eyes closed
         self._last_gaze_direction = "straight"
 
+        # Face-loss tracking: when face disappears (full head turn / side profile),
+        # continue counting as "looking away" since the driver left the camera view.
+        self._face_last_seen = None       # time.time() of last face detection
+        self._face_was_present = False    # True once we've seen a face this session
+
     def calculate_ear(self, eye_landmarks):
         """Calculate Eye Aspect Ratio"""
         # Vertical eye landmarks
@@ -2847,8 +2857,13 @@ class FaceAnalyzer:
 
         # Detection data to return
         detection_data = None
+        now = time.time()
 
         if results.face_landmarks:
+            # Face detected — update face-loss tracker
+            self._face_last_seen = now
+            self._face_was_present = True
+
             for face_idx, face_landmarks in enumerate(results.face_landmarks):
                 # Get face bounding box
                 x_coords = [landmark.x for landmark in face_landmarks]
@@ -3017,6 +3032,54 @@ class FaceAnalyzer:
                         COLOR_RED if intox_data["drowsy"] else COLOR_ORANGE,
                         1,
                     )
+
+        # --- Face-lost detection: full head turn / side profile ---
+        # When the face was visible but now gone, the driver has turned away.
+        # Synthesize gaze data so the distraction timer keeps running.
+        if detection_data is None and self._face_was_present and self._face_last_seen is not None:
+            face_gone_secs = now - self._face_last_seen
+
+            # Only flag after a brief grace period (0.3s) to avoid flicker
+            if face_gone_secs > 0.3:
+                # Continue the gaze-away timer from when the face was last seen
+                if self._gaze_away_start is None:
+                    self._gaze_away_start = self._face_last_seen
+                gaze_away_seconds = now - self._gaze_away_start
+                gaze_distracted = gaze_away_seconds >= self.GAZE_DISTRACTION_SECONDS
+
+                gaze_data = {
+                    "gaze_direction": "away",
+                    "gaze_distracted": gaze_distracted,
+                    "gaze_away_seconds": round(gaze_away_seconds, 2),
+                    "eyes_both_closed": False,
+                    "eyes_closed_impaired": False,
+                    "eyes_closed_seconds": 0.0,
+                    "look_left": 0, "look_right": 0,
+                    "look_down": 0, "look_up": 0,
+                    "blink_left": 0, "blink_right": 0,
+                    "head_yaw": 0.0, "head_pitch": 0.0,
+                }
+
+                # Build minimal detection_data with face-lost gaze
+                detection_data = {
+                    "intox_data": {"drowsy": False, "excessive_blinking": False,
+                                   "unstable_eyes": False, "score": 0, "ear": 0.0},
+                    "face_crop": None,
+                    "face_bbox": None,
+                    "left_eye_state": "UNKNOWN",
+                    "left_eye_ear": 0.0,
+                    "right_eye_state": "UNKNOWN",
+                    "right_eye_ear": 0.0,
+                    "gaze_data": gaze_data,
+                }
+
+                # Draw "FACE LOST" warning on frame
+                label = f"FACE LOST ({face_gone_secs:.1f}s)"
+                color = COLOR_RED if gaze_distracted else COLOR_ORANGE
+                cv2.putText(frame, label, (10, 30), FONT_FAST, 1.2, color, 1)
+                if gaze_distracted:
+                    cv2.putText(frame, "DISTRACTED - LOOKING AWAY",
+                                (10, 52), FONT_FAST, 1.0, COLOR_RED, 1)
 
         return frame, detection_data
 
@@ -3755,7 +3818,7 @@ def main():
 
             # --- Camera-dependent uploads ---
             if cap is not None:
-                if detection_data and supabase_uploader.should_upload():
+                if detection_data and detection_data.get("face_crop") is not None and supabase_uploader.should_upload():
                     driving_data = {
                         "speed": driving_sim.get_speed(),
                         "heading": driving_sim.get_heading(),
