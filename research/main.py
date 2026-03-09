@@ -44,7 +44,6 @@ from components.gps import GPSReader
 from components.microphone import MicrophoneController
 from components.shazam import ShazamRecognizer
 from components.speed_limit import SpeedLimitChecker
-from components.camera_server import CameraServer
 
 GYRO_AVAILABLE = False
 try:
@@ -3893,11 +3892,6 @@ def main():
         ble_server.start()
         ble_server.update_settings(settings)
 
-    # HTTP camera server (serves frames to iOS over local network)
-    camera_server = CameraServer(port=8554, quality=50, width=480)
-    camera_server.start()
-    camera_url = f"http://{camera_server.local_ip}:8554/frame"
-
     # --- Hardware retry loop ---
     # If camera or microphone is enabled but fails to open, blast the error
     # buzzer and retry every second until the hardware is available.
@@ -4347,7 +4341,7 @@ def main():
                     "satellites": driving_sim.get_satellites(),
                     "is_phone_detected": distraction_data["phone_detected"],
                     "is_drinking_detected": distraction_data["drinking_detected"],
-                    "camera_url": camera_url if enable_camera else None,
+                    "camera_url": None,
                 })
                 ble_server.update_trip({
                     "trip_id": supabase_uploader.trip_id or "",
@@ -4473,8 +4467,6 @@ def main():
                     streamer.update_frame(processed_frame)
 
                 # HTTP camera server: always update with latest frame
-                camera_server.update_frame(processed_frame)
-
                 if dashcam:
                     dashcam.write_frame(processed_frame, hud_data={
                         "speed": driving_sim.get_speed(),
@@ -4535,7 +4527,6 @@ def main():
     supabase_uploader.reset_vehicle_realtime()
     if ble_server:
         ble_server.stop()
-    camera_server.stop()
     buzzer.stop()
     gps_reader.stop()
 
