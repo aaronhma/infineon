@@ -4111,13 +4111,16 @@ def main():
             camera_ok = not camera_needed or _try_open_camera(args.camera)
             mic_ok = not mic_needed or _try_open_microphone()
 
-            if camera_ok and mic_ok:
+            if camera_ok:
+                # Camera is available, proceed even if microphone is missing
+                if mic_needed and not mic_ok:
+                    print("Camera detected but microphone not available. Proceeding without microphone and Shazam.")
                 break
 
             missing = []
             if not camera_ok:
                 missing.append("camera")
-            if not mic_ok:
+            if not mic_ok and mic_needed:
                 missing.append("microphone")
             print(f"Waiting for hardware: {', '.join(missing)}...")
             buzzer.play_error_alert()
@@ -4235,6 +4238,15 @@ def main():
         mode_label = "HEADLESS" if headless else "GUI"
         print(f"Mode: {mode_label}")
 
+        # Print hardware status summary
+        print("\nHardware Status:")
+        print(f"  Camera: {'✓ Available' if cap else '✗ Not available'}")
+        print(f"  Microphone: {'✓ Available' if music_recognizer else '✗ Not available'}")
+        if enable_shazam:
+            print(f"  Shazam: {'✓ Enabled' if music_recognizer else '✗ Disabled (microphone not available)'}")
+        else:
+            print("  Shazam: ✗ Disabled (feature off)")
+
         if cap:
             if enable_yolo:
                 print("- YOLO ENABLED")
@@ -4245,7 +4257,12 @@ def main():
         if enable_stream and cap:
             print(f"- Video stream via Supabase Storage (~{STREAM_FPS} fps)")
         if enable_shazam:
-            print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
+            # Check if microphone is available
+            mic_available = not mic_needed or _try_open_microphone()
+            if mic_available:
+                print(f"- Shazam music recognition (~every {SHAZAM_INTERVAL}s)")
+            else:
+                print("- Shazam music recognition DISABLED (microphone not available)")
         if enable_dashcam and cap:
             print("- Dashcam recording (local MP4)")
         if not headless and cap:
@@ -4271,10 +4288,16 @@ def main():
 
         # Music recognition (requires microphone)
         if enable_shazam:
-            music_recognizer = MusicRecognizer(
-                recognition_interval=SHAZAM_INTERVAL, debug_save_audio=SHAZAM_DEBUG
-            )
-            music_recognizer.start()
+            # Only start music recognizer if microphone is available
+            mic_ok = not mic_needed or _try_open_microphone()
+            if mic_ok:
+                music_recognizer = MusicRecognizer(
+                    recognition_interval=SHAZAM_INTERVAL, debug_save_audio=SHAZAM_DEBUG
+                )
+                music_recognizer.start()
+                print("Shazam music recognition started")
+            else:
+                print("Shazam disabled: microphone not available")
 
         # Optional gyro reader (serial acc/gyro)
         last_effective_risk = None
