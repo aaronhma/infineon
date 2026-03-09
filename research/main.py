@@ -625,6 +625,7 @@ class ThreadedCamera:
         self._lock = threading.Lock()
         self._running = False
         self._thread = None
+        self._frame_seq = 0  # incremented on each new camera frame
 
     def isOpened(self):
         return self.cap.isOpened()
@@ -643,11 +644,19 @@ class ThreadedCamera:
             with self._lock:
                 self._ret = ret
                 self._frame = frame
+                if ret:
+                    self._frame_seq += 1
 
     def read(self):
         """Return the latest frame instantly (non-blocking)."""
         with self._lock:
             return self._ret, self._frame
+
+    @property
+    def frame_count(self):
+        """Number of unique frames captured from the camera hardware."""
+        with self._lock:
+            return self._frame_seq
 
     def get(self, prop):
         return self.cap.get(prop)
@@ -812,48 +821,93 @@ class VideoStreamer:
 class DashcamRecorder:
     """Records annotated camera frames to a local MP4 file.
 
-    Uses a background thread for VideoWriter to avoid blocking the main loop.
+    Uses a single background writer thread with a queue.  Frames are
+    sampled at the target fps (time-gated) so the recorded video plays
+    back at real-time speed regardless of how fast the main loop runs.
     """
 
-    def __init__(self, output_dir="recordings", fps=10):
+    def __init__(self, output_dir="recordings", fps=10, max_width=640):
         self.output_dir = output_dir
         self.fps = fps
+        self.max_width = max_width
         self.writer = None
         self.filepath = None
-        self._write_busy = False
+        self._frame_interval = 1.0 / fps   # seconds between frames
+        self._last_write_time = 0.0
+        self._queue = None       # set in start()
+        self._thread = None
+        self._running = False
 
     def start(self, trip_id, width, height):
         """Start recording to {output_dir}/{trip_id}.mp4"""
+        import queue as _queue_mod
         os.makedirs(self.output_dir, exist_ok=True)
         self.filepath = os.path.join(self.output_dir, f"{trip_id}.mp4")
+
+        # Downscale recording resolution to reduce I/O + CPU
+        if width > self.max_width:
+            scale = self.max_width / width
+            rec_w = self.max_width
+            rec_h = int(height * scale)
+        else:
+            rec_w, rec_h = width, height
+        self._rec_size = (rec_w, rec_h)
+        self._need_resize = (rec_w != width or rec_h != height)
+
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        self.writer = cv2.VideoWriter(self.filepath, fourcc, self.fps, (width, height))
-        print(f"Dashcam recording: {self.filepath} ({width}x{height} @ {self.fps} fps)")
+        self.writer = cv2.VideoWriter(
+            self.filepath, fourcc, self.fps, (rec_w, rec_h)
+        )
+        self._queue = _queue_mod.Queue(maxsize=30)
+        self._running = True
+        self._last_write_time = 0.0
+        self._thread = threading.Thread(target=self._writer_loop, daemon=True)
+        self._thread.start()
+        print(f"Dashcam recording: {self.filepath} ({rec_w}x{rec_h} @ {self.fps} fps)")
 
     def write_frame(self, frame, hud_data=None):
-        """Queue frame for background write (non-blocking, drops frames if busy).
+        """Accept a frame for recording (time-gated, non-blocking).
 
-        Args:
-            frame: OpenCV BGR frame (will be copied for thread safety).
-            hud_data: Optional dict with speed/heading/direction for HUD overlay.
+        Only enqueues a frame if enough time has passed since the last
+        write to match the target fps.  Drops frames if the queue is full.
         """
-        if self._write_busy or not self.writer or not self.writer.isOpened():
+        if not self._running or self._queue is None:
             return
-        self._write_busy = True
-        threading.Thread(
-            target=self._bg_write, args=(frame.copy(), hud_data), daemon=True
-        ).start()
+        now = time.time()
+        if now - self._last_write_time < self._frame_interval:
+            return  # not time for next frame yet
+        self._last_write_time = now
 
-    def _bg_write(self, frame, hud_data):
         try:
-            if hud_data:
-                draw_dashcam_hud(frame, **hud_data)
-            self.writer.write(frame)
-        finally:
-            self._write_busy = False
+            self._queue.put_nowait((frame.copy(), hud_data))
+        except Exception:
+            pass  # queue full — drop frame
+
+    def _writer_loop(self):
+        """Background thread: drain queue and write frames to disk."""
+        while self._running or (self._queue and not self._queue.empty()):
+            try:
+                frame, hud_data = self._queue.get(timeout=0.5)
+            except Exception:
+                continue
+            try:
+                if self._need_resize:
+                    frame = cv2.resize(
+                        frame, self._rec_size, interpolation=cv2.INTER_AREA
+                    )
+                if hud_data:
+                    draw_dashcam_hud(frame, **hud_data)
+                if self.writer and self.writer.isOpened():
+                    self.writer.write(frame)
+            except Exception as e:
+                print(f"[Dashcam] write error: {e}")
 
     def stop(self):
-        """Stop recording and release the writer."""
+        """Stop recording — drain remaining frames then release."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=5)
+            self._thread = None
         if self.writer:
             self.writer.release()
             self.writer = None
@@ -4053,7 +4107,8 @@ def main():
         frame_count = 0
 
         # FPS tracking
-        fps_frame_count = 0
+        fps_frame_count = 0         # loop iterations (for loop FPS)
+        fps_cam_start_seq = cap.frame_count if cap else 0  # camera HW frames
         fps_start_time = time.time()
         last_fps_print = time.time()
 
@@ -4366,7 +4421,9 @@ def main():
                 current_time = time.time()
                 if current_time - last_fps_print >= 5.0:
                     elapsed = current_time - fps_start_time
-                    capture_fps = fps_frame_count / elapsed if elapsed > 0 else 0
+                    # Actual camera hardware FPS (unique frames from sensor)
+                    cam_frames = cap.frame_count - fps_cam_start_seq
+                    capture_fps = cam_frames / elapsed if elapsed > 0 else 0
                     avg_total = (
                         sum(process_times) / len(process_times) if process_times else 0
                     )
@@ -4408,6 +4465,7 @@ def main():
                     if distraction_detector:
                         distraction_detector.reset_yolo_stats()
                     fps_frame_count = 0
+                    fps_cam_start_seq = cap.frame_count
                     fps_start_time = current_time
                     last_fps_print = current_time
 
