@@ -4158,9 +4158,7 @@ def main():
                 else:
                     if buzzer.continuous_active:
                         buzzer.stop_continuous()
-                    # One-shot alerts for drowsiness / eyes closed
-                    if intox_data and intox_data["score"] >= 4:
-                        buzzer.play_drowsy_alert()
+                    # One-shot alert for prolonged eyes closed
                     if gaze_data and gaze_data["eyes_closed_impaired"]:
                         buzzer.play_drowsy_alert()
             else:
@@ -4169,37 +4167,21 @@ def main():
                 time.sleep(0.1)
 
             # --- Always: driver status + composite risk score ---
-            # Base intoxication score from eye analysis
             if awareness:
                 driver_status = awareness["driver_state"]
-                intox_score = awareness["intoxication_score"]
             elif gaze_data and gaze_data["eyes_closed_impaired"]:
                 driver_status = "impaired"
-                intox_score = intox_data["score"] if intox_data else 0
             elif gaze_data and gaze_data["gaze_distracted"]:
                 driver_status = "distracted_gaze"
-                intox_score = intox_data["score"] if intox_data else 0
             elif distraction_data["phone_detected"]:
                 driver_status = "distracted_phone"
-                intox_score = intox_data["score"] if intox_data else 0
             elif distraction_data["drinking_detected"]:
                 driver_status = "distracted_drinking"
-                intox_score = intox_data["score"] if intox_data else 0
-            elif intox_data:
-                if intox_data["score"] >= 4:
-                    driver_status = "impaired"
-                elif intox_data["score"] >= 2:
-                    driver_status = "drowsy"
-                else:
-                    driver_status = "alert"
-                intox_score = intox_data["score"]
             else:
-                driver_status = "unknown"
-                intox_score = 0
+                driver_status = "alert"
 
             # --- Composite risk score (0-6) ---
-            # Start from intoxication base, then layer on additional factors.
-            effective_risk = intox_score
+            effective_risk = 0
 
             # Phone detected → max risk immediately
             if distraction_data["phone_detected"]:
@@ -4278,18 +4260,13 @@ def main():
                 is_drinking_detected=distraction_data["drinking_detected"],
             )
 
-            is_drowsy = intox_data["drowsy"] if intox_data else False
-            is_excessive_blinking = (
-                intox_data["excessive_blinking"] if intox_data else False
-            )
-            is_unstable_eyes = intox_data["unstable_eyes"] if intox_data else False
             supabase_uploader.update_trip_stats(
                 speed=driving_sim.get_speed(),
                 intox_score=effective_risk,
                 is_speeding=driving_sim.is_speeding(),
-                is_drowsy=is_drowsy,
-                is_excessive_blinking=is_excessive_blinking,
-                is_unstable_eyes=is_unstable_eyes,
+                is_drowsy=False,
+                is_excessive_blinking=False,
+                is_unstable_eyes=False,
                 latitude=driving_sim.get_latitude(),
                 longitude=driving_sim.get_longitude(),
                 is_real_gps=driving_sim.is_using_gps() and driving_sim.has_gps_fix(),
