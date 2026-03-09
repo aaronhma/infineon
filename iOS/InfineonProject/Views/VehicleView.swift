@@ -570,8 +570,11 @@ struct VehicleView: View {
           }
           .containerShape(.capsule)
           .contentShape(.capsule)
+          .buttonBorderShape(.capsule)
+          .clipShape(Capsule())
           .buttonStyle(
-            FluidZoomTransitionStyle(id: "accessSheet", namespace: namespace, shape: .capsule))
+            FluidZoomTransitionStyle(
+              id: "accessSheet", namespace: namespace, shape: .capsule, applyGlass: false))
         }
 
         ToolbarItem(placement: .topBarTrailing) {
@@ -583,8 +586,11 @@ struct VehicleView: View {
           }
           .containerShape(.circle)
           .contentShape(.circle)
+          .buttonBorderShape(.circle)
+          .clipShape(Circle())
           .buttonStyle(
-            FluidZoomTransitionStyle(id: "settingsSheet", namespace: namespace, shape: .circle))
+            FluidZoomTransitionStyle(
+              id: "settingsSheet", namespace: namespace, shape: .circle, applyGlass: false))
         }
       }
       //      .dynamicIslandToast(isPresented: .constant(vehicleStreetName != nil), toast: .init(symbol: "xmark.circle.fill", symbolForegroundStyle: (.green, .white), title: "Distracted Driving", message: "Driver was alerted"))
