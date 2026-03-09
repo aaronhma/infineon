@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import multiprocessing
 import os
 import platform
 import random
@@ -244,6 +245,367 @@ def _find_model(candidates):
         if os.path.exists(path):
             return path
     return None
+
+
+# ---------------------------------------------------------------------------
+# Multiprocessing workers — run FaceAnalyzer and DistractionDetector on
+# separate CPU cores to bypass the GIL.  On RPi4 this roughly doubles
+# throughput because the two heaviest models (MediaPipe + YOLO ONNX) no
+# longer compete for the same core.
+#
+# Communication uses multiprocessing.Queue:
+#   main → worker:  (frame_bytes, shape, timestamp_ms, extra)
+#   worker → main:  result dict (detection_data / distraction_data)
+#
+# Frame data is sent as raw bytes (tobytes/frombuffer) — faster than pickle
+# for large numpy arrays.
+# ---------------------------------------------------------------------------
+
+def _face_worker_process(in_q, out_q, mp_max_dim):
+    """Standalone process that runs FaceAnalyzer inference.
+
+    On Linux (fork), parent's imports are already in memory.
+    On other platforms, re-imports as needed.
+    Reads (frame_bytes, shape, timestamp_ms) from in_q, writes
+    (annotated_frame_bytes, shape, detection_data) to out_q.
+    """
+    # Suppress signals in worker — main process handles shutdown
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    # Build a FaceAnalyzer inside this process's own memory
+    try:
+        if _check_mediapipe():
+            try:
+                analyzer = FaceAnalyzer()
+                print("[FaceWorker] FaceAnalyzer loaded in subprocess", flush=True)
+            except Exception as e:
+                print(f"[FaceWorker] FaceAnalyzer failed ({e}), using fallback", flush=True)
+                analyzer = FallbackFaceDetector()
+        else:
+            analyzer = FallbackFaceDetector()
+    except Exception as e:
+        print(f"[FaceWorker] FATAL: could not load analyzer: {e}", flush=True)
+        return
+
+    while True:
+        try:
+            msg = in_q.get()
+            if msg is None:  # shutdown sentinel
+                break
+            frame_bytes, shape, timestamp_ms = msg
+            frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape).copy()
+            annotated, det_data = analyzer._analyze_frame_sync(frame, timestamp_ms)
+            # Send back: annotated frame as bytes + detection data
+            # detection_data contains numpy face_crop — convert to bytes too
+            if det_data and det_data.get("face_crop") is not None:
+                crop = det_data["face_crop"]
+                det_data = dict(det_data)  # shallow copy
+                det_data["_face_crop_bytes"] = crop.tobytes()
+                det_data["_face_crop_shape"] = crop.shape
+                det_data["face_crop"] = None  # placeholder, rebuilt in main
+            out_q.put((annotated.tobytes(), annotated.shape, det_data))
+        except Exception as e:
+            print(f"[FaceWorker] error: {e}", flush=True)
+            try:
+                out_q.put(None)
+            except Exception:
+                pass
+
+
+def _yolo_worker_process(in_q, out_q, enabled):
+    """Standalone process that runs DistractionDetector (YOLO) inference.
+
+    On Linux (fork), parent's imports (onnxruntime etc.) are already available.
+    Reads (frame_bytes, shape, face_bbox) from in_q, writes
+    (phone_bbox, bottle_bbox, hand_at_ear) to out_q.
+    """
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    try:
+        # On Linux (fork), YOLO_AVAILABLE / YOLO_ONNX_AVAILABLE globals are
+        # inherited from the parent — skip the expensive re-check.
+        if not (YOLO_AVAILABLE or YOLO_ONNX_AVAILABLE):
+            _check_yolo()
+        detector = DistractionDetector(enabled=enabled)
+        print("[YOLOWorker] DistractionDetector loaded in subprocess", flush=True)
+    except Exception as e:
+        print(f"[YOLOWorker] FATAL: could not load detector: {e}", flush=True)
+        return
+
+    while True:
+        try:
+            msg = in_q.get()
+            if msg is None:
+                break
+            frame_bytes, shape, face_bbox = msg
+            frame = np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape).copy()
+            # Run synchronous YOLO inference directly (not the async wrapper)
+            if face_bbox is not None:
+                detector._last_face_bbox = face_bbox
+            result = detector._run_yolo_inference(frame)
+            out_q.put(result)  # (phone_bbox, bottle_bbox, hand_at_ear)
+        except Exception as e:
+            print(f"[YOLOWorker] error: {e}", flush=True)
+            try:
+                out_q.put(None)
+            except Exception:
+                pass
+
+
+class FaceAnalyzerProxy:
+    """Drop-in replacement for FaceAnalyzer that delegates to a subprocess.
+
+    Keeps the same process_frame() / shutdown() API so the main loop
+    doesn't need to change.  Internally, sends frames to _face_worker_process
+    via a Queue and polls for results.
+    """
+
+    def __init__(self, mp_max_dim=640):
+        self._in_q = multiprocessing.Queue(maxsize=2)
+        self._out_q = multiprocessing.Queue(maxsize=2)
+        self._proc = multiprocessing.Process(
+            target=_face_worker_process,
+            args=(self._in_q, self._out_q, mp_max_dim),
+            daemon=True,
+        )
+        self._proc.start()
+        self._cached_frame = None
+        self._cached_detection = None
+        self._pending = False
+        self._last_ts = -1
+
+    def process_frame(self, frame, timestamp_ms):
+        """Send frame to worker, return latest cached result (non-blocking)."""
+        # Check for completed result
+        if self._pending:
+            try:
+                result = self._out_q.get_nowait()
+                if result is not None:
+                    frame_bytes, shape, det_data = result
+                    self._cached_frame = np.frombuffer(
+                        frame_bytes, dtype=np.uint8
+                    ).reshape(shape).copy()
+                    # Rebuild face_crop from bytes
+                    if det_data and det_data.get("_face_crop_bytes") is not None:
+                        det_data["face_crop"] = np.frombuffer(
+                            det_data["_face_crop_bytes"], dtype=np.uint8
+                        ).reshape(det_data["_face_crop_shape"]).copy()
+                        del det_data["_face_crop_bytes"]
+                        del det_data["_face_crop_shape"]
+                    self._cached_detection = det_data
+                self._pending = False
+            except Exception:
+                pass  # queue empty, still waiting
+
+        # Submit new frame if worker is free
+        if not self._pending and timestamp_ms > self._last_ts:
+            self._last_ts = timestamp_ms
+            try:
+                self._in_q.put_nowait(
+                    (frame.tobytes(), frame.shape, timestamp_ms)
+                )
+                self._pending = True
+            except Exception:
+                pass  # queue full, skip this frame
+
+        if self._cached_frame is not None:
+            return self._cached_frame, self._cached_detection
+        return frame, None
+
+    def shutdown(self):
+        try:
+            self._in_q.put_nowait(None)
+        except Exception:
+            pass
+        self._proc.join(timeout=3)
+        if self._proc.is_alive():
+            self._proc.terminate()
+
+
+class DistractionDetectorProxy:
+    """Drop-in replacement for DistractionDetector that delegates YOLO to a subprocess.
+
+    The main-process side handles smoothing state (sliding windows, cooldowns,
+    drawing) — only the heavy _run_yolo_inference runs in the subprocess.
+    """
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self._in_q = multiprocessing.Queue(maxsize=2)
+        self._out_q = multiprocessing.Queue(maxsize=2)
+        self._proc = multiprocessing.Process(
+            target=_yolo_worker_process,
+            args=(self._in_q, self._out_q, enabled),
+            daemon=True,
+        )
+        self._proc.start()
+
+        # All smoothing/drawing state lives in the main process
+        self.phone_detected = False
+        self.drinking_detected = False
+        self.phone_bbox = None
+        self.bottle_bbox = None
+        self.hand_at_ear = False
+
+        self._PHONE_WINDOW = 6
+        self._PHONE_MIN_HITS = 2
+        self._phone_window = deque(maxlen=self._PHONE_WINDOW)
+        self._drink_window = deque(maxlen=self._PHONE_WINDOW)
+        self.phone_frames = 0
+        self.drinking_frames = 0
+        self._PHONE_COOLDOWN_SECS = 3.0
+        self._phone_last_seen = 0.0
+
+        self._pending = False
+        self._yolo_times = deque(maxlen=50)
+        self._yolo_completions = 0
+        self._submit_time = 0.0
+        self._yolo_upscale = 1.0
+        self._onnx_img_size = 640
+
+    def detect(self, frame, face_bbox=None):
+        """Submit frame to YOLO subprocess, return smoothed cached results."""
+        if not self.enabled:
+            return {
+                "phone_detected": False, "drinking_detected": False,
+                "phone_bbox": None, "bottle_bbox": None,
+                "phone_frames": 0, "drinking_frames": 0,
+                "hand_at_ear": False,
+            }
+
+        # Check for completed result
+        new_phone = None
+        new_bottle = None
+        is_hand_at_ear = False
+        has_result = False
+
+        if self._pending:
+            try:
+                result = self._out_q.get_nowait()
+                if result is not None:
+                    new_phone, new_bottle, is_hand_at_ear = result
+                    elapsed = time.time() - self._submit_time
+                    self._yolo_times.append(elapsed)
+                    self._yolo_completions += 1
+                has_result = True
+                self._pending = False
+            except Exception:
+                pass
+
+        # Submit new frame
+        if not self._pending:
+            h, w = frame.shape[:2]
+            max_dim = max(h, w)
+            if max_dim > self._onnx_img_size:
+                self._yolo_upscale = max_dim / self._onnx_img_size
+                yolo_frame = cv2.resize(
+                    frame,
+                    (int(w / self._yolo_upscale), int(h / self._yolo_upscale)),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            else:
+                self._yolo_upscale = 1.0
+                yolo_frame = frame
+
+            try:
+                self._in_q.put_nowait(
+                    (yolo_frame.tobytes(), yolo_frame.shape, face_bbox)
+                )
+                self._pending = True
+                self._submit_time = time.time()
+            except Exception:
+                pass
+
+        # Update smoothing
+        if has_result:
+            s = self._yolo_upscale
+            if s != 1.0:
+                if new_phone is not None:
+                    new_phone = tuple(int(v * s) for v in new_phone)
+                if new_bottle is not None:
+                    new_bottle = tuple(int(v * s) for v in new_bottle)
+            now = time.time()
+
+            self._phone_window.append(new_phone is not None)
+            self._drink_window.append(new_bottle is not None)
+
+            if new_phone is not None:
+                self.phone_bbox = new_phone
+                self.hand_at_ear = is_hand_at_ear
+                self._phone_last_seen = now
+            elif not any(self._phone_window):
+                self.phone_bbox = None
+                self.hand_at_ear = False
+
+            if new_bottle is not None:
+                self.bottle_bbox = new_bottle
+            elif not any(self._drink_window):
+                self.bottle_bbox = None
+
+            self.phone_frames = sum(self._phone_window)
+            self.drinking_frames = sum(self._drink_window)
+
+            raw_phone = self.phone_frames >= self._PHONE_MIN_HITS
+            if raw_phone:
+                self.phone_detected = True
+                self._phone_last_seen = now
+            elif now - self._phone_last_seen < self._PHONE_COOLDOWN_SECS:
+                self.phone_detected = True
+            else:
+                self.phone_detected = False
+
+            self.drinking_detected = self.drinking_frames >= self._PHONE_MIN_HITS
+
+        return {
+            "phone_detected": self.phone_detected,
+            "drinking_detected": self.drinking_detected,
+            "phone_bbox": self.phone_bbox,
+            "bottle_bbox": self.bottle_bbox,
+            "phone_frames": self.phone_frames,
+            "drinking_frames": self.drinking_frames,
+            "hand_at_ear": self.hand_at_ear,
+        }
+
+    def get_yolo_stats(self):
+        if not self._yolo_times:
+            return 0.0, 0.0, self._yolo_completions
+        avg = sum(self._yolo_times) / len(self._yolo_times)
+        fps = 1.0 / avg if avg > 0 else 0.0
+        return avg * 1000, fps, self._yolo_completions
+
+    def reset_yolo_stats(self):
+        self._yolo_completions = 0
+
+    def draw_detections(self, frame):
+        """Draw detection boxes on frame."""
+        if self.phone_bbox:
+            x1, y1, x2, y2 = self.phone_bbox
+            color = COLOR_RED if self.phone_detected else COLOR_ORANGE
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            hits = f"{self.phone_frames}/{self._PHONE_WINDOW}"
+            if self.hand_at_ear:
+                label = f"PHONE (HAND {hits})!" if self.phone_detected else f"Hand near face ({hits})"
+            else:
+                label = f"PHONE ({hits}) - DISTRACTED!" if self.phone_detected else f"Phone ({hits})"
+            cv2.putText(frame, label, (x1, y1 - 10), FONT_FAST, 1.0, color, 1)
+
+        if self.bottle_bbox:
+            x1, y1, x2, y2 = self.bottle_bbox
+            color = COLOR_ORANGE if self.drinking_detected else (255, 165, 0)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            label = "DRINKING!" if self.drinking_detected else "Bottle/Cup"
+            cv2.putText(frame, label, (x1, y1 - 10), FONT_FAST, 1.0, color, 1)
+
+        return frame
+
+    def shutdown(self):
+        try:
+            self._in_q.put_nowait(None)
+        except Exception:
+            pass
+        self._proc.join(timeout=3)
+        if self._proc.is_alive():
+            self._proc.terminate()
 
 
 class ThreadedCamera:
@@ -2481,6 +2843,9 @@ class FallbackFaceDetector:
 
         return frame, detection_data
 
+    # Alias so multiprocessing face worker can call the same method name
+    _analyze_frame_sync = process_frame
+
 
 class FaceAnalyzer:
     def __init__(self):
@@ -3584,29 +3949,40 @@ def main():
                 _cap.start()
                 return _cap
 
-            def _load_face_analyzer():
-                if _check_mediapipe():
-                    try:
-                        fa = FaceAnalyzer()
-                        print("  FaceAnalyzer loaded")
-                        return fa
-                    except Exception as e:
-                        print(f"  FaceAnalyzer failed ({e}), using fallback")
-                        return FallbackFaceDetector()
-                return FallbackFaceDetector()
+            if _IS_ARM_LINUX:
+                # --- RPi4: use multiprocessing (separate CPU cores) ---
+                # Each inference model gets its own process, bypassing the GIL.
+                # Core 1: main loop + camera   Core 2: FaceAnalyzer
+                # Core 3: YOLO/ONNX            Core 4: OS + I/O threads
+                print("Using MULTIPROCESSING mode (ARM Linux — 4 cores)")
+                cap = _open_camera()
+                analyzer = FaceAnalyzerProxy(mp_max_dim=640)
+                distraction_detector = DistractionDetectorProxy(enabled=enable_yolo)
+            else:
+                # --- macOS / other: use threads (fast enough with CoreML) ---
+                def _load_face_analyzer():
+                    if _check_mediapipe():
+                        try:
+                            fa = FaceAnalyzer()
+                            print("  FaceAnalyzer loaded")
+                            return fa
+                        except Exception as e:
+                            print(f"  FaceAnalyzer failed ({e}), using fallback")
+                            return FallbackFaceDetector()
+                    return FallbackFaceDetector()
 
-            def _load_distraction_detector():
-                dd = DistractionDetector(enabled=enable_yolo)
-                print("  DistractionDetector loaded")
-                return dd
+                def _load_distraction_detector():
+                    dd = DistractionDetector(enabled=enable_yolo)
+                    print("  DistractionDetector loaded")
+                    return dd
 
-            with ThreadPoolExecutor(max_workers=3) as _model_pool:
-                _cam_future = _model_pool.submit(_open_camera)
-                _fa_future = _model_pool.submit(_load_face_analyzer)
-                _dd_future = _model_pool.submit(_load_distraction_detector)
-                cap = _cam_future.result()
-                analyzer = _fa_future.result()
-                distraction_detector = _dd_future.result()
+                with ThreadPoolExecutor(max_workers=3) as _model_pool:
+                    _cam_future = _model_pool.submit(_open_camera)
+                    _fa_future = _model_pool.submit(_load_face_analyzer)
+                    _dd_future = _model_pool.submit(_load_distraction_detector)
+                    cap = _cam_future.result()
+                    analyzer = _fa_future.result()
+                    distraction_detector = _dd_future.result()
 
             if cap is not None:
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -3769,23 +4145,32 @@ def main():
                     detection_data.get("gaze_data") if detection_data else None
                 )
 
-                # Buzzer alerts
-                if intox_data and intox_data["score"] >= 4:
-                    buzzer.play_drowsy_alert()
+                # Buzzer alerts — continuous for phone/gaze, one-shot for others
+                _buzzer_continuous_needed = False
                 if distraction_data["phone_detected"]:
-                    buzzer.play_distraction_alert()
-                if gaze_data and gaze_data["eyes_closed_impaired"]:
-                    buzzer.play_drowsy_alert()
+                    _buzzer_continuous_needed = True
                 if gaze_data and gaze_data["gaze_distracted"]:
-                    buzzer.play_distraction_alert()
+                    _buzzer_continuous_needed = True
+
+                if _buzzer_continuous_needed:
+                    if not buzzer.continuous_active:
+                        buzzer.start_continuous("alert")
+                else:
+                    if buzzer.continuous_active:
+                        buzzer.stop_continuous()
+                    # One-shot alerts for drowsiness / eyes closed
+                    if intox_data and intox_data["score"] >= 4:
+                        buzzer.play_drowsy_alert()
+                    if gaze_data and gaze_data["eyes_closed_impaired"]:
+                        buzzer.play_drowsy_alert()
             else:
                 gaze_data = None
                 # Camera off — throttle loop to ~10 Hz
                 time.sleep(0.1)
 
-            # --- Always: driver status ---
+            # --- Always: driver status + composite risk score ---
+            # Base intoxication score from eye analysis
             if awareness:
-                # Custom models provide richer driver state
                 driver_status = awareness["driver_state"]
                 intox_score = awareness["intoxication_score"]
             elif gaze_data and gaze_data["eyes_closed_impaired"]:
@@ -3812,14 +4197,55 @@ def main():
                 driver_status = "unknown"
                 intox_score = 0
 
-            # Gyro-weighted risk (optional): bump score when gyro indicates harsh motion
+            # --- Composite risk score (0-6) ---
+            # Start from intoxication base, then layer on additional factors.
             effective_risk = intox_score
+
+            # Phone detected → max risk immediately
+            if distraction_data["phone_detected"]:
+                effective_risk = 6
+
+            # Gaze distraction → risk increases with duration
+            if gaze_data and gaze_data["gaze_away_seconds"] > 0:
+                away_secs = gaze_data["gaze_away_seconds"]
+                if away_secs >= 4.0:
+                    gaze_risk = 4     # 4+ seconds looking away
+                elif away_secs >= 3.0:
+                    gaze_risk = 3
+                elif away_secs >= 2.0:
+                    gaze_risk = 2     # crosses distraction threshold
+                elif away_secs >= 1.0:
+                    gaze_risk = 1     # starting to look away
+                else:
+                    gaze_risk = 0
+                effective_risk = max(effective_risk, gaze_risk)
+
+            # Eyes closed → high risk
+            if gaze_data and gaze_data["eyes_closed_impaired"]:
+                effective_risk = max(effective_risk, 5)
+
+            # Speeding → adds +1 or +2 to risk
+            if driving_sim.is_speeding():
+                speed_over = driving_sim.get_speed() - driving_sim.speed_limit
+                if speed_over > 15:
+                    effective_risk = min(6, effective_risk + 2)
+                else:
+                    effective_risk = min(6, effective_risk + 1)
+
+            # Gyro — graduated scale based on harshness of motion
             if gyro_reader is not None:
                 latest = gyro_reader.get_latest()
                 if latest is not None:
                     gyro_mag = latest["gyro_mag"]
-                    gyro_bump = GYRO_BUMP if gyro_mag >= GYRO_HARSH_THRESHOLD_DEG_S else 0
-                    effective_risk = min(6, intox_score + gyro_bump)
+                    if gyro_mag >= 150.0:
+                        gyro_bump = 3   # extreme swerving
+                    elif gyro_mag >= 100.0:
+                        gyro_bump = 2   # harsh maneuver
+                    elif gyro_mag >= GYRO_HARSH_THRESHOLD_DEG_S:
+                        gyro_bump = 1   # notable motion
+                    else:
+                        gyro_bump = 0
+                    effective_risk = min(6, effective_risk + gyro_bump)
                     last_effective_risk = effective_risk
 
                     # Crash detection
@@ -3834,6 +4260,8 @@ def main():
                             print(f"    Peak: {crash_event['peak_g']}g, Gyro: {crash_event['peak_gyro']} deg/s\n")
                             buzzer.start_continuous("emergency")
                             supabase_uploader.record_crash(crash_event)
+
+            effective_risk = min(6, effective_risk)
 
             # --- Always: realtime + trip + buzzer ---
             supabase_uploader.update_vehicle_realtime(
