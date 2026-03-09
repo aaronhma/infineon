@@ -30,73 +30,37 @@ if _IS_ARM_LINUX:
 
 # Force unbuffered stdout so prints appear even if the process crashes
 sys.stdout.reconfigure(line_buffering=True)
+_startup_t0 = time.time()
 print("Starting main.py...")
 
-print("  Loading cv2...", end=" ", flush=True)
-try:
-    import cv2
-    print("ok")
-except Exception as e:
-    print(f"FAILED: {e}")
-    sys.exit(1)
+import cv2
+import numpy as np
+from dotenv import load_dotenv
 
-print("  Loading numpy...", end=" ", flush=True)
-try:
-    import numpy as np
-    print("ok")
-except Exception as e:
-    print(f"FAILED: {e}")
-    sys.exit(1)
-
-print("  Loading dotenv...", end=" ", flush=True)
-try:
-    from dotenv import load_dotenv
-    print("ok")
-except Exception as e:
-    print(f"FAILED: {e}")
-    sys.exit(1)
-
-print("  Loading supabase...", end=" ", flush=True)
-try:
-    from supabase import Client, create_client
-    print("ok")
-except Exception as e:
-    print(f"FAILED: {e}")
-    sys.exit(1)
-
-print("  Loading components...", end=" ", flush=True)
-try:
-    from components.buzzer import BuzzerController
-    from components.gps import GPSReader
-    from components.microphone import MicrophoneController
-    from components.shazam import ShazamRecognizer
-    from components.speed_limit import SpeedLimitChecker
-    print("ok")
-except Exception as e:
-    print(f"FAILED: {e}")
-    sys.exit(1)
+from components.buzzer import BuzzerController
+from components.gps import GPSReader
+from components.microphone import MicrophoneController
+from components.shazam import ShazamRecognizer
+from components.speed_limit import SpeedLimitChecker
+from components.camera_server import CameraServer
 
 GYRO_AVAILABLE = False
-print("  Checking gyroscope...", end=" ", flush=True)
 try:
     from components.gyroscope import CrashDetector, GyroReader
     GYRO_AVAILABLE = True
-    print("ok")
-except Exception as e:
-    print(f"unavailable ({e})")
+except ImportError:
+    pass
 
 BLE_AVAILABLE = False
-print("  Checking Bluetooth...", end=" ", flush=True)
 try:
     from components.bluetooth import BluetoothServer
     BLE_AVAILABLE = True
-    print("ok")
-except Exception as e:
-    print(f"unavailable ({e})")
+except ImportError:
+    pass
 
-from components.camera_server import CameraServer
+print("  Components loaded")
 
-# MediaPipe + scipy are loaded lazily inside FaceAnalyzer.__init__() to avoid
+# MediaPipe is loaded lazily inside FaceAnalyzer.__init__() to avoid
 # segfaults from protobuf conflicts on RPi (a segfault bypasses try/except).
 _MEDIAPIPE_AVAILABLE = None  # determined at runtime in _check_mediapipe()
 
@@ -234,15 +198,9 @@ def _check_yolo():
         print("  No ONNX models found in yolo-models/ (run export_driver.py to generate)")
 
 
-# Run MediaPipe and YOLO availability checks in parallel — each spawns a
-# subprocess that can segfault safely.  Previously ran sequentially (up to 45s).
+# Deferred to main() — run in parallel with Supabase network init.
 YOLO_AVAILABLE = False
 YOLO_ONNX_AVAILABLE = False
-with ThreadPoolExecutor(max_workers=2) as _startup_pool:
-    _mp_future = _startup_pool.submit(_check_mediapipe)
-    _yolo_future = _startup_pool.submit(_check_yolo)
-    _mp_future.result()
-    _yolo_future.result()
 
 # .env overrides: if explicitly set in .env, these take priority over Supabase.
 # If not set, Supabase value is used. Format: {key: (value, is_explicitly_set)}
@@ -411,7 +369,7 @@ class VideoStreamer:
         print("Video stream stopped")
 
     def update_frame(self, frame):
-        """Downscale, encode, and upload a frame to Supabase Storage."""
+        """Queue frame for background encode + upload (non-blocking)."""
         current_time = time.time()
         if current_time - self._last_upload < self.min_interval:
             return
@@ -423,24 +381,29 @@ class VideoStreamer:
 
         self._last_upload = current_time
 
-        # Downscale if wider than target
-        h, w = frame.shape[:2]
-        if w > self.target_width:
-            scale = self.target_width / w
-            frame = cv2.resize(
-                frame,
-                (self.target_width, int(h * scale)),
-                interpolation=cv2.INTER_AREA,
+        # Encode + upload entirely in background thread to avoid blocking main loop
+        threading.Thread(target=self._encode_and_upload, args=(frame,), daemon=True).start()
+
+    def _encode_and_upload(self, frame):
+        """Resize, JPEG-encode, and upload — runs in background thread."""
+        try:
+            h, w = frame.shape[:2]
+            if w > self.target_width:
+                scale = self.target_width / w
+                frame = cv2.resize(
+                    frame,
+                    (self.target_width, int(h * scale)),
+                    interpolation=cv2.INTER_AREA,
+                )
+
+            _, buffer = cv2.imencode(
+                ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality]
             )
-
-        # JPEG encode
-        _, buffer = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality]
-        )
-        image_bytes = buffer.tobytes()
-
-        # Upload in background thread to avoid blocking the main loop
-        threading.Thread(target=self._upload, args=(image_bytes,), daemon=True).start()
+            image_bytes = buffer.tobytes()
+            self._upload(image_bytes)
+        except Exception:
+            with self._lock:
+                self._uploading = False
 
     def _upload(self, image_bytes: bytes):
         try:
@@ -483,13 +446,17 @@ class VideoStreamer:
 
 
 class DashcamRecorder:
-    """Records annotated camera frames to a local MP4 file."""
+    """Records annotated camera frames to a local MP4 file.
+
+    Uses a background thread for VideoWriter to avoid blocking the main loop.
+    """
 
     def __init__(self, output_dir="recordings", fps=10):
         self.output_dir = output_dir
         self.fps = fps
         self.writer = None
         self.filepath = None
+        self._write_busy = False
 
     def start(self, trip_id, width, height):
         """Start recording to {output_dir}/{trip_id}.mp4"""
@@ -499,10 +466,27 @@ class DashcamRecorder:
         self.writer = cv2.VideoWriter(self.filepath, fourcc, self.fps, (width, height))
         print(f"Dashcam recording: {self.filepath} ({width}x{height} @ {self.fps} fps)")
 
-    def write_frame(self, frame):
-        """Write a single frame to the video file."""
-        if self.writer and self.writer.isOpened():
+    def write_frame(self, frame, hud_data=None):
+        """Queue frame for background write (non-blocking, drops frames if busy).
+
+        Args:
+            frame: OpenCV BGR frame (will be copied for thread safety).
+            hud_data: Optional dict with speed/heading/direction for HUD overlay.
+        """
+        if self._write_busy or not self.writer or not self.writer.isOpened():
+            return
+        self._write_busy = True
+        threading.Thread(
+            target=self._bg_write, args=(frame.copy(), hud_data), daemon=True
+        ).start()
+
+    def _bg_write(self, frame, hud_data):
+        try:
+            if hud_data:
+                draw_dashcam_hud(frame, **hud_data)
             self.writer.write(frame)
+        finally:
+            self._write_busy = False
 
     def stop(self):
         """Stop recording and release the writer."""
@@ -536,7 +520,8 @@ class SupabaseUploader:
         if not self.vehicle_id:
             raise RuntimeError("VEHICLE_ID not found. Please set it in your .env file.")
 
-        self.client: Client = create_client(supabase_url, supabase_key)
+        from supabase import create_client
+        self.client = create_client(supabase_url, supabase_key)
         self.session_id = str(uuid.uuid4())
         self.last_upload_time = 0
         self.last_realtime_update = 0
@@ -2488,10 +2473,7 @@ class FaceAnalyzer:
         import mediapipe as _mp
         from mediapipe.tasks import python as _mp_python
         from mediapipe.tasks.python import vision as _mp_vision
-        from scipy.spatial import distance as _sp_distance
-
         self._mp = _mp
-        self._sp_distance = _sp_distance
 
         # Initialize MediaPipe Face Landmarker (with blendshapes for gaze)
         base_options = _mp_python.BaseOptions(model_asset_path="face_landmarker.task")
@@ -2505,6 +2487,14 @@ class FaceAnalyzer:
             output_face_blendshapes=True,
         )
         self.landmarker = _mp_vision.FaceLandmarker.create_from_options(options)
+
+        # Async face analysis — runs MediaPipe in a background thread
+        # so the main loop is never blocked by face detection inference.
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._future = None
+        self._cached_detection = None  # last detection_data
+        self._cached_frame = None      # last annotated frame
+        self._last_ts = -1             # last submitted timestamp (must be monotonic)
 
         # Eye landmarks indices for MediaPipe Face Mesh
         self.LEFT_EYE = [362, 385, 387, 263, 373, 380]
@@ -2557,17 +2547,20 @@ class FaceAnalyzer:
         self._face_last_seen = None       # time.time() of last face detection
         self._face_was_present = False    # True once we've seen a face this session
 
+    @staticmethod
+    def _euclidean(p1, p2):
+        """Fast euclidean distance (replaces scipy.spatial.distance.euclidean)."""
+        dx = p1[0] - p2[0]
+        dy = p1[1] - p2[1]
+        return (dx * dx + dy * dy) ** 0.5
+
     def calculate_ear(self, eye_landmarks):
         """Calculate Eye Aspect Ratio"""
-        # Vertical eye landmarks
-        A = self._sp_distance.euclidean(eye_landmarks[1], eye_landmarks[5])
-        B = self._sp_distance.euclidean(eye_landmarks[2], eye_landmarks[4])
-        # Horizontal eye landmark
-        C = self._sp_distance.euclidean(eye_landmarks[0], eye_landmarks[3])
-
-        # EAR formula
-        ear = (A + B) / (2.0 * C)
-        return ear
+        _dist = self._euclidean
+        A = _dist(eye_landmarks[1], eye_landmarks[5])
+        B = _dist(eye_landmarks[2], eye_landmarks[4])
+        C = _dist(eye_landmarks[0], eye_landmarks[3])
+        return (A + B) / (2.0 * C)
 
     def get_eye_landmarks(self, face_landmarks, eye_indices, w, h):
         """Extract eye landmark coordinates"""
@@ -2813,7 +2806,12 @@ class FaceAnalyzer:
 
         # EAR variance (high variance suggests instability)
         # Threshold increased - 0.005 was way too sensitive, normal blinking causes that
-        ear_variance = np.var(self.ear_history) if len(self.ear_history) > 10 else 0
+        if len(self.ear_history) > 10:
+            _hist = self.ear_history
+            _mean = sum(_hist) / len(_hist)
+            ear_variance = sum((x - _mean) ** 2 for x in _hist) / len(_hist)
+        else:
+            ear_variance = 0
         unstable_eyes = ear_variance > 0.02  # Much higher threshold
 
         # Overall intoxication score
@@ -2833,18 +2831,11 @@ class FaceAnalyzer:
             "ear": avg_ear,
         }
 
-    def process_frame(self, frame, timestamp_ms):
-        """Process a single frame for face and eye detection
+    def _analyze_frame_sync(self, frame, timestamp_ms):
+        """Run MediaPipe face detection + analysis on a single frame.
 
-        Performance optimizations applied:
-        - Combined multiple text labels into fewer cv2.putText calls (3x fewer calls)
-        - Use FONT_HERSHEY_PLAIN instead of SIMPLEX (2x faster rendering)
-        - thickness=1 instead of 2 (50% faster)
-        - Pre-computed color constants to avoid tuple creation
-
-        Returns:
-            tuple: (processed_frame, detection_data)
-                detection_data contains: intox_data, face_crop, face_bbox, eye_states
+        This is the heavy-compute method that runs in the background thread.
+        Returns (annotated_frame, detection_data).
         """
         h, w, _ = frame.shape
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -2865,14 +2856,17 @@ class FaceAnalyzer:
             self._face_was_present = True
 
             for face_idx, face_landmarks in enumerate(results.face_landmarks):
-                # Get face bounding box
-                x_coords = [landmark.x for landmark in face_landmarks]
-                y_coords = [landmark.y for landmark in face_landmarks]
-
-                x_min = int(min(x_coords) * w)
-                x_max = int(max(x_coords) * w)
-                y_min = int(min(y_coords) * h)
-                y_max = int(max(y_coords) * h)
+                # Get face bounding box (single pass over landmarks)
+                lm0 = face_landmarks[0]
+                xn, xx, yn, yx = lm0.x, lm0.x, lm0.y, lm0.y
+                for lm in face_landmarks:
+                    _lx, _ly = lm.x, lm.y
+                    if _lx < xn: xn = _lx
+                    elif _lx > xx: xx = _lx
+                    if _ly < yn: yn = _ly
+                    elif _ly > yx: yx = _ly
+                x_min, x_max = int(xn * w), int(xx * w)
+                y_min, y_max = int(yn * h), int(yx * h)
 
                 # Draw face rectangle
                 cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), COLOR_GREEN, 2)
@@ -3082,6 +3076,48 @@ class FaceAnalyzer:
                                 (10, 52), FONT_FAST, 1.0, COLOR_RED, 1)
 
         return frame, detection_data
+
+    def process_frame(self, frame, timestamp_ms):
+        """Async face detection — submits to background thread, returns cached results.
+
+        Works like DistractionDetector.detect(): the heavy MediaPipe inference
+        runs in a background thread so the main loop never blocks.  Returns
+        the most recent annotated frame + detection_data instantly.
+
+        Returns:
+            tuple: (processed_frame, detection_data) — from the latest completed analysis
+        """
+        # Check for completed background result
+        if self._future is not None and self._future.done():
+            try:
+                annotated_frame, det_data = self._future.result()
+                self._cached_frame = annotated_frame
+                self._cached_detection = det_data
+            except Exception:
+                pass
+            self._future = None
+
+        # Submit new analysis if background thread is free
+        if self._future is None and timestamp_ms > self._last_ts:
+            self._last_ts = timestamp_ms
+            # frame.copy() gives the background thread its own memory
+            self._future = self._executor.submit(
+                self._analyze_frame_sync, frame.copy(), timestamp_ms
+            )
+
+        # Return latest annotated frame + detection data.
+        # The frame has face annotations baked in from the background thread.
+        # YOLO boxes drawn later may be on a 1-frame-old base — imperceptible.
+        if self._cached_frame is not None:
+            return self._cached_frame, self._cached_detection
+
+        # No result yet (first few frames) — return raw frame
+        return frame, None
+
+    def shutdown(self):
+        """Shutdown the background analysis thread."""
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
 
 
 class MusicRecognizer:
@@ -3328,18 +3364,27 @@ def main():
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
 
-    # Initialize GPS reader (will fallback to Apple Park coordinates if unavailable)
+    # --- Parallel startup: run availability checks, Supabase network init,
+    # GPS, and camera probe all at the same time.  This overlaps ~5s of
+    # MediaPipe/YOLO import checks with ~2-3s of Supabase HTTP round-trips.
     gps_reader = GPSReader()
     gps_reader.start()
 
-    # Initialize buzzer and Supabase first (fetches feature settings from DB)
     speed_limit_checker = SpeedLimitChecker(search_radius=50)
     driving_sim = DrivingSimulator(
         gps_reader=gps_reader, speed_limit_checker=speed_limit_checker
     )
     buzzer = BuzzerController()
     buzzer.start()
-    supabase_uploader = SupabaseUploader(buzzer_controller=buzzer)
+
+    # Launch availability checks + Supabase init in parallel
+    with ThreadPoolExecutor(max_workers=3) as _boot_pool:
+        _mp_fut = _boot_pool.submit(_check_mediapipe)
+        _yolo_fut = _boot_pool.submit(_check_yolo)
+        _supa_fut = _boot_pool.submit(SupabaseUploader, buzzer)
+        _mp_fut.result()          # sets _MEDIAPIPE_AVAILABLE
+        _yolo_fut.result()        # sets YOLO_AVAILABLE, YOLO_ONNX_AVAILABLE
+        supabase_uploader = _supa_fut.result()
 
     # Feature settings from Supabase (falls back to .env)
     settings = supabase_uploader.feature_settings
@@ -3487,41 +3532,44 @@ def main():
             print("Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)")
 
         if enable_camera:
-            cap = ThreadedCamera(args.camera)
-            if not cap.isOpened():
-                print("Error: Could not open camera — continuing without it")
-                cap = None
-            else:
+            # Load camera, FaceAnalyzer, and YOLO all in parallel — camera
+            # open (~0.5s) overlaps with model loading (~2-3s each).
+            def _open_camera():
+                _cap = ThreadedCamera(args.camera)
+                if not _cap.isOpened():
+                    print("Error: Could not open camera — continuing without it")
+                    return None
+                _cap.start()
+                return _cap
+
+            def _load_face_analyzer():
+                if _check_mediapipe():
+                    try:
+                        fa = FaceAnalyzer()
+                        print("  FaceAnalyzer loaded")
+                        return fa
+                    except Exception as e:
+                        print(f"  FaceAnalyzer failed ({e}), using fallback")
+                        return FallbackFaceDetector()
+                return FallbackFaceDetector()
+
+            def _load_distraction_detector():
+                dd = DistractionDetector(enabled=enable_yolo)
+                print("  DistractionDetector loaded")
+                return dd
+
+            with ThreadPoolExecutor(max_workers=3) as _model_pool:
+                _cam_future = _model_pool.submit(_open_camera)
+                _fa_future = _model_pool.submit(_load_face_analyzer)
+                _dd_future = _model_pool.submit(_load_distraction_detector)
+                cap = _cam_future.result()
+                analyzer = _fa_future.result()
+                distraction_detector = _dd_future.result()
+
+            if cap is not None:
                 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
                 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                cap.start()
                 print(f"Camera opened: {width}x{height} (threaded capture)")
-                # Load FaceAnalyzer and DistractionDetector in parallel — they
-                # are independent and each loads heavy models (MediaPipe, YOLO).
-                def _load_face_analyzer():
-                    if _check_mediapipe():
-                        try:
-                            print("  Loading MediaPipe FaceAnalyzer...", end=" ", flush=True)
-                            fa = FaceAnalyzer()
-                            print("ok")
-                            return fa
-                        except Exception as e:
-                            print(f"FAILED ({e})")
-                            print("  Using OpenCV fallback face detector")
-                            return FallbackFaceDetector()
-                    return FallbackFaceDetector()
-
-                def _load_distraction_detector():
-                    print("  Loading DistractionDetector (YOLO)...", end=" ", flush=True)
-                    dd = DistractionDetector(enabled=enable_yolo)
-                    print("ok")
-                    return dd
-
-                with ThreadPoolExecutor(max_workers=2) as _model_pool:
-                    _fa_future = _model_pool.submit(_load_face_analyzer)
-                    _dd_future = _model_pool.submit(_load_distraction_detector)
-                    analyzer = _fa_future.result()
-                    distraction_detector = _dd_future.result()
         else:
             print("Camera disabled via Supabase settings")
 
@@ -3591,10 +3639,21 @@ def main():
         last_fps_print = time.time()
 
         process_times = deque(maxlen=100)  # Track last 100 total frame times
-        mediapipe_times = deque(maxlen=100)
         draw_times = deque(maxlen=100)
 
+        # Pre-allocated default dict — reused every frame when no detections
+        _DEFAULT_DISTRACTION = {
+            "phone_detected": False,
+            "drinking_detected": False,
+            "phone_bbox": None,
+            "bottle_bbox": None,
+            "phone_frames": 0,
+            "drinking_frames": 0,
+            "hand_at_ear": False,
+        }
+
         # --- Phase 3: Main processing loop ---
+        print(f"Startup complete in {time.time() - _startup_t0:.1f}s")
         while not shutdown_requested:
             frame_start_time = time.time()
 
@@ -3606,15 +3665,7 @@ def main():
             detection_data = None
             intox_data = None
             awareness = None
-            distraction_data = {
-                "phone_detected": False,
-                "drinking_detected": False,
-                "phone_bbox": None,
-                "bottle_bbox": None,
-                "phone_frames": 0,
-                "drinking_frames": 0,
-                "hand_at_ear": False,
-            }
+            distraction_data = _DEFAULT_DISTRACTION
 
             # --- Camera-dependent processing ---
             if cap is not None:
@@ -3627,13 +3678,10 @@ def main():
                 frame_count += 1
                 fps_frame_count += 1
 
-                # Face detection + annotation drawing (MediaPipe) — run FIRST so
-                # face_bbox is available for hand-at-ear detection in YOLO pass
-                t_mp = time.time()
+                # Face detection (async — submits to background thread, returns cached)
                 processed_frame, detection_data = analyzer.process_frame(
                     frame, timestamp_ms
                 )
-                mediapipe_times.append(time.time() - t_mp)
 
                 # YOLO distraction detection (async — no-op when custom models loaded)
                 # Pass face_bbox so hand-at-ear can locate ear regions
@@ -3849,12 +3897,15 @@ def main():
 
             # --- Drawing / streaming / GUI (camera only) ---
             if cap is not None and processed_frame is not None:
-                t_draw = time.time()
-                processed_frame = distraction_detector.draw_detections(processed_frame)
-                processed_frame = draw_distraction_warning(
-                    processed_frame, distraction_data, gaze_data=gaze_data
-                )
-                draw_times.append(time.time() - t_draw)
+                # Only draw overlays when someone will see them (GUI or streaming)
+                _need_draw = not headless or streamer or dashcam
+                if _need_draw:
+                    t_draw = time.time()
+                    processed_frame = distraction_detector.draw_detections(processed_frame)
+                    processed_frame = draw_distraction_warning(
+                        processed_frame, distraction_data, gaze_data=gaze_data
+                    )
+                    draw_times.append(time.time() - t_draw)
 
                 # Track total frame processing time
                 frame_end_time = time.time()
@@ -3869,11 +3920,6 @@ def main():
                         sum(process_times) / len(process_times) if process_times else 0
                     )
                     loop_fps = 1.0 / avg_total if avg_total > 0 else 0
-                    avg_mp = (
-                        sum(mediapipe_times) / len(mediapipe_times)
-                        if mediapipe_times
-                        else 0
-                    )
                     avg_draw = (
                         sum(draw_times) / len(draw_times) if draw_times else 0
                     )
@@ -3896,8 +3942,7 @@ def main():
                         f"({avg_total*1000:.1f}ms/frame) | "
                         f"Camera: {capture_fps:.1f} FPS | "
                         f"{yolo_label}\n"
-                        f"        MediaPipe: {avg_mp*1000:.1f}ms | "
-                        f"Draw: {avg_draw*1000:.1f}ms | "
+                        f"        Draw: {avg_draw*1000:.1f}ms | "
                         f"Resolution: {width}x{height}\n"
                     )
                     if gyro_reader is not None:
@@ -3922,14 +3967,11 @@ def main():
                 camera_server.update_frame(processed_frame)
 
                 if dashcam:
-                    hud_frame = processed_frame.copy()
-                    draw_dashcam_hud(
-                        hud_frame,
-                        speed=driving_sim.get_speed(),
-                        heading=driving_sim.get_heading(),
-                        direction=driving_sim.get_compass_direction(),
-                    )
-                    dashcam.write_frame(hud_frame)
+                    dashcam.write_frame(processed_frame, hud_data={
+                        "speed": driving_sim.get_speed(),
+                        "heading": driving_sim.get_heading(),
+                        "direction": driving_sim.get_compass_direction(),
+                    })
 
                 if not headless:
                     cv2.imshow("Infineon Project - Winter 2026", processed_frame)
@@ -3965,6 +4007,8 @@ def main():
             music_recognizer.stop()
         if distraction_detector:
             distraction_detector.shutdown()
+        if analyzer and hasattr(analyzer, 'shutdown'):
+            analyzer.shutdown()
         if cap is not None:
             cap.release()
         if not headless and cap is not None:

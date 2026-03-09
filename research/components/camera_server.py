@@ -45,6 +45,9 @@ class CameraServer:
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
         self.local_ip = _get_local_ip()
+        # Background encoder: avoids blocking main loop with resize + imencode
+        self._encode_busy = False
+        self._encode_params = [cv2.IMWRITE_JPEG_QUALITY, self.quality]
 
     def start(self):
         """Start the HTTP server in a background thread."""
@@ -87,15 +90,25 @@ class CameraServer:
             self._thread = None
         print("[Camera HTTP] Server stopped")
 
+    def _encode_and_store(self, frame):
+        """Resize + JPEG encode in background thread."""
+        try:
+            h, w = frame.shape[:2]
+            if w > self.width:
+                scale = self.width / w
+                frame = cv2.resize(
+                    frame, (self.width, int(h * scale)),
+                    interpolation=cv2.INTER_AREA,
+                )
+            _, buf = cv2.imencode(".jpg", frame, self._encode_params)
+            with self._lock:
+                self._jpeg_bytes = buf.tobytes()
+        finally:
+            self._encode_busy = False
+
     def update_frame(self, frame):
-        """Compress and store the latest frame (called from main loop)."""
-        h, w = frame.shape[:2]
-        if w > self.width:
-            scale = self.width / w
-            frame = cv2.resize(
-                frame, (self.width, int(h * scale)),
-                interpolation=cv2.INTER_AREA,
-            )
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.quality])
-        with self._lock:
-            self._jpeg_bytes = buf.tobytes()
+        """Queue frame for background encoding (non-blocking)."""
+        if self._encode_busy:
+            return  # Skip frame if previous encode still running
+        self._encode_busy = True
+        threading.Thread(target=self._encode_and_store, args=(frame,), daemon=True).start()
