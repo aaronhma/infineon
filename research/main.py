@@ -48,6 +48,7 @@ from components.speed_limit import SpeedLimitChecker
 GYRO_AVAILABLE = False
 try:
     from components.gyroscope import CrashDetector, GyroReader
+
     GYRO_AVAILABLE = True
 except ImportError:
     pass
@@ -55,6 +56,7 @@ except ImportError:
 BLE_AVAILABLE = False
 try:
     from components.bluetooth import BluetoothServer
+
     BLE_AVAILABLE = True
 except ImportError:
     pass
@@ -76,6 +78,7 @@ def _get_ort_providers():
     if _IS_MACOS:
         try:
             import onnxruntime as _ort
+
             available = _ort.get_available_providers()
             if "CoreMLExecutionProvider" in available:
                 return ["CoreMLExecutionProvider", "CPUExecutionProvider"]
@@ -99,9 +102,11 @@ def _check_mediapipe():
         # RPi: subprocess check to survive potential protobuf segfaults
         try:
             import subprocess
+
             result = subprocess.run(
                 [sys.executable, "-c", "import mediapipe"],
-                capture_output=True, timeout=15,
+                capture_output=True,
+                timeout=15,
             )
             _MEDIAPIPE_AVAILABLE = result.returncode == 0
             if not _MEDIAPIPE_AVAILABLE:
@@ -118,6 +123,7 @@ def _check_mediapipe():
         # macOS / x86: direct import (no segfault risk, avoids ~15s subprocess)
         try:
             import mediapipe as _mp_test  # noqa: F401
+
             _MEDIAPIPE_AVAILABLE = True
             print("ok")
         except Exception as e:
@@ -127,6 +133,7 @@ def _check_mediapipe():
     if not _MEDIAPIPE_AVAILABLE:
         print("  Will use OpenCV fallback face detector")
     return _MEDIAPIPE_AVAILABLE
+
 
 # Performance optimization constants
 # Pre-computed color tuples for faster drawing (avoids tuple creation overhead)
@@ -144,6 +151,7 @@ FONT_FAST = cv2.FONT_HERSHEY_PLAIN
 # Load environment variables from .env file
 load_dotenv()
 
+
 def _check_yolo():
     """Test whether ultralytics YOLO can be imported.
 
@@ -157,17 +165,22 @@ def _check_yolo():
         # RPi: subprocess check to survive potential segfaults
         try:
             import subprocess
+
             _yolo_check = subprocess.run(
                 [sys.executable, "-c", "from ultralytics import YOLO"],
-                capture_output=True, timeout=30,
+                capture_output=True,
+                timeout=30,
             )
             if _yolo_check.returncode == 0:
                 from ultralytics import YOLO
+
                 globals()["YOLO"] = YOLO
                 YOLO_AVAILABLE = True
                 print("ok (ultralytics)")
             else:
-                _yolo_err = _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
+                _yolo_err = (
+                    _yolo_check.stderr.decode(errors="replace").strip().split("\n")[-1]
+                )
                 print(f"ultralytics unavailable ({_yolo_err[:80]})")
         except Exception as e:
             print(f"ultralytics unavailable ({e})")
@@ -175,6 +188,7 @@ def _check_yolo():
         # macOS / x86: direct import (avoids ~30s subprocess)
         try:
             from ultralytics import YOLO
+
             globals()["YOLO"] = YOLO
             YOLO_AVAILABLE = True
             print("ok (ultralytics)")
@@ -183,25 +197,33 @@ def _check_yolo():
 
     # Check for ONNX fallback (also used as primary on macOS for speed)
     _onnx_candidates = [
-        "yolo-models/yolo26n.onnx", "yolo-models/yolo26s.onnx", "yolo-models/yolo26m.onnx",
+        "yolo-models/yolo26n.onnx",
+        "yolo-models/yolo26s.onnx",
+        "yolo-models/yolo26m.onnx",
     ]
     _has_onnx_model = any(os.path.isfile(p) for p in _onnx_candidates)
     if _has_onnx_model:
         try:
             import onnxruntime
+
             YOLO_ONNX_AVAILABLE = True
             if not YOLO_AVAILABLE:
-                print(f"  YOLO ONNX fallback available (onnxruntime {onnxruntime.__version__})")
+                print(
+                    f"  YOLO ONNX fallback available (onnxruntime {onnxruntime.__version__})"
+                )
         except ImportError:
             if not YOLO_AVAILABLE:
                 print("  No ONNX fallback (onnxruntime not installed)")
     elif not YOLO_AVAILABLE:
-        print("  No ONNX models found in yolo-models/ (run export_driver.py to generate)")
+        print(
+            "  No ONNX models found in yolo-models/ (run export_driver.py to generate)"
+        )
 
 
 # Deferred to main() — run in parallel with Supabase network init.
 YOLO_AVAILABLE = False
 YOLO_ONNX_AVAILABLE = False
+
 
 # .env overrides: if explicitly set in .env, these take priority over Supabase.
 # If not set, Supabase value is used. Format: {key: (value, is_explicitly_set)}
@@ -212,10 +234,9 @@ def _parse_env_bool(key, default):
         return default, False
     return raw.lower() in ("true", "1", "yes"), True
 
-_ENV_ENABLE_YOLO, _ENV_YOLO_SET = _parse_env_bool("ENABLE_YOLO", True)
+
 _ENV_ENABLE_STREAM, _ENV_STREAM_SET = _parse_env_bool("ENABLE_STREAM", False)
 _ENV_ENABLE_SHAZAM, _ENV_SHAZAM_SET = _parse_env_bool("ENABLE_SHAZAM", True)
-_ENV_ENABLE_CAMERA, _ENV_CAMERA_SET = _parse_env_bool("ENABLE_CAMERA", True)
 _ENV_ENABLE_MICROPHONE, _ENV_MIC_SET = _parse_env_bool("ENABLE_MICROPHONE", True)
 _ENV_ENABLE_DASHCAM, _ENV_DASHCAM_SET = _parse_env_bool("ENABLE_DASHCAM", True)
 _ENV_ENABLE_CUSTOM_MODELS, _ = _parse_env_bool("ENABLE_CUSTOM_MODELS", False)
@@ -261,6 +282,7 @@ def _find_model(candidates):
 # for large numpy arrays.
 # ---------------------------------------------------------------------------
 
+
 def _face_worker_process(in_q, out_q, mp_max_dim):
     """Standalone process that runs FaceAnalyzer inference.
 
@@ -279,7 +301,10 @@ def _face_worker_process(in_q, out_q, mp_max_dim):
                 analyzer = FaceAnalyzer()
                 print("[FaceWorker] FaceAnalyzer loaded in subprocess", flush=True)
             except Exception as e:
-                print(f"[FaceWorker] FaceAnalyzer failed ({e}), using fallback", flush=True)
+                print(
+                    f"[FaceWorker] FaceAnalyzer failed ({e}), using fallback",
+                    flush=True,
+                )
                 analyzer = FallbackFaceDetector()
         else:
             analyzer = FallbackFaceDetector()
@@ -382,14 +407,16 @@ class FaceAnalyzerProxy:
                 result = self._out_q.get_nowait()
                 if result is not None:
                     frame_bytes, shape, det_data = result
-                    self._cached_frame = np.frombuffer(
-                        frame_bytes, dtype=np.uint8
-                    ).reshape(shape).copy()
+                    self._cached_frame = (
+                        np.frombuffer(frame_bytes, dtype=np.uint8).reshape(shape).copy()
+                    )
                     # Rebuild face_crop from bytes
                     if det_data and det_data.get("_face_crop_bytes") is not None:
-                        det_data["face_crop"] = np.frombuffer(
-                            det_data["_face_crop_bytes"], dtype=np.uint8
-                        ).reshape(det_data["_face_crop_shape"]).copy()
+                        det_data["face_crop"] = (
+                            np.frombuffer(det_data["_face_crop_bytes"], dtype=np.uint8)
+                            .reshape(det_data["_face_crop_shape"])
+                            .copy()
+                        )
                         del det_data["_face_crop_bytes"]
                         del det_data["_face_crop_shape"]
                     self._cached_detection = det_data
@@ -401,9 +428,7 @@ class FaceAnalyzerProxy:
         if not self._pending and timestamp_ms > self._last_ts:
             self._last_ts = timestamp_ms
             try:
-                self._in_q.put_nowait(
-                    (frame.tobytes(), frame.shape, timestamp_ms)
-                )
+                self._in_q.put_nowait((frame.tobytes(), frame.shape, timestamp_ms))
                 self._pending = True
             except Exception:
                 pass  # queue full, skip this frame
@@ -467,9 +492,12 @@ class DistractionDetectorProxy:
         """Submit frame to YOLO subprocess, return smoothed cached results."""
         if not self.enabled:
             return {
-                "phone_detected": False, "drinking_detected": False,
-                "phone_bbox": None, "bottle_bbox": None,
-                "phone_frames": 0, "drinking_frames": 0,
+                "phone_detected": False,
+                "drinking_detected": False,
+                "phone_bbox": None,
+                "bottle_bbox": None,
+                "phone_frames": 0,
+                "drinking_frames": 0,
                 "hand_at_ear": False,
             }
 
@@ -584,9 +612,17 @@ class DistractionDetectorProxy:
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             hits = f"{self.phone_frames}/{self._PHONE_WINDOW}"
             if self.hand_at_ear:
-                label = f"PHONE (HAND {hits})!" if self.phone_detected else f"Hand near face ({hits})"
+                label = (
+                    f"PHONE (HAND {hits})!"
+                    if self.phone_detected
+                    else f"Hand near face ({hits})"
+                )
             else:
-                label = f"PHONE ({hits}) - DISTRACTED!" if self.phone_detected else f"Phone ({hits})"
+                label = (
+                    f"PHONE ({hits}) - DISTRACTED!"
+                    if self.phone_detected
+                    else f"Phone ({hits})"
+                )
             cv2.putText(frame, label, (x1, y1 - 10), FONT_FAST, 1.0, color, 1)
 
         if self.bottle_bbox:
@@ -754,7 +790,9 @@ class VideoStreamer:
         self._last_upload = current_time
 
         # Encode + upload entirely in background thread to avoid blocking main loop
-        threading.Thread(target=self._encode_and_upload, args=(frame,), daemon=True).start()
+        threading.Thread(
+            target=self._encode_and_upload, args=(frame,), daemon=True
+        ).start()
 
     def _encode_and_upload(self, frame):
         """Resize, JPEG-encode, and upload — runs in background thread."""
@@ -831,15 +869,16 @@ class DashcamRecorder:
         self.max_width = max_width
         self.writer = None
         self.filepath = None
-        self._frame_interval = 1.0 / fps   # seconds between frames
+        self._frame_interval = 1.0 / fps  # seconds between frames
         self._last_write_time = 0.0
-        self._queue = None       # set in start()
+        self._queue = None  # set in start()
         self._thread = None
         self._running = False
 
     def start(self, trip_id, width, height):
         """Start recording to {output_dir}/{trip_id}.mp4"""
         import queue as _queue_mod
+
         os.makedirs(self.output_dir, exist_ok=True)
         self.filepath = os.path.join(self.output_dir, f"{trip_id}.mp4")
 
@@ -851,12 +890,10 @@ class DashcamRecorder:
         else:
             rec_w, rec_h = width, height
         self._rec_size = (rec_w, rec_h)
-        self._need_resize = (rec_w != width or rec_h != height)
+        self._need_resize = rec_w != width or rec_h != height
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        self.writer = cv2.VideoWriter(
-            self.filepath, fourcc, self.fps, (rec_w, rec_h)
-        )
+        self.writer = cv2.VideoWriter(self.filepath, fourcc, self.fps, (rec_w, rec_h))
         self._queue = _queue_mod.Queue(maxsize=30)
         self._running = True
         self._last_write_time = 0.0
@@ -938,6 +975,7 @@ class SupabaseUploader:
             raise RuntimeError("VEHICLE_ID not found. Please set it in your .env file.")
 
         from supabase import create_client
+
         self.client = create_client(supabase_url, supabase_key)
         self.session_id = str(uuid.uuid4())
         self.last_upload_time = 0
@@ -1085,12 +1123,30 @@ class SupabaseUploader:
         # Merge: .env override > Supabase > default
         # Each tuple: (env_value, env_was_set, supabase_key, default)
         _toggles = {
-            "enable_yolo":       (_ENV_ENABLE_YOLO,       _ENV_YOLO_SET,   "enable_yolo",       True),
-            "enable_stream":     (_ENV_ENABLE_STREAM,     _ENV_STREAM_SET, "enable_stream",     True),
-            "enable_shazam":     (_ENV_ENABLE_SHAZAM,     _ENV_SHAZAM_SET, "enable_shazam",     True),
-            "enable_microphone": (_ENV_ENABLE_MICROPHONE, _ENV_MIC_SET,    "enable_microphone", True),
-            "enable_camera":     (_ENV_ENABLE_CAMERA,     _ENV_CAMERA_SET, "enable_camera",     True),
-            "enable_dashcam":    (_ENV_ENABLE_DASHCAM,    _ENV_DASHCAM_SET, "enable_dashcam",   True),
+            "enable_stream": (
+                _ENV_ENABLE_STREAM,
+                _ENV_STREAM_SET,
+                "enable_stream",
+                True,
+            ),
+            "enable_shazam": (
+                _ENV_ENABLE_SHAZAM,
+                _ENV_SHAZAM_SET,
+                "enable_shazam",
+                True,
+            ),
+            "enable_microphone": (
+                _ENV_ENABLE_MICROPHONE,
+                _ENV_MIC_SET,
+                "enable_microphone",
+                True,
+            ),
+            "enable_dashcam": (
+                _ENV_ENABLE_DASHCAM,
+                _ENV_DASHCAM_SET,
+                "enable_dashcam",
+                True,
+            ),
         }
 
         self.feature_settings = {}
@@ -1106,12 +1162,20 @@ class SupabaseUploader:
                 val = default
                 source = "default"
 
-            # YOLO needs at least one runtime (ultralytics or ONNX) to be available
-            if key == "enable_yolo":
-                val = val and (YOLO_AVAILABLE or YOLO_ONNX_AVAILABLE)
-
             self.feature_settings[key] = val
             print(f"  {key}: {val}  ({source})", flush=True)
+
+        # Camera and YOLO are always enabled
+        self.feature_settings["enable_yolo"] = True
+        self.feature_settings["enable_camera"] = True
+        print(
+            f"  enable_yolo: {self.feature_settings['enable_yolo']}  (always on)",
+            flush=True,
+        )
+        print(
+            f"  enable_camera: {self.feature_settings['enable_camera']}  (always on)",
+            flush=True,
+        )
 
     def _load_driver_profiles(self):
         """Load all driver profiles for this vehicle"""
@@ -1298,12 +1362,14 @@ class SupabaseUploader:
 
         # Record GPS waypoint (only with real satellite fix)
         if is_real_gps and latitude != 0.0 and longitude != 0.0:
-            self.trip_waypoints.append({
-                "lat": round(latitude, 6),
-                "lng": round(longitude, 6),
-                "spd": int(speed),
-                "ts": int(time.time()),
-            })
+            self.trip_waypoints.append(
+                {
+                    "lat": round(latitude, 6),
+                    "lng": round(longitude, 6),
+                    "spd": int(speed),
+                    "ts": int(time.time()),
+                }
+            )
 
         # Periodically update trip in database
         current_time = time.time()
@@ -1803,13 +1869,19 @@ class DistractionDetector:
     CELL_PHONE = 67
     BOTTLE = 39
     CUP = 41
-    PHONE_CLASSES = {63, 65, 67, 73}         # laptop, remote, cell phone, book
-    DRINK_CLASSES = {39, 40, 41}             # bottle, wine glass, cup
+    PHONE_CLASSES = {63, 65, 67, 73}  # laptop, remote, cell phone, book
+    DRINK_CLASSES = {39, 40, 41}  # bottle, wine glass, cup
 
     # COCO class names (subset used for logging when running ONNX backend)
     COCO_NAMES = {
-        0: "person", 39: "bottle", 40: "wine glass", 41: "cup",
-        63: "laptop", 65: "remote", 67: "cell phone", 73: "book",
+        0: "person",
+        39: "bottle",
+        40: "wine glass",
+        41: "cup",
+        63: "laptop",
+        65: "remote",
+        67: "cell phone",
+        73: "book",
     }
 
     # ONNX model candidates: tried in order when ultralytics is unavailable
@@ -1835,15 +1907,11 @@ class DistractionDetector:
         self.enabled = enabled
 
         # Get model path from env var if not provided.
-        # Default to nano (.onnx first, then .pt) — nano is the only model
-        # small enough to run at acceptable speed on RPi4.
+        # Always use yolo26n (nano) model for optimal performance
         if model_path is None:
             model_path = os.environ.get("YOLO_MODEL_PATH")
         if model_path is None:
-            if YOLO_AVAILABLE:
-                model_path = "yolo-models/yolo26m.pt"   # dev machine: use best accuracy
-            else:
-                model_path = "yolo-models/yolo26n.onnx"  # RPi: use nano ONNX
+            model_path = "yolo-models/yolo26n.pt"
 
         # Classes relevant to driver monitoring (subset of COCO 80)
         self.TARGET_CLASSES = [0, 39, 40, 41, 63, 65, 67, 73]
@@ -1856,12 +1924,12 @@ class DistractionDetector:
         self._drink_set_arr = np.array(list(self.DRINK_CLASSES), dtype=np.intp)
 
         # Backend state: exactly one of these will be set
-        self.model = None           # ultralytics YOLO model (if available)
-        self._onnx_session = None   # onnxruntime session (RPi fallback)
+        self.model = None  # ultralytics YOLO model (if available)
+        self._onnx_session = None  # onnxruntime session (RPi fallback)
         self._onnx_input_name = None
-        self._onnx_img_size = 640   # overridden from model metadata
-        self._onnx_padded = None    # pre-allocated letterbox buffer
-        self._backend = None        # "ultralytics" or "onnx"
+        self._onnx_img_size = 640  # overridden from model metadata
+        self._onnx_padded = None  # pre-allocated letterbox buffer
+        self._backend = None  # "ultralytics" or "onnx"
 
         if self.enabled:
             self.confidence_threshold = 0.45
@@ -1871,6 +1939,7 @@ class DistractionDetector:
             if _IS_MACOS:
                 try:
                     import onnxruntime  # noqa: F401
+
                     onnx_path = self._find_or_export_onnx(model_path)
                     if onnx_path and self._try_load_onnx(onnx_path):
                         print("YOLO model loaded (onnx+CoreML, fastest path)")
@@ -1907,14 +1976,16 @@ class DistractionDetector:
         self.hand_at_ear = False  # True when phone detected via hand-at-ear
 
         # Two-tier confidence: high confidence anywhere, low confidence near face/hands
-        self._phone_conf_high = 0.30       # Phone-class objects anywhere
-        self._phone_conf_near = 0.18       # Phone-class objects near face/hands
-        self._drink_conf = 0.30            # Drink-class objects (bottle/cup/wine glass)
+        self._phone_conf_high = 0.30  # Phone-class objects anywhere
+        self._phone_conf_near = 0.18  # Phone-class objects near face/hands
+        self._drink_conf = 0.30  # Drink-class objects (bottle/cup/wine glass)
 
         # Sliding window smoothing — phone detected in N of last W frames
         self._PHONE_WINDOW = 6
         self._PHONE_MIN_HITS = 2
-        self._phone_window = deque(maxlen=self._PHONE_WINDOW)  # True/False per YOLO frame
+        self._phone_window = deque(
+            maxlen=self._PHONE_WINDOW
+        )  # True/False per YOLO frame
         self._drink_window = deque(maxlen=self._PHONE_WINDOW)
         self.phone_frames = 0
         self.drinking_frames = 0
@@ -1954,6 +2025,7 @@ class DistractionDetector:
                 import mediapipe as _mp
                 from mediapipe.tasks import python as _mp_python
                 from mediapipe.tasks.python import vision as _mp_vision
+
                 self._mp = _mp
 
                 base_options = _mp_python.BaseOptions(
@@ -1967,10 +2039,14 @@ class DistractionDetector:
                     min_hand_presence_confidence=0.3,
                     min_tracking_confidence=0.3,
                 )
-                self.hand_landmarker = _mp_vision.HandLandmarker.create_from_options(options)
+                self.hand_landmarker = _mp_vision.HandLandmarker.create_from_options(
+                    options
+                )
                 print("MediaPipe HandLandmarker loaded for phone-at-ear detection")
             except Exception as e:
-                print(f"MediaPipe Hands not available ({e}) — phone-at-ear detection disabled")
+                print(
+                    f"MediaPipe Hands not available ({e}) — phone-at-ear detection disabled"
+                )
 
     def _find_onnx_model(self, model_path):
         """Find an ONNX model file, checking the given path and fallback candidates."""
@@ -2008,8 +2084,12 @@ class DistractionDetector:
         # Auto-export .pt → .onnx if ultralytics is available (one-time operation)
         if YOLO_AVAILABLE and model_path.endswith(".pt") and os.path.isfile(model_path):
             try:
-                print(f"  Auto-exporting {model_path} → ONNX (one-time, for CoreML acceleration)...")
-                exported = YOLO(model_path).export(format="onnx", half=True, simplify=True)
+                print(
+                    f"  Auto-exporting {model_path} → ONNX (one-time, for CoreML acceleration)..."
+                )
+                exported = YOLO(model_path).export(
+                    format="onnx", half=True, simplify=True
+                )
                 print(f"  Exported: {exported}")
                 return str(exported)
             except Exception as e:
@@ -2025,6 +2105,7 @@ class DistractionDetector:
         """
         try:
             import onnxruntime as ort
+
             providers = _get_ort_providers()
             print(f"Loading YOLO model (onnxruntime): {onnx_path}")
             print(f"  Execution providers: {providers}")
@@ -2033,7 +2114,8 @@ class DistractionDetector:
             opts.intra_op_num_threads = 4
             opts.inter_op_num_threads = 1
             self._onnx_session = ort.InferenceSession(
-                onnx_path, sess_options=opts,
+                onnx_path,
+                sess_options=opts,
                 providers=providers,
             )
             inp = self._onnx_session.get_inputs()[0]
@@ -2078,17 +2160,17 @@ class DistractionDetector:
         # Only fill padding strips (not the center) — saves ~1ms for 640x640 buffer
         if pad_h > 0:
             padded[:pad_h, :] = 114
-            padded[pad_h + new_h:, :] = 114
+            padded[pad_h + new_h :, :] = 114
         if pad_w > 0:
-            padded[pad_h:pad_h + new_h, :pad_w] = 114
-            padded[pad_h:pad_h + new_h, pad_w + new_w:] = 114
-        padded[pad_h:pad_h + new_h, pad_w:pad_w + new_w] = resized
+            padded[pad_h : pad_h + new_h, :pad_w] = 114
+            padded[pad_h : pad_h + new_h, pad_w + new_w :] = 114
+        padded[pad_h : pad_h + new_h, pad_w : pad_w + new_w] = resized
 
         # BGR → RGB, HWC → CHW, normalize to 0-1 into pre-allocated blob
         blob = self._onnx_blob
         # In-place copy + convert: BGR→RGB via ::-1, then transpose into [1,3,H,W]
-        np.copyto(blob[0], padded[:, :, ::-1].transpose(2, 0, 1), casting='unsafe')
-        blob *= (1.0 / 255.0)
+        np.copyto(blob[0], padded[:, :, ::-1].transpose(2, 0, 1), casting="unsafe")
+        blob *= 1.0 / 255.0
 
         # --- Inference ---
         outputs = self._onnx_session.run(None, {self._onnx_input_name: blob})
@@ -2146,11 +2228,16 @@ class DistractionDetector:
         detections = []
         if len(indices) > 0:
             for i in indices.flatten():
-                detections.append((
-                    int(class_ids[i]),
-                    float(confidences[i]),
-                    int(x1[i]), int(y1[i]), int(x2[i]), int(y2[i]),
-                ))
+                detections.append(
+                    (
+                        int(class_ids[i]),
+                        float(confidences[i]),
+                        int(x1[i]),
+                        int(y1[i]),
+                        int(x2[i]),
+                        int(y2[i]),
+                    )
+                )
         return detections
 
     def _boxes_overlap(self, box1, box2, overlap_threshold=0.1):
@@ -2224,14 +2311,14 @@ class DistractionDetector:
         _max = 480
         if max(h, w) > _max:
             _s = _max / max(h, w)
-            hand_input = cv2.resize(frame, (int(w * _s), int(h * _s)), interpolation=cv2.INTER_LINEAR)
+            hand_input = cv2.resize(
+                frame, (int(w * _s), int(h * _s)), interpolation=cv2.INTER_LINEAR
+            )
         else:
             hand_input = frame
 
         rgb = cv2.cvtColor(hand_input, cv2.COLOR_BGR2RGB)
-        mp_image = self._mp.Image(
-            image_format=self._mp.ImageFormat.SRGB, data=rgb
-        )
+        mp_image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
         results = self.hand_landmarker.detect(mp_image)
 
         if not results.hand_landmarks:
@@ -2519,7 +2606,9 @@ class DistractionDetector:
             # --- Ultralytics backend (dev machines with PyTorch) ---
             # Use low confidence to catch partial phones; filter afterwards
             results = self.model(
-                frame, verbose=False, conf=self._phone_conf_near,
+                frame,
+                verbose=False,
+                conf=self._phone_conf_near,
                 classes=self.TARGET_CLASSES,
             )
 
@@ -2537,9 +2626,13 @@ class DistractionDetector:
 
                     if cls in self.PHONE_CLASSES:
                         phone_candidates.append((bbox, conf, class_name))
-                    elif cls in self.DRINK_CLASSES and conf >= self.confidence_threshold:
+                    elif (
+                        cls in self.DRINK_CLASSES and conf >= self.confidence_threshold
+                    ):
                         current_bottle = bbox
-                        print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
+                        print(
+                            f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}"
+                        )
 
         elif self._backend == "onnx":
             # --- ONNX runtime backend (RPi / edge without PyTorch) ---
@@ -2566,7 +2659,9 @@ class DistractionDetector:
                 current_phone = bbox
                 print(f"YOLO: PHONE ({class_name}) conf={conf:.2f}")
                 break
-            elif face is not None and self._is_near_face(bbox, face, proximity_ratio=1.0):
+            elif face is not None and self._is_near_face(
+                bbox, face, proximity_ratio=1.0
+            ):
                 # Tier 2: low confidence but near the driver's face
                 current_phone = bbox
                 print(f"YOLO: PHONE-NEAR ({class_name}) conf={conf:.2f} [near face]")
@@ -2592,7 +2687,9 @@ class DistractionDetector:
                     hand_at_ear = True
                 else:
                     # Check 2: hand holding object in upper frame (texting posture)
-                    holding, hold_bbox = self._detect_hand_holding(frame, hand_landmarks)
+                    holding, hold_bbox = self._detect_hand_holding(
+                        frame, hand_landmarks
+                    )
                     if holding and hold_bbox is not None:
                         current_phone = hold_bbox
                         hand_at_ear = False
@@ -2628,9 +2725,17 @@ class DistractionDetector:
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             hits = f"{self.phone_frames}/{self._PHONE_WINDOW}"
             if self.hand_at_ear:
-                label = f"PHONE (HAND {hits})!" if self.phone_detected else f"Hand near face ({hits})"
+                label = (
+                    f"PHONE (HAND {hits})!"
+                    if self.phone_detected
+                    else f"Hand near face ({hits})"
+                )
             else:
-                label = f"PHONE ({hits}) - DISTRACTED!" if self.phone_detected else f"Phone ({hits})"
+                label = (
+                    f"PHONE ({hits}) - DISTRACTED!"
+                    if self.phone_detected
+                    else f"Phone ({hits})"
+                )
             cv2.putText(frame, label, (x1, y1 - 10), FONT_FAST, 1.0, color, 1)
 
         if self.bottle_bbox:
@@ -2866,7 +2971,9 @@ class FallbackFaceDetector:
     def process_frame(self, frame, timestamp_ms):
         h, w, _ = frame.shape
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+        faces = self.detector.detectMultiScale(
+            gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+        )
 
         detection_data = None
 
@@ -2886,9 +2993,20 @@ class FallbackFaceDetector:
             face_crop = frame[crop_y_min:crop_y_max, crop_x_min:crop_x_max].copy()
 
             detection_data = {
-                "intox_data": {"drowsy": False, "excessive_blinking": False, "unstable_eyes": False, "score": 0, "ear": 0.3},
+                "intox_data": {
+                    "drowsy": False,
+                    "excessive_blinking": False,
+                    "unstable_eyes": False,
+                    "score": 0,
+                    "ear": 0.3,
+                },
                 "face_crop": face_crop,
-                "face_bbox": {"x_min": x_min, "y_min": y_min, "x_max": x_max, "y_max": y_max},
+                "face_bbox": {
+                    "x_min": x_min,
+                    "y_min": y_min,
+                    "x_max": x_max,
+                    "y_max": y_max,
+                },
                 "left_eye_state": "OPEN",
                 "left_eye_ear": 0.3,
                 "right_eye_state": "OPEN",
@@ -2907,6 +3025,7 @@ class FaceAnalyzer:
         import mediapipe as _mp
         from mediapipe.tasks import python as _mp_python
         from mediapipe.tasks.python import vision as _mp_vision
+
         self._mp = _mp
 
         # Initialize MediaPipe Face Landmarker (with blendshapes for gaze)
@@ -2927,8 +3046,8 @@ class FaceAnalyzer:
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._future = None
         self._cached_detection = None  # last detection_data
-        self._cached_frame = None      # last annotated frame
-        self._last_ts = -1             # last submitted timestamp (must be monotonic)
+        self._cached_frame = None  # last annotated frame
+        self._last_ts = -1  # last submitted timestamp (must be monotonic)
 
         # MediaPipe input cap: downscale large frames before inference.
         # Face detection works well at 480p; full 1080p wastes ~60% compute.
@@ -2942,14 +3061,17 @@ class FaceAnalyzer:
         # Indices: nose tip=1, chin=152, left eye outer=263, right eye outer=33,
         #          left mouth corner=287, right mouth corner=57
         self.POSE_LANDMARKS = [1, 152, 263, 33, 287, 57]
-        self.POSE_MODEL_3D = np.array([
-            [0.0, 0.0, 0.0],          # Nose tip
-            [0.0, -63.6, -12.5],       # Chin
-            [-43.3, 32.7, -26.0],      # Left eye outer
-            [43.3, 32.7, -26.0],       # Right eye outer
-            [-28.9, -28.9, -24.1],     # Left mouth corner
-            [28.9, -28.9, -24.1],      # Right mouth corner
-        ], dtype=np.float64)
+        self.POSE_MODEL_3D = np.array(
+            [
+                [0.0, 0.0, 0.0],  # Nose tip
+                [0.0, -63.6, -12.5],  # Chin
+                [-43.3, 32.7, -26.0],  # Left eye outer
+                [43.3, 32.7, -26.0],  # Right eye outer
+                [-28.9, -28.9, -24.1],  # Left mouth corner
+                [28.9, -28.9, -24.1],  # Right mouth corner
+            ],
+            dtype=np.float64,
+        )
         # Pre-allocated arrays for solvePnP (avoids per-frame allocation)
         self._pose_image_pts = np.empty((6, 2), dtype=np.float64)
         self._pose_nose_3d = np.array([[0.0, 0.0, 500.0]], dtype=np.float64)
@@ -2959,11 +3081,20 @@ class FaceAnalyzer:
         self._focal_length = 0.0
 
         # Blendshape names used in analyze_gaze (for fast set-membership test)
-        self._GAZE_BLENDSHAPE_NAMES = frozenset({
-            "eyeLookOutLeft", "eyeLookInRight", "eyeLookInLeft", "eyeLookOutRight",
-            "eyeLookDownLeft", "eyeLookDownRight", "eyeLookUpLeft", "eyeLookUpRight",
-            "eyeBlinkLeft", "eyeBlinkRight",
-        })
+        self._GAZE_BLENDSHAPE_NAMES = frozenset(
+            {
+                "eyeLookOutLeft",
+                "eyeLookInRight",
+                "eyeLookInLeft",
+                "eyeLookOutRight",
+                "eyeLookDownLeft",
+                "eyeLookDownRight",
+                "eyeLookUpLeft",
+                "eyeLookUpRight",
+                "eyeBlinkLeft",
+                "eyeBlinkRight",
+            }
+        )
 
         # Thresholds
         self.EAR_THRESHOLD = 0.21
@@ -2976,8 +3107,8 @@ class FaceAnalyzer:
         # Both eyeBlink blendshapes above this = eyes closed
         self.BLINK_CLOSED_THRESHOLD = 0.55
         # Head pose thresholds (degrees) for distraction
-        self.HEAD_YAW_THRESHOLD = 30     # Looking left/right
-        self.HEAD_PITCH_THRESHOLD = 25   # Looking up/down
+        self.HEAD_YAW_THRESHOLD = 30  # Looking left/right
+        self.HEAD_PITCH_THRESHOLD = 25  # Looking up/down
         # Seconds of sustained gaze-away before flagging as distracted
         self.GAZE_DISTRACTION_SECONDS = 2.0
         # Seconds of sustained eyes-closed before flagging as impaired
@@ -2990,14 +3121,14 @@ class FaceAnalyzer:
         self.ear_history = deque(maxlen=50)
 
         # Gaze / eyes-closed temporal tracking (wall-clock based)
-        self._gaze_away_start = None      # time.time() when gaze left center
-        self._eyes_closed_start = None    # time.time() when both eyes closed
+        self._gaze_away_start = None  # time.time() when gaze left center
+        self._eyes_closed_start = None  # time.time() when both eyes closed
         self._last_gaze_direction = "straight"
 
         # Face-loss tracking: when face disappears (full head turn / side profile),
         # continue counting as "looking away" since the driver left the camera view.
-        self._face_last_seen = None       # time.time() of last face detection
-        self._face_was_present = False    # True once we've seen a face this session
+        self._face_last_seen = None  # time.time() of last face detection
+        self._face_was_present = False  # True once we've seen a face this session
 
     @staticmethod
     def _euclidean(p1, p2):
@@ -3042,16 +3173,22 @@ class FaceAnalyzer:
         # Cache camera matrix per resolution (only rebuild when frame size changes)
         if self._cam_matrix_wh != (w, h):
             focal_length = float(w)
-            self._cam_matrix = np.array([
-                [focal_length, 0.0, w * 0.5],
-                [0.0, focal_length, h * 0.5],
-                [0.0, 0.0, 1.0],
-            ], dtype=np.float64)
+            self._cam_matrix = np.array(
+                [
+                    [focal_length, 0.0, w * 0.5],
+                    [0.0, focal_length, h * 0.5],
+                    [0.0, 0.0, 1.0],
+                ],
+                dtype=np.float64,
+            )
             self._cam_matrix_wh = (w, h)
             self._focal_length = focal_length
 
         success, rvec, tvec = cv2.solvePnP(
-            self.POSE_MODEL_3D, pts, self._cam_matrix, None,
+            self.POSE_MODEL_3D,
+            pts,
+            self._cam_matrix,
+            None,
             flags=cv2.SOLVEPNP_ITERATIVE,
         )
         if not success:
@@ -3096,16 +3233,26 @@ class FaceAnalyzer:
             if _n not in _GAZE_NAMES:
                 continue
             _s = b.score
-            if _n == "eyeLookOutLeft": _eOL = _s
-            elif _n == "eyeLookInRight": _eIR = _s
-            elif _n == "eyeLookInLeft": _eIL = _s
-            elif _n == "eyeLookOutRight": _eOR = _s
-            elif _n == "eyeLookDownLeft": _eDL = _s
-            elif _n == "eyeLookDownRight": _eDR = _s
-            elif _n == "eyeLookUpLeft": _eUL = _s
-            elif _n == "eyeLookUpRight": _eUR = _s
-            elif _n == "eyeBlinkLeft": _bL = _s
-            elif _n == "eyeBlinkRight": _bR = _s
+            if _n == "eyeLookOutLeft":
+                _eOL = _s
+            elif _n == "eyeLookInRight":
+                _eIR = _s
+            elif _n == "eyeLookInLeft":
+                _eIL = _s
+            elif _n == "eyeLookOutRight":
+                _eOR = _s
+            elif _n == "eyeLookDownLeft":
+                _eDL = _s
+            elif _n == "eyeLookDownRight":
+                _eDR = _s
+            elif _n == "eyeLookUpLeft":
+                _eUL = _s
+            elif _n == "eyeLookUpRight":
+                _eUR = _s
+            elif _n == "eyeBlinkLeft":
+                _bL = _s
+            elif _n == "eyeBlinkRight":
+                _bR = _s
 
         # --- Eye-based gaze direction ---
         look_left = (_eOL + _eIR) * 0.5
@@ -3227,8 +3374,12 @@ class FaceAnalyzer:
             "eyes_both_closed": False,
             "eyes_closed_impaired": False,
             "eyes_closed_seconds": 0.0,
-            "look_left": 0, "look_right": 0, "look_down": 0, "look_up": 0,
-            "blink_left": 0, "blink_right": 0,
+            "look_left": 0,
+            "look_right": 0,
+            "look_down": 0,
+            "look_up": 0,
+            "blink_left": 0,
+            "blink_right": 0,
             "head_yaw": yaw,
             "head_pitch": pitch,
         }
@@ -3302,7 +3453,9 @@ class FaceAnalyzer:
         rgb_frame = cv2.cvtColor(mp_input, cv2.COLOR_BGR2RGB)
 
         # Convert to MediaPipe Image
-        mp_image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb_frame)
+        mp_image = self._mp.Image(
+            image_format=self._mp.ImageFormat.SRGB, data=rgb_frame
+        )
 
         # Detect face landmarks
         results = self.landmarker.detect_for_video(mp_image, timestamp_ms)
@@ -3322,10 +3475,14 @@ class FaceAnalyzer:
                 xn, xx, yn, yx = lm0.x, lm0.x, lm0.y, lm0.y
                 for lm in face_landmarks:
                     _lx, _ly = lm.x, lm.y
-                    if _lx < xn: xn = _lx
-                    elif _lx > xx: xx = _lx
-                    if _ly < yn: yn = _ly
-                    elif _ly > yx: yx = _ly
+                    if _lx < xn:
+                        xn = _lx
+                    elif _lx > xx:
+                        xx = _lx
+                    if _ly < yn:
+                        yn = _ly
+                    elif _ly > yx:
+                        yx = _ly
                 x_min, x_max = int(xn * w), int(xx * w)
                 y_min, y_max = int(yn * h), int(yx * h)
 
@@ -3354,9 +3511,8 @@ class FaceAnalyzer:
 
                 # Gaze direction + eyes-closed analysis from blendshapes + head pose
                 gaze_data = None
-                if (
+                if results.face_blendshapes and face_idx < len(
                     results.face_blendshapes
-                    and face_idx < len(results.face_blendshapes)
                 ):
                     gaze_data = self.analyze_gaze(
                         results.face_blendshapes[face_idx], head_pose=head_pose
@@ -3419,7 +3575,9 @@ class FaceAnalyzer:
                         gaze_label = f"LOOKING {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s) - DISTRACTED{head_info}"
                         gaze_color = COLOR_RED
                     elif gaze_data["eyes_both_closed"]:
-                        gaze_label = f"EYES CLOSED ({gaze_data['eyes_closed_seconds']:.1f}s)"
+                        gaze_label = (
+                            f"EYES CLOSED ({gaze_data['eyes_closed_seconds']:.1f}s)"
+                        )
                         gaze_color = COLOR_ORANGE
                     elif gaze_dir != "STRAIGHT":
                         gaze_label = f"Gaze: {gaze_dir} ({gaze_data['gaze_away_seconds']:.1f}s){head_info}"
@@ -3491,7 +3649,11 @@ class FaceAnalyzer:
         # --- Face-lost detection: full head turn / side profile ---
         # When the face was visible but now gone, the driver has turned away.
         # Synthesize gaze data so the distraction timer keeps running.
-        if detection_data is None and self._face_was_present and self._face_last_seen is not None:
+        if (
+            detection_data is None
+            and self._face_was_present
+            and self._face_last_seen is not None
+        ):
             face_gone_secs = now - self._face_last_seen
 
             # Only flag after a brief grace period (0.3s) to avoid flicker
@@ -3509,16 +3671,25 @@ class FaceAnalyzer:
                     "eyes_both_closed": False,
                     "eyes_closed_impaired": False,
                     "eyes_closed_seconds": 0.0,
-                    "look_left": 0, "look_right": 0,
-                    "look_down": 0, "look_up": 0,
-                    "blink_left": 0, "blink_right": 0,
-                    "head_yaw": 0.0, "head_pitch": 0.0,
+                    "look_left": 0,
+                    "look_right": 0,
+                    "look_down": 0,
+                    "look_up": 0,
+                    "blink_left": 0,
+                    "blink_right": 0,
+                    "head_yaw": 0.0,
+                    "head_pitch": 0.0,
                 }
 
                 # Build minimal detection_data with face-lost gaze
                 detection_data = {
-                    "intox_data": {"drowsy": False, "excessive_blinking": False,
-                                   "unstable_eyes": False, "score": 0, "ear": 0.0},
+                    "intox_data": {
+                        "drowsy": False,
+                        "excessive_blinking": False,
+                        "unstable_eyes": False,
+                        "score": 0,
+                        "ear": 0.0,
+                    },
                     "face_crop": None,
                     "face_bbox": None,
                     "left_eye_state": "UNKNOWN",
@@ -3533,8 +3704,15 @@ class FaceAnalyzer:
                 color = COLOR_RED if gaze_distracted else COLOR_ORANGE
                 cv2.putText(frame, label, (10, 30), FONT_FAST, 1.2, color, 1)
                 if gaze_distracted:
-                    cv2.putText(frame, "DISTRACTED - LOOKING AWAY",
-                                (10, 52), FONT_FAST, 1.0, COLOR_RED, 1)
+                    cv2.putText(
+                        frame,
+                        "DISTRACTED - LOOKING AWAY",
+                        (10, 52),
+                        FONT_FAST,
+                        1.0,
+                        COLOR_RED,
+                        1,
+                    )
 
         return frame, detection_data
 
@@ -3767,7 +3945,9 @@ def draw_distraction_warning(frame, distraction_data, gaze_data=None):
     if gaze_data and gaze_data.get("gaze_distracted"):
         direction = gaze_data["gaze_direction"].upper()
         secs = gaze_data["gaze_away_seconds"]
-        warnings.append((f"DISTRACTED: LOOKING {direction} ({secs:.1f}s)", COLOR_DARK_RED))
+        warnings.append(
+            (f"DISTRACTED: LOOKING {direction} ({secs:.1f}s)", COLOR_DARK_RED)
+        )
 
     if distraction_data.get("phone_detected"):
         warnings.append(("WARNING: PHONE DETECTED", COLOR_DARK_RED))
@@ -3843,32 +4023,37 @@ def main():
         _mp_fut = _boot_pool.submit(_check_mediapipe)
         _yolo_fut = _boot_pool.submit(_check_yolo)
         _supa_fut = _boot_pool.submit(SupabaseUploader, buzzer)
-        _mp_fut.result()          # sets _MEDIAPIPE_AVAILABLE
-        _yolo_fut.result()        # sets YOLO_AVAILABLE, YOLO_ONNX_AVAILABLE
+        _mp_fut.result()  # sets _MEDIAPIPE_AVAILABLE
+        _yolo_fut.result()  # sets YOLO_AVAILABLE, YOLO_ONNX_AVAILABLE
         supabase_uploader = _supa_fut.result()
 
     # Feature settings from Supabase (falls back to .env)
     settings = supabase_uploader.feature_settings
-    enable_yolo = settings["enable_yolo"]
+    enable_yolo = settings["enable_yolo"]  # Always True (or True if YOLO available)
     enable_stream = settings["enable_stream"]
     enable_shazam = settings["enable_shazam"] and settings["enable_microphone"]
-    enable_camera = settings["enable_camera"]
+    enable_camera = settings["enable_camera"]  # Always True
     enable_dashcam = settings["enable_dashcam"]
 
     # Initialize BLE GATT server (direct iOS communication)
     ble_server = None
     if BLE_AVAILABLE:
+
         def _ble_settings_write(data):
             """Handle settings written from iOS via BLE."""
+            # Note: Camera and YOLO are always enabled and cannot be toggled
             key_map = {
-                "yolo": "enable_yolo", "stream": "enable_stream",
-                "shazam": "enable_shazam", "mic": "enable_microphone",
-                "cam": "enable_camera", "dash": "enable_dashcam",
+                "stream": "enable_stream",
+                "shazam": "enable_shazam",
+                "mic": "enable_microphone",
+                "dash": "enable_dashcam",
             }
             for short, full in key_map.items():
                 if short in data:
                     supabase_uploader.feature_settings[full] = bool(data[short])
-            print(f"[BLE] Feature settings updated: {supabase_uploader.feature_settings}")
+            print(
+                f"[BLE] Feature settings updated: {supabase_uploader.feature_settings}"
+            )
 
         def _ble_buzzer_write(data):
             """Handle buzzer commands from iOS via BLE."""
@@ -3881,7 +4066,9 @@ def main():
                         "off": data.get("off", 0.5),
                         "duty": data.get("duty", 50),
                     }
-                buzzer.start_continuous(data.get("type", "alert"), custom_params=custom_params)
+                buzzer.start_continuous(
+                    data.get("type", "alert"), custom_params=custom_params
+                )
             else:
                 buzzer.stop_continuous()
 
@@ -3962,6 +4149,7 @@ def main():
             try:
                 print("  Importing DriverAwarenessSystem...", end=" ", flush=True)
                 from models.inference import DriverAwarenessSystem
+
                 print("ok")
 
                 eye_path = _find_model(_EYE_CANDIDATES)
@@ -3974,7 +4162,9 @@ def main():
                         activity_model_path=activity_path,
                     )
                     health = driver_system.get_health()
-                    print(f"  Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}")
+                    print(
+                        f"  Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}"
+                    )
                 else:
                     print("  No ONNX model files found in models/checkpoints/")
             except ImportError as e:
@@ -3985,7 +4175,9 @@ def main():
                 print("  Falling back to MediaPipe + YOLO")
                 driver_system = None
         else:
-            print("Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)")
+            print(
+                "Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)"
+            )
 
         if enable_camera:
             # Load camera, FaceAnalyzer, and YOLO all in parallel — camera
@@ -4101,7 +4293,7 @@ def main():
         frame_count = 0
 
         # FPS tracking
-        fps_frame_count = 0         # loop iterations (for loop FPS)
+        fps_frame_count = 0  # loop iterations (for loop FPS)
         fps_cam_start_seq = cap.frame_count if cap else 0  # camera HW frames
         fps_start_time = time.time()
         last_fps_print = time.time()
@@ -4157,7 +4349,9 @@ def main():
                 # YOLO distraction detection (async — no-op when custom models loaded)
                 # Pass face_bbox so hand-at-ear can locate ear regions
                 face_bbox = detection_data.get("face_bbox") if detection_data else None
-                distraction_data = distraction_detector.detect(frame, face_bbox=face_bbox)
+                distraction_data = distraction_detector.detect(
+                    frame, face_bbox=face_bbox
+                )
 
                 # Custom model inference: override distraction_data and intox_data
                 if driver_system:
@@ -4191,12 +4385,12 @@ def main():
                         detection_data["left_eye_ear"] = awareness["ear_score"]
                         detection_data["right_eye_ear"] = awareness["ear_score"]
                 else:
-                    intox_data = detection_data["intox_data"] if detection_data else None
+                    intox_data = (
+                        detection_data["intox_data"] if detection_data else None
+                    )
 
                 # Extract gaze data from this frame (if available)
-                gaze_data = (
-                    detection_data.get("gaze_data") if detection_data else None
-                )
+                gaze_data = detection_data.get("gaze_data") if detection_data else None
 
                 # Buzzer alerts — continuous for phone/gaze, one-shot for others
                 _buzzer_continuous_needed = False
@@ -4244,13 +4438,13 @@ def main():
             if gaze_data and gaze_data["gaze_away_seconds"] > 0:
                 away_secs = gaze_data["gaze_away_seconds"]
                 if away_secs >= 4.0:
-                    gaze_risk = 4     # 4+ seconds looking away
+                    gaze_risk = 4  # 4+ seconds looking away
                 elif away_secs >= 3.0:
                     gaze_risk = 3
                 elif away_secs >= 2.0:
-                    gaze_risk = 2     # crosses distraction threshold
+                    gaze_risk = 2  # crosses distraction threshold
                 elif away_secs >= 1.0:
-                    gaze_risk = 1     # starting to look away
+                    gaze_risk = 1  # starting to look away
                 else:
                     gaze_risk = 0
                 effective_risk = max(effective_risk, gaze_risk)
@@ -4273,11 +4467,11 @@ def main():
                 if latest is not None:
                     gyro_mag = latest["gyro_mag"]
                     if gyro_mag >= 150.0:
-                        gyro_bump = 3   # extreme swerving
+                        gyro_bump = 3  # extreme swerving
                     elif gyro_mag >= 100.0:
-                        gyro_bump = 2   # harsh maneuver
+                        gyro_bump = 2  # harsh maneuver
                     elif gyro_mag >= GYRO_HARSH_THRESHOLD_DEG_S:
-                        gyro_bump = 1   # notable motion
+                        gyro_bump = 1  # notable motion
                     else:
                         gyro_bump = 0
                     effective_risk = min(6, effective_risk + gyro_bump)
@@ -4286,13 +4480,19 @@ def main():
                     # Crash detection
                     if crash_detector is not None:
                         crash_detector.feed(
-                            latest["acc_mag"], latest["acc_delta"],
-                            gyro_mag, latest["timestamp"],
+                            latest["acc_mag"],
+                            latest["acc_delta"],
+                            gyro_mag,
+                            latest["timestamp"],
                         )
                         crash_event = crash_detector.get_crash_event()
                         if crash_event:
-                            print(f"\n>>> CRASH DETECTED: {crash_event['severity'].upper()} <<<")
-                            print(f"    Peak: {crash_event['peak_g']}g, Gyro: {crash_event['peak_gyro']} deg/s\n")
+                            print(
+                                f"\n>>> CRASH DETECTED: {crash_event['severity'].upper()} <<<"
+                            )
+                            print(
+                                f"    Peak: {crash_event['peak_g']}g, Gyro: {crash_event['peak_gyro']} deg/s\n"
+                            )
                             buzzer.start_continuous("emergency")
                             supabase_uploader.record_crash(crash_event)
 
@@ -4329,30 +4529,37 @@ def main():
 
             # --- BLE direct updates (alongside Supabase) ---
             if ble_server and not ble_server.is_fake:
-                ble_server.update_realtime({
-                    "speed_mph": driving_sim.get_speed(),
-                    "heading_degrees": driving_sim.get_heading(),
-                    "compass_direction": driving_sim.get_compass_direction(),
-                    "is_speeding": driving_sim.is_speeding(),
-                    "driver_status": driver_status,
-                    "intoxication_score": effective_risk,
-                    "latitude": driving_sim.get_latitude(),
-                    "longitude": driving_sim.get_longitude(),
-                    "satellites": driving_sim.get_satellites(),
-                    "is_phone_detected": distraction_data["phone_detected"],
-                    "is_drinking_detected": distraction_data["drinking_detected"],
-                    "camera_url": None,
-                })
-                ble_server.update_trip({
-                    "trip_id": supabase_uploader.trip_id or "",
-                    "duration": int(time.time() - fps_start_time),
-                    "max_speed": supabase_uploader.trip_max_speed,
-                    "avg_speed": sum(supabase_uploader.trip_speed_samples) / max(len(supabase_uploader.trip_speed_samples), 1),
-                    "speeding_events": supabase_uploader.trip_speeding_events,
-                    "drowsy_events": supabase_uploader.trip_drowsy_events,
-                    "phone_events": getattr(supabase_uploader, "trip_phone_events", 0),
-                    "max_intox_score": supabase_uploader.trip_max_intox_score,
-                })
+                ble_server.update_realtime(
+                    {
+                        "speed_mph": driving_sim.get_speed(),
+                        "heading_degrees": driving_sim.get_heading(),
+                        "compass_direction": driving_sim.get_compass_direction(),
+                        "is_speeding": driving_sim.is_speeding(),
+                        "driver_status": driver_status,
+                        "intoxication_score": effective_risk,
+                        "latitude": driving_sim.get_latitude(),
+                        "longitude": driving_sim.get_longitude(),
+                        "satellites": driving_sim.get_satellites(),
+                        "is_phone_detected": distraction_data["phone_detected"],
+                        "is_drinking_detected": distraction_data["drinking_detected"],
+                        "camera_url": None,
+                    }
+                )
+                ble_server.update_trip(
+                    {
+                        "trip_id": supabase_uploader.trip_id or "",
+                        "duration": int(time.time() - fps_start_time),
+                        "max_speed": supabase_uploader.trip_max_speed,
+                        "avg_speed": sum(supabase_uploader.trip_speed_samples)
+                        / max(len(supabase_uploader.trip_speed_samples), 1),
+                        "speeding_events": supabase_uploader.trip_speeding_events,
+                        "drowsy_events": supabase_uploader.trip_drowsy_events,
+                        "phone_events": getattr(
+                            supabase_uploader, "trip_phone_events", 0
+                        ),
+                        "max_intox_score": supabase_uploader.trip_max_intox_score,
+                    }
+                )
 
                 # Relay: send full Supabase-format records for iOS to upload
                 # when the Pi has no internet. iOS reads this and upserts to Supabase.
@@ -4366,7 +4573,11 @@ def main():
 
             # --- Camera-dependent uploads ---
             if cap is not None:
-                if detection_data and detection_data.get("face_crop") is not None and supabase_uploader.should_upload():
+                if (
+                    detection_data
+                    and detection_data.get("face_crop") is not None
+                    and supabase_uploader.should_upload()
+                ):
                     driving_data = {
                         "speed": driving_sim.get_speed(),
                         "heading": driving_sim.get_heading(),
@@ -4401,7 +4612,9 @@ def main():
                 _need_draw = not headless or streamer or dashcam
                 if _need_draw:
                     t_draw = time.time()
-                    processed_frame = distraction_detector.draw_detections(processed_frame)
+                    processed_frame = distraction_detector.draw_detections(
+                        processed_frame
+                    )
                     processed_frame = draw_distraction_warning(
                         processed_frame, distraction_data, gaze_data=gaze_data
                     )
@@ -4422,9 +4635,7 @@ def main():
                         sum(process_times) / len(process_times) if process_times else 0
                     )
                     loop_fps = 1.0 / avg_total if avg_total > 0 else 0
-                    avg_draw = (
-                        sum(draw_times) / len(draw_times) if draw_times else 0
-                    )
+                    avg_draw = sum(draw_times) / len(draw_times) if draw_times else 0
 
                     # YOLO stats from the async executor
                     yolo_ms, yolo_fps, yolo_runs = (
@@ -4433,24 +4644,25 @@ def main():
                         else (0, 0, 0)
                     )
                     yolo_label = (
-                        f"YOLO: {yolo_fps:.1f} FPS ({yolo_ms:.1f}ms, "
-                        f"{yolo_runs} runs)"
+                        f"YOLO: {yolo_fps:.1f} FPS ({yolo_ms:.1f}ms, {yolo_runs} runs)"
                         if distraction_detector and distraction_detector.enabled
                         else "YOLO: OFF"
                     )
 
                     stats_lines = (
                         f"\n[STATS] Loop: {loop_fps:.1f} FPS "
-                        f"({avg_total*1000:.1f}ms/frame) | "
+                        f"({avg_total * 1000:.1f}ms/frame) | "
                         f"Camera: {capture_fps:.1f} FPS | "
                         f"{yolo_label}\n"
-                        f"        Draw: {avg_draw*1000:.1f}ms | "
+                        f"        Draw: {avg_draw * 1000:.1f}ms | "
                         f"Resolution: {width}x{height}\n"
                     )
                     if gyro_reader is not None:
                         gyro_latest = gyro_reader.get_latest()
                         if gyro_latest is not None:
-                            gyro_part = f"        Gyro: {gyro_latest['gyro_mag']:.2f} deg/s"
+                            gyro_part = (
+                                f"        Gyro: {gyro_latest['gyro_mag']:.2f} deg/s"
+                            )
                             if last_effective_risk is not None:
                                 gyro_part += f" | risk+gyro: {last_effective_risk}"
                             stats_lines += gyro_part + "\n"
@@ -4468,11 +4680,14 @@ def main():
 
                 # HTTP camera server: always update with latest frame
                 if dashcam:
-                    dashcam.write_frame(processed_frame, hud_data={
-                        "speed": driving_sim.get_speed(),
-                        "heading": driving_sim.get_heading(),
-                        "direction": driving_sim.get_compass_direction(),
-                    })
+                    dashcam.write_frame(
+                        processed_frame,
+                        hud_data={
+                            "speed": driving_sim.get_speed(),
+                            "heading": driving_sim.get_heading(),
+                            "direction": driving_sim.get_compass_direction(),
+                        },
+                    )
 
                 if not headless:
                     cv2.imshow("Infineon Project - Winter 2026", processed_frame)
@@ -4508,7 +4723,7 @@ def main():
             music_recognizer.stop()
         if distraction_detector:
             distraction_detector.shutdown()
-        if analyzer and hasattr(analyzer, 'shutdown'):
+        if analyzer and hasattr(analyzer, "shutdown"):
             analyzer.shutdown()
         if cap is not None:
             cap.release()
