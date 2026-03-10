@@ -48,7 +48,7 @@ from components.speed_limit import SpeedLimitChecker
 
 GYRO_AVAILABLE = False
 try:
-    from components.gyroscope import CrashDetector, GyroReader
+    from components.gyroscope import CrashDetector, GyroReader, ImpairmentDetector
 
     GYRO_AVAILABLE = True
 except ImportError:
@@ -4312,6 +4312,7 @@ def main():
         dashcam = None
         gyro_reader = None
         crash_detector = None
+        impairment_detector = None
         width, height = 0, 0
 
         # Custom ONNX model inference (replaces MediaPipe EAR + YOLO)
@@ -4483,7 +4484,8 @@ def main():
                 _gr.start(print_from_loop=False)
                 gyro_reader = _gr
                 crash_detector = CrashDetector()
-                print("Gyro reader started (serial, crash detection enabled)")
+                impairment_detector = ImpairmentDetector()
+                print("Gyro reader started (serial, crash + impairment detection enabled)")
             except Exception as e:
                 print(f"Gyro reader unavailable: {e}")
 
@@ -4697,7 +4699,30 @@ def main():
                             buzzer.start_continuous("emergency")
                             supabase_uploader.record_crash(crash_event)
 
+                    # Impairment detection (shaking patterns)
+                    if impairment_detector is not None:
+                        impairment_detector.feed(
+                            latest["acc_mag"],
+                            latest["acc_delta"],
+                            gyro_mag,
+                            latest["timestamp"],
+                        )
+                        # Check for impairment alarm
+                        alarm_event = impairment_detector.get_alarm_event()
+                        if alarm_event:
+                            buzzer.start_continuous("emergency")
+                        # Add impairment risk to effective_risk
+                        impairment_risk = impairment_detector.get_risk_score()
+                        # Scale 0-100 impairment risk to 0-3 effective_risk
+                        impairment_bump = int(impairment_risk / 33.0)
+                        effective_risk = min(6, effective_risk + impairment_bump)
+
             effective_risk = min(6, effective_risk)
+
+            # Get impairment status for updates
+            impairment_status = None
+            if impairment_detector is not None:
+                impairment_status = impairment_detector.get_status()
 
             # --- Always: realtime + trip + buzzer ---
             supabase_uploader.update_vehicle_realtime(
@@ -4730,22 +4755,26 @@ def main():
 
             # --- BLE direct updates (alongside Supabase) ---
             if ble_server and not ble_server.is_fake:
-                ble_server.update_realtime(
-                    {
-                        "speed_mph": driving_sim.get_speed(),
-                        "heading_degrees": driving_sim.get_heading(),
-                        "compass_direction": driving_sim.get_compass_direction(),
-                        "is_speeding": driving_sim.is_speeding(),
-                        "driver_status": driver_status,
-                        "intoxication_score": effective_risk,
-                        "latitude": driving_sim.get_latitude(),
-                        "longitude": driving_sim.get_longitude(),
-                        "satellites": driving_sim.get_satellites(),
-                        "is_phone_detected": distraction_data["phone_detected"],
-                        "is_drinking_detected": distraction_data["drinking_detected"],
-                        "camera_url": None,
-                    }
-                )
+                ble_update_data = {
+                    "speed_mph": driving_sim.get_speed(),
+                    "heading_degrees": driving_sim.get_heading(),
+                    "compass_direction": driving_sim.get_compass_direction(),
+                    "is_speeding": driving_sim.is_speeding(),
+                    "driver_status": driver_status,
+                    "intoxication_score": effective_risk,
+                    "latitude": driving_sim.get_latitude(),
+                    "longitude": driving_sim.get_longitude(),
+                    "satellites": driving_sim.get_satellites(),
+                    "is_phone_detected": distraction_data["phone_detected"],
+                    "is_drinking_detected": distraction_data["drinking_detected"],
+                    "camera_url": None,
+                }
+                # Add impairment data if available
+                if impairment_status:
+                    ble_update_data["impairment_risk"] = impairment_status["risk_score"]
+                    ble_update_data["shake_count"] = impairment_status["shake_count"]
+                    ble_update_data["impairment_alarm"] = impairment_status["alarm_active"]
+                ble_server.update_realtime(ble_update_data)
                 ble_server.update_trip(
                     {
                         "trip_id": supabase_uploader.trip_id or "",

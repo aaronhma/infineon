@@ -275,6 +275,198 @@ class CrashDetector:
         self._rotation_confirmed = False
 
 
+class ImpairmentDetector:
+    """Detects impairment from shaking patterns using sustained G-force thresholds.
+    
+    Tracks multiple shakes over a time window and calculates a risk score (0-100)
+    based on the severity and frequency of shaking motions.
+    
+    Sustained G threshold: requires G-force above threshold for a minimum duration
+    to filter out brief bumps and focus on actual impairment-indicating patterns.
+    """
+    
+    # Thresholds for sustained G detection
+    SUSTAINED_G_THRESHOLD = 2.0       # Minimum G-force to consider
+    SUSTAINED_DURATION = 0.5          # Seconds the G-force must be sustained
+    HIGH_G_THRESHOLD = 3.0            # High severity threshold
+    SEVERE_G_THRESHOLD = 4.0          # Severe shake threshold
+    
+    # Time windows for shake tracking
+    SHAKE_WINDOW = 5.0                # Window to track shakes (seconds)
+    SHAKE_COOLDOWN = 0.3              # Minimum time between distinct shakes
+    
+    # Risk score parameters
+    RISK_DECAY_RATE = 5.0             # Risk points decayed per second
+    RISK_PER_SHAKE_BASE = 15.0        # Base risk points per shake
+    RISK_PER_HIGH_SHAKE = 25.0        # Risk points for high-G shake
+    RISK_PER_SEVERE_SHAKE = 40.0      # Risk points for severe shake
+    MAX_RISK = 100.0                  # Maximum risk score
+    ALARM_THRESHOLD = 70.0            # Risk score that triggers alarm
+    
+    def __init__(self):
+        # Current G-force tracking for sustained threshold
+        self._current_g = 0.0
+        self._sustained_start = None
+        self._is_sustained = False
+        
+        # Shake history (timestamp, severity)
+        self._shake_history = deque(maxlen=50)
+        self._last_shake_time = 0.0
+        
+        # Risk score (0-100)
+        self._risk_score = 0.0
+        self._last_update = time.time()
+        
+        # Alarm state
+        self._alarm_active = False
+        self._alarm_event = None
+        
+    def feed(self, acc_mag, acc_delta, gyro_mag, timestamp):
+        """Feed a new sensor reading into the impairment detector.
+        
+        Args:
+            acc_mag: Accelerometer magnitude in G
+            acc_delta: Change in accelerometer magnitude
+            gyro_mag: Gyroscope magnitude in deg/s
+            timestamp: Current timestamp
+        """
+        # Update sustained G tracking
+        self._update_sustained_g(acc_mag, timestamp)
+        
+        # Decay risk score over time
+        self._decay_risk(timestamp)
+        
+        # Check for shake event
+        if self._is_sustained and timestamp - self._last_shake_time >= self.SHAKE_COOLDOWN:
+            self._detect_shake(acc_mag, gyro_mag, timestamp)
+        
+        # Check alarm threshold
+        self._check_alarm()
+        
+    def _update_sustained_g(self, acc_mag, timestamp):
+        """Track sustained G-force threshold."""
+        if acc_mag >= self.SUSTAINED_G_THRESHOLD:
+            if self._sustained_start is None:
+                self._sustained_start = timestamp
+            elif timestamp - self._sustained_start >= self.SUSTAINED_DURATION:
+                self._is_sustained = True
+        else:
+            # Reset if G drops below threshold
+            self._sustained_start = None
+            self._is_sustained = False
+            
+        self._current_g = acc_mag
+        
+    def _detect_shake(self, acc_mag, gyro_mag, timestamp):
+        """Detect and record a shake event."""
+        # Determine severity
+        if acc_mag >= self.SEVERE_G_THRESHOLD:
+            severity = "severe"
+            risk_add = self.RISK_PER_SEVERE_SHAKE
+        elif acc_mag >= self.HIGH_G_THRESHOLD:
+            severity = "high"
+            risk_add = self.RISK_PER_HIGH_SHAKE
+        else:
+            severity = "moderate"
+            risk_add = self.RISK_PER_SHAKE_BASE
+            
+        # Add bonus for high gyro rotation (indicates erratic movement)
+        if gyro_mag >= 100.0:
+            risk_add *= 1.2
+        elif gyro_mag >= 70.0:
+            risk_add *= 1.1
+            
+        # Record shake
+        self._shake_history.append({
+            "timestamp": timestamp,
+            "severity": severity,
+            "acc_mag": acc_mag,
+            "gyro_mag": gyro_mag,
+            "risk_added": risk_add,
+        })
+        
+        # Update risk score
+        self._risk_score = min(self.MAX_RISK, self._risk_score + risk_add)
+        self._last_shake_time = timestamp
+        
+        # Clean old shakes from window
+        self._prune_shake_history(timestamp)
+        
+        print(f"[IMPAIRMENT] Shake detected: {severity} ({acc_mag:.2f}g, {gyro_mag:.1f}°/s) → risk={self._risk_score:.0f}")
+        
+    def _prune_shake_history(self, current_time):
+        """Remove shakes outside the tracking window."""
+        while self._shake_history and current_time - self._shake_history[0]["timestamp"] > self.SHAKE_WINDOW:
+            self._shake_history.popleft()
+            
+    def _decay_risk(self, timestamp):
+        """Decay risk score over time when no shaking occurs."""
+        if self._last_update is None:
+            self._last_update = timestamp
+            return
+            
+        elapsed = timestamp - self._last_update
+        if elapsed > 0:
+            decay = self.RISK_DECAY_RATE * elapsed
+            self._risk_score = max(0.0, self._risk_score - decay)
+        self._last_update = timestamp
+        
+    def _check_alarm(self):
+        """Check if alarm should be triggered."""
+        prev_alarm = self._alarm_active
+        self._alarm_active = self._risk_score >= self.ALARM_THRESHOLD
+        
+        # Generate alarm event on transition
+        if self._alarm_active and not prev_alarm:
+            self._alarm_event = {
+                "type": "impairment_alarm",
+                "risk_score": round(self._risk_score, 1),
+                "shake_count": len(self._shake_history),
+                "timestamp": time.time(),
+            }
+            print(f"\n>>> IMPAIRMENT ALARM: Risk={self._risk_score:.0f}, Shakes={len(self._shake_history)} <<<\n")
+            
+    def get_risk_score(self):
+        """Get current risk score (0-100)."""
+        return round(self._risk_score, 1)
+        
+    def get_shake_count(self):
+        """Get number of shakes in current window."""
+        return len(self._shake_history)
+        
+    def is_alarm_active(self):
+        """Check if impairment alarm is currently active."""
+        return self._alarm_active
+        
+    def get_alarm_event(self):
+        """Return and clear the pending alarm event, or None."""
+        event = self._alarm_event
+        self._alarm_event = None
+        return event
+        
+    def get_status(self):
+        """Get full status dict for BLE/Supabase updates."""
+        return {
+            "risk_score": round(self._risk_score, 1),
+            "shake_count": len(self._shake_history),
+            "alarm_active": self._alarm_active,
+            "current_g": round(self._current_g, 2),
+            "is_sustained": self._is_sustained,
+        }
+        
+    def reset(self):
+        """Reset all state."""
+        self._current_g = 0.0
+        self._sustained_start = None
+        self._is_sustained = False
+        self._shake_history.clear()
+        self._last_shake_time = 0.0
+        self._risk_score = 0.0
+        self._last_update = time.time()
+        self._alarm_active = False
+        self._alarm_event = None
+
+
 if __name__ == "__main__":
     import serial  # noqa: F401 - used by GyroReader.start()
 
