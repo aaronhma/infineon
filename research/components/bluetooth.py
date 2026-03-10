@@ -23,6 +23,7 @@ CHAR_SETTINGS_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780002"
 CHAR_BUZZER_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780003"
 CHAR_TRIP_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780004"
 CHAR_RELAY_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780005"
+CHAR_RECORDING_UUID = "A1B2C3D4-E5F6-7890-ABCD-123456780006"
 
 DEVICE_NAME = "InfineonDMS"
 
@@ -30,10 +31,11 @@ DEVICE_NAME = "InfineonDMS"
 class BluetoothServer:
     """BLE GATT peripheral that exposes vehicle data to the iOS app."""
 
-    def __init__(self, device_name=DEVICE_NAME, on_settings_write=None, on_buzzer_write=None):
+    def __init__(self, device_name=DEVICE_NAME, on_settings_write=None, on_buzzer_write=None, on_recording_write=None):
         self._device_name = device_name
         self._on_settings_write = on_settings_write
         self._on_buzzer_write = on_buzzer_write
+        self._on_recording_write = on_recording_write
 
         self._use_fake = False
         self._server = None
@@ -184,6 +186,14 @@ class BluetoothServer:
             GATTAttributePermissions.readable,
         )
 
+        # Recording — Write only (start/stop recording)
+        await self._server.add_new_characteristic(
+            SERVICE_UUID, CHAR_RECORDING_UUID,
+            GATTCharacteristicProperties.write,
+            None,
+            GATTAttributePermissions.writeable,
+        )
+
         await self._server.start()
         print(f"[BLE] GATT server advertising as '{self._device_name}'")
 
@@ -232,6 +242,10 @@ class BluetoothServer:
             print(f"[BLE] Buzzer command received: {data}")
             if self._on_buzzer_write:
                 self._on_buzzer_write(data)
+        elif uuid == CHAR_RECORDING_UUID:
+            print(f"[BLE] Recording command received: {data}")
+            if self._on_recording_write:
+                self._on_recording_write(data)
 
     # ------------------------------------------------------------------
     # Notify helper

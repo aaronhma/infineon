@@ -16,6 +16,7 @@ private let settingsCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780
 private let buzzerCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780003")
 private let tripCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780004")
 private let relayCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780005")
+private let recordingCharUUID = CBUUID(string: "A1B2C3D4-E5F6-7890-ABCD-123456780006")
 // MARK: - Compact BLE payload models
 
 struct BLERealtimeData: Codable {
@@ -179,6 +180,7 @@ final class BluetoothManager: NSObject {
   private var connectedPeripheral: CBPeripheral?
   private var settingsCharacteristic: CBCharacteristic?
   private var buzzerCharacteristic: CBCharacteristic?
+  private var recordingCharacteristic: CBCharacteristic?
 
   // Reconnect / timeout
   private var scanTimer: Timer?
@@ -260,6 +262,13 @@ final class BluetoothManager: NSObject {
     peripheral.writeValue(data, for: char, type: .withResponse)
   }
 
+  func writeRecordingCommand(command: String) {
+    guard let char = recordingCharacteristic, let peripheral = connectedPeripheral else { return }
+    let payload: [String: Any] = ["command": command]
+    guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+    peripheral.writeValue(data, for: char, type: .withResponse)
+  }
+
   // MARK: - Public Connect
 
   func connectToDevice(_ device: DiscoveredBLEDevice) {
@@ -330,6 +339,7 @@ final class BluetoothManager: NSObject {
     connectedPeripheral = nil
     settingsCharacteristic = nil
     buzzerCharacteristic = nil
+    recordingCharacteristic = nil
     latestRealtime = nil
     latestTrip = nil
     latestRelay = nil
@@ -460,6 +470,8 @@ extension BluetoothManager: CBPeripheralDelegate {
         settingsCharacteristic = char
       case buzzerCharUUID:
         buzzerCharacteristic = char
+      case recordingCharUUID:
+        recordingCharacteristic = char
       case tripCharUUID:
         peripheral.setNotifyValue(true, for: char)
         peripheral.readValue(for: char)

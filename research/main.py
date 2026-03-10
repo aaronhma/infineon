@@ -858,22 +858,20 @@ class VideoStreamer:
 class DashcamRecorder:
     """Records annotated camera frames to a local MP4 file.
 
-    Uses a single background writer thread with a queue.  Frames are
-    sampled at the target fps (time-gated) so the recorded video plays
-    back at real-time speed regardless of how fast the main loop runs.
+    Uses a single background writer thread with a queue. Records all frames
+    continuously without time-gating to ensure smooth, real-time playback.
     """
 
-    def __init__(self, output_dir="recordings", fps=10, max_width=640):
+    def __init__(self, output_dir="recordings", fps=30, max_width=640):
         self.output_dir = output_dir
-        self.fps = fps
+        self.fps = fps  # Target FPS for video writer (should match camera)
         self.max_width = max_width
         self.writer = None
         self.filepath = None
-        self._frame_interval = 1.0 / fps  # seconds between frames
-        self._last_write_time = 0.0
         self._queue = None  # set in start()
         self._thread = None
         self._running = False
+        self._frame_count = 0
 
     def start(self, trip_id, width, height):
         """Start recording to {output_dir}/{trip_id}.mp4"""
@@ -892,30 +890,28 @@ class DashcamRecorder:
         self._rec_size = (rec_w, rec_h)
         self._need_resize = rec_w != width or rec_h != height
 
+        # Use H.264 codec for better compatibility and performance
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         self.writer = cv2.VideoWriter(self.filepath, fourcc, self.fps, (rec_w, rec_h))
-        self._queue = _queue_mod.Queue(maxsize=30)
+        self._queue = _queue_mod.Queue(maxsize=120)  # Increased buffer for 30 FPS
         self._running = True
-        self._last_write_time = 0.0
+        self._frame_count = 0
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
         print(f"Dashcam recording: {self.filepath} ({rec_w}x{rec_h} @ {self.fps} fps)")
 
     def write_frame(self, frame, hud_data=None):
-        """Accept a frame for recording (time-gated, non-blocking).
+        """Accept a frame for recording (non-blocking).
 
-        Only enqueues a frame if enough time has passed since the last
-        write to match the target fps.  Drops frames if the queue is full.
+        Enqueues every frame for continuous recording without time-gating.
+        Drops frames only if the queue is full.
         """
         if not self._running or self._queue is None:
             return
-        now = time.time()
-        if now - self._last_write_time < self._frame_interval:
-            return  # not time for next frame yet
-        self._last_write_time = now
 
         try:
             self._queue.put_nowait((frame.copy(), hud_data))
+            self._frame_count += 1
         except Exception:
             pass  # queue full — drop frame
 
@@ -4099,9 +4095,27 @@ def main():
             else:
                 buzzer.stop_continuous()
 
+        def _ble_recording_write(data):
+            """Handle recording commands from iOS via BLE."""
+            nonlocal dashcam
+            command = data.get("command", "")
+            if command == "stop":
+                if dashcam:
+                    print("[BLE] Stopping dashcam recording...")
+                    dashcam.stop()
+                    dashcam = None
+                    print("[BLE] Dashcam recording stopped successfully")
+            elif command == "start":
+                if not dashcam and cap:
+                    print("[BLE] Starting dashcam recording...")
+                    dashcam = DashcamRecorder()
+                    dashcam.start(supabase_uploader.trip_id, width, height)
+                    print("[BLE] Dashcam recording started successfully")
+
         ble_server = BluetoothServer(
             on_settings_write=_ble_settings_write,
             on_buzzer_write=_ble_buzzer_write,
+            on_recording_write=_ble_recording_write,
         )
         ble_server.start()
         ble_server.update_settings(settings)

@@ -11,6 +11,7 @@ import SwiftUI
 
 struct VehicleSettingsView: View {
   @Environment(V2AppData.self) private var appData
+  @Environment(BluetoothManager.self) private var bluetooth
   @Environment(\.dismiss) private var dismiss
 
   let vehicle: Vehicle
@@ -114,6 +115,26 @@ struct VehicleSettingsView: View {
             color: .orange,
             isOn: $enableMicrophone
           )
+
+          // Stop Recording button - only visible when connected via Bluetooth
+          if bluetooth.isConnected {
+            Button(role: .destructive) {
+              bluetooth.writeRecordingCommand(command: "stop")
+            } label: {
+              HStack {
+                Label {
+                  Text("Stop Recording")
+                } icon: {
+                  Image(systemName: "stop.circle.fill")
+                    .foregroundStyle(.red)
+                }
+                Spacer()
+                Text("Save video safely")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
         }
 
         Section {
