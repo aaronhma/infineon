@@ -46,6 +46,9 @@ struct VehicleView: View {
   @State private var cachedBuzzerActive: Bool?
   @State private var cachedBuzzerType: String?
 
+  // Realtime refresh task
+  @State private var realtimeRefreshTask: Task<Void, Never>?
+
   // Currently playing song
   @State private var currentSong: String? = "Why'd You Only Call Me When You're High?"
   @State private var currentArtist: String? = "Arctic Monkeys"
@@ -655,6 +658,30 @@ struct VehicleView: View {
     .sheet(isPresented: $showingAccountSheet) {
       V2AccountView()
         .navigationTransition(.zoom(sourceID: "settingsSheet", in: namespace))
+    }
+    .task(id: vehicle.vehicle.id) {
+      // Periodic refresh of realtime data as fallback to realtime subscription
+      await startRealtimeRefresh()
+    }
+    .onDisappear {
+      realtimeRefreshTask?.cancel()
+      realtimeRefreshTask = nil
+    }
+  }
+
+  // MARK: - Realtime Refresh
+
+  private func startRealtimeRefresh() async {
+    realtimeRefreshTask?.cancel()
+    realtimeRefreshTask = Task {
+      while !Task.isCancelled {
+        // Skip if BLE connected (BLE has its own polling)
+        if !bluetooth.isConnected {
+          // Periodically refresh realtime data from Supabase as fallback
+          await supabase.loadVehicleRealtimeData(vehicleId: vehicle.vehicle.id)
+        }
+        try? await Task.sleep(for: .seconds(3))
+      }
     }
   }
 

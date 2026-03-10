@@ -11,7 +11,6 @@ import SwiftUI
 
 struct VehicleSettingsView: View {
   @Environment(V2AppData.self) private var appData
-  @Environment(BluetoothManager.self) private var bluetooth
   @Environment(\.dismiss) private var dismiss
 
   let vehicle: Vehicle

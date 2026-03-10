@@ -1722,28 +1722,52 @@ class SupabaseService {
     // If BLE is connected, data flows via the BLE polling timer — skip Supabase realtime
     guard !bluetooth.isConnected else { return }
 
-    do {
-      let channel = client.realtimeV2.channel("vehicle_realtime_\(vehicleId)")
+    // Start realtime subscription with auto-reconnect
+    Task {
+      var retryDelay: TimeInterval = 1.0
+      let maxDelay: TimeInterval = 30.0
 
-      let changes = channel.postgresChange(
-        AnyAction.self,
-        schema: "public",
-        table: "vehicle_realtime",
-        filter: "vehicle_id=eq.\(vehicleId)"
-      )
+      while !Task.isCancelled {
+        do {
+          let channel = client.realtimeV2.channel("vehicle_realtime_\(vehicleId)")
 
-      await channel.subscribe()
+          let changes = channel.postgresChange(
+            AnyAction.self,
+            schema: "public",
+            table: "vehicle_realtime",
+            filter: "vehicle_id=eq.\(vehicleId)"
+          )
 
-      self.realtimeChannel = channel
+          await channel.subscribe()
 
-      // Listen for changes
-      Task {
-        for await change in changes {
-          await handleRealtimeChange(change)
+          self.realtimeChannel = channel
+          print("✅ Realtime subscription connected for vehicle \(vehicleId)")
+          retryDelay = 1.0  // Reset retry delay on successful connection
+
+          // Listen for changes - this will block until connection drops
+          for await change in changes {
+            await handleRealtimeChange(change)
+          }
+
+          // If we reach here, the stream ended (connection dropped)
+          print("⚠️ Realtime stream ended for vehicle \(vehicleId), reconnecting...")
+
+        } catch {
+          print("❌ Realtime subscription failed for vehicle \(vehicleId): \(error)")
         }
+
+        // Clean up channel before retry
+        if let channel = self.realtimeChannel {
+          try? await channel.unsubscribe()
+          self.realtimeChannel = nil
+        }
+
+        // Wait before reconnecting with exponential backoff
+        guard !Task.isCancelled else { break }
+        print("🔄 Retrying realtime subscription in \(retryDelay)s...")
+        try? await Task.sleep(for: .seconds(retryDelay))
+        retryDelay = min(retryDelay * 2, maxDelay)
       }
-    } catch {
-      print("Realtime subscription failed (BLE may provide data): \(error)")
     }
   }
 

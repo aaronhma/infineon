@@ -3112,8 +3112,10 @@ class FaceAnalyzer:
         # Head pose thresholds (degrees) for distraction
         self.HEAD_YAW_THRESHOLD = 30  # Looking left/right
         self.HEAD_PITCH_THRESHOLD = (
-            20  # Lowered from 25 for more sensitive down/up detection
+            35  # Increased from 20 to avoid false positives from natural chin positions
         )
+        # Confidence threshold for eye gaze - if eye direction is confident, ignore head pose
+        self.GAZE_CONFIDENCE_THRESHOLD = 0.15  # If max eye gaze score < this, use head pose
         # Seconds of sustained gaze-away before flagging as distracted
         self.GAZE_DISTRACTION_SECONDS = 2.0
         # Seconds of sustained eyes-closed before flagging as impaired
@@ -3300,10 +3302,23 @@ class FaceAnalyzer:
             elif abs(head_pitch) > self.HEAD_PITCH_THRESHOLD:
                 head_direction = "up" if head_pitch > 0 else "down"
 
-        # --- Combined gaze direction: either signal triggers ---
-        if eye_direction != "straight":
+        # --- Combined gaze direction: prioritize confident eye gaze ---
+        # Calculate eye gaze confidence (how strong the eye direction signal is)
+        max_eye_gaze = max(look_left, look_right, look_down, look_up)
+        eye_gaze_confident = max_eye_gaze >= self.GAZE_CONFIDENCE_THRESHOLD
+
+        # Decision logic:
+        # 1. If eye direction is detected AND confident, use it (ignore head pose)
+        # 2. If eye direction is "straight" with low confidence, fall back to head pose
+        # 3. This prevents false positives when chin is tilted but eyes are forward
+        if eye_direction != "straight" and eye_gaze_confident:
+            # Eyes are clearly looking somewhere - use eye direction
             gaze_direction = eye_direction
+        elif eye_direction == "straight" and eye_gaze_confident:
+            # Eyes are confidently looking straight - trust eyes, ignore head pose
+            gaze_direction = "straight"
         elif head_direction != "straight":
+            # Eye gaze not confident - use head pose as fallback
             gaze_direction = head_direction
         else:
             gaze_direction = "straight"
