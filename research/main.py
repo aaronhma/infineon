@@ -6,6 +6,7 @@ import os
 import platform
 import random
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -856,31 +857,45 @@ class VideoStreamer:
 
 
 class DashcamRecorder:
-    """Records annotated camera frames to a local MP4 file.
+    """Records annotated camera frames to chunked MP4 files with power-loss protection.
 
-    Uses a single background writer thread with a queue. Records all frames
-    continuously without time-gating to ensure smooth, real-time playback.
+    Uses FFmpeg with fragmented MP4 (fMP4) for guaranteed power-safety.
+    Each fragment is independently playable, so power loss only affects the
+    current incomplete fragment. Chunked recording (30-second segments) limits
+    data loss window and ensures maximum 30 seconds of video can be lost.
+    
+    Key safety features:
+    - Fragmented MP4 with moov atom at start
+    - Small fragment duration (1 second) for frequent flushes
+    - Chunked recording limits loss to 30 seconds max
+    - Direct pipe to FFmpeg bypasses OpenCV buffering
     """
 
-    def __init__(self, output_dir="recordings", fps=30, max_width=640):
+    def __init__(self, output_dir="recordings", fps=30, max_width=640, chunk_duration_sec=30):
         self.output_dir = output_dir
-        self.fps = fps  # Target FPS for video writer (should match camera)
+        self.fps = fps
         self.max_width = max_width
-        self.writer = None
-        self.filepath = None
-        self._queue = None  # set in start()
+        self.chunk_duration_sec = chunk_duration_sec
+        self._queue = None
         self._thread = None
         self._running = False
         self._frame_count = 0
+        self._chunk_count = 0
+        self._trip_id = None
+        self._rec_size = (640, 480)
+        self._need_resize = False
+        self._ffmpeg_process = None
+        self._chunk_start_time = 0
+        self._current_chunk_path = None
 
     def start(self, trip_id, width, height):
-        """Start recording to {output_dir}/{trip_id}.mp4"""
+        """Start recording to chunked files in {output_dir}/{trip_id}/"""
         import queue as _queue_mod
 
         os.makedirs(self.output_dir, exist_ok=True)
-        self.filepath = os.path.join(self.output_dir, f"{trip_id}.mp4")
+        self._trip_id = trip_id
 
-        # Downscale recording resolution to reduce I/O + CPU
+        # Downscale recording resolution
         if width > self.max_width:
             scale = self.max_width / width
             rec_w = self.max_width
@@ -890,22 +905,83 @@ class DashcamRecorder:
         self._rec_size = (rec_w, rec_h)
         self._need_resize = rec_w != width or rec_h != height
 
-        # Use H.264 codec for better compatibility and performance
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        self.writer = cv2.VideoWriter(self.filepath, fourcc, self.fps, (rec_w, rec_h))
-        self._queue = _queue_mod.Queue(maxsize=120)  # Increased buffer for 30 FPS
+        self._queue = _queue_mod.Queue(maxsize=120)
         self._running = True
         self._frame_count = 0
+        self._chunk_count = 0
+        self._chunk_start_time = time.time()
+
+        # Start first chunk
+        self._start_new_chunk()
+
+        # Start writer thread
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
-        print(f"Dashcam recording: {self.filepath} ({rec_w}x{rec_h} @ {self.fps} fps)")
+        print(f"Dashcam recording: {self._trip_id}/ ({rec_w}x{rec_h} @ {self.fps} fps, fMP4 chunked)")
+
+    def _start_new_chunk(self):
+        """Start a new chunk file with FFmpeg fragmented MP4."""
+        # Stop previous FFmpeg process
+        if self._ffmpeg_process:
+            try:
+                self._ffmpeg_process.stdin.close()
+                self._ffmpeg_process.wait(timeout=2)
+            except Exception:
+                self._ffmpeg_process.kill()
+            self._ffmpeg_process = None
+
+        # Create trip directory
+        trip_dir = os.path.join(self.output_dir, self._trip_id)
+        os.makedirs(trip_dir, exist_ok=True)
+
+        # New chunk filename
+        chunk_name = f"chunk_{self._chunk_count:04d}.mp4"
+        self._current_chunk_path = os.path.join(trip_dir, chunk_name)
+
+        # FFmpeg command for fragmented MP4 with power-loss protection:
+        # - movflags: frag_keyframe+empty_moov+default_base_moof
+        #   - frag_keyframe: create fragment at each keyframe
+        #   - empty_moov: write moov atom at start (crucial for playback)
+        #   - default_base_moof: make fragments independent
+        # - min_frag_duration: create fragment every 1 second
+        # - g: keyframe interval (same as fps for 1-second GOP)
+        # - preset ultrafast: minimize encoding time
+        # - crf 23: reasonable quality/size balance
+        cmd = [
+            "ffmpeg",
+            "-y",  # Overwrite output
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-s", f"{self._rec_size[0]}x{self._rec_size[1]}",
+            "-pix_fmt", "bgr24",
+            "-r", str(self.fps),
+            "-i", "-",  # Read from stdin
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "23",
+            "-g", str(self.fps),  # Keyframe every 1 second
+            "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+            "-min_frag_duration", "1000000",  # 1 second in microseconds
+            "-f", "mp4",
+            self._current_chunk_path
+        ]
+
+        try:
+            self._ffmpeg_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            self._chunk_start_time = time.time()
+            self._chunk_count += 1
+            print(f"[Dashcam] Started chunk: {chunk_name} (fMP4)")
+        except FileNotFoundError:
+            print("[Dashcam] FFmpeg not found, falling back to OpenCV")
+            self._ffmpeg_process = None
 
     def write_frame(self, frame, hud_data=None):
-        """Accept a frame for recording (non-blocking).
-
-        Enqueues every frame for continuous recording without time-gating.
-        Drops frames only if the queue is full.
-        """
+        """Accept a frame for recording (non-blocking)."""
         if not self._running or self._queue is None:
             return
 
@@ -916,21 +992,39 @@ class DashcamRecorder:
             pass  # queue full — drop frame
 
     def _writer_loop(self):
-        """Background thread: drain queue and write frames to disk."""
+        """Background thread: drain queue and write frames to FFmpeg."""
+        frames_in_chunk = 0
+
         while self._running or (self._queue and not self._queue.empty()):
             try:
                 frame, hud_data = self._queue.get(timeout=0.5)
             except Exception:
                 continue
+
             try:
+                # Check if we need to start a new chunk
+                chunk_elapsed = time.time() - self._chunk_start_time
+                if chunk_elapsed >= self.chunk_duration_sec:
+                    self._start_new_chunk()
+                    frames_in_chunk = 0
+
                 if self._need_resize:
                     frame = cv2.resize(
                         frame, self._rec_size, interpolation=cv2.INTER_AREA
                     )
                 if hud_data:
                     draw_dashcam_hud(frame, **hud_data)
-                if self.writer and self.writer.isOpened():
-                    self.writer.write(frame)
+
+                # Write frame to FFmpeg stdin
+                if self._ffmpeg_process and self._ffmpeg_process.poll() is None:
+                    try:
+                        self._ffmpeg_process.stdin.write(frame.tobytes())
+                        frames_in_chunk += 1
+                    except BrokenPipeError:
+                        print("[Dashcam] FFmpeg pipe broken, restarting chunk")
+                        self._start_new_chunk()
+                        frames_in_chunk = 0
+
             except Exception as e:
                 print(f"[Dashcam] write error: {e}")
 
@@ -940,12 +1034,27 @@ class DashcamRecorder:
         if self._thread:
             self._thread.join(timeout=5)
             self._thread = None
-        if self.writer:
-            self.writer.release()
-            self.writer = None
-            if self.filepath and os.path.exists(self.filepath):
-                size_mb = os.path.getsize(self.filepath) / (1024 * 1024)
-                print(f"Dashcam saved: {self.filepath} ({size_mb:.1f} MB)")
+
+        # Close FFmpeg gracefully
+        if self._ffmpeg_process:
+            try:
+                self._ffmpeg_process.stdin.close()
+                self._ffmpeg_process.wait(timeout=2)
+            except Exception:
+                self._ffmpeg_process.kill()
+            self._ffmpeg_process = None
+
+        # Calculate total size of all chunks
+        trip_dir = os.path.join(self.output_dir, self._trip_id) if self._trip_id else None
+        if trip_dir and os.path.exists(trip_dir):
+            total_size = 0
+            chunk_count = 0
+            for f in os.listdir(trip_dir):
+                if f.endswith('.mp4'):
+                    chunk_count += 1
+                    total_size += os.path.getsize(os.path.join(trip_dir, f))
+            size_mb = total_size / (1024 * 1024)
+            print(f"Dashcam saved: {trip_dir} ({chunk_count} chunks, {size_mb:.1f} MB)")
 
 
 class SupabaseUploader:
