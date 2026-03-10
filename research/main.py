@@ -4491,19 +4491,23 @@ def main():
                 effective_risk = 6
 
             # Gaze distraction → risk increases with duration
-            if gaze_data and gaze_data["gaze_away_seconds"] > 0:
-                away_secs = gaze_data["gaze_away_seconds"]
-                if away_secs >= 4.0:
-                    gaze_risk = 4  # 4+ seconds looking away
-                elif away_secs >= 3.0:
-                    gaze_risk = 3
-                elif away_secs >= 2.0:
-                    gaze_risk = 2  # crosses distraction threshold
-                elif away_secs >= 1.0:
-                    gaze_risk = 1  # starting to look away
-                else:
-                    gaze_risk = 0
-                effective_risk = max(effective_risk, gaze_risk)
+            if gaze_data:
+                # Looking down is immediately 6/6 risk (phone usage)
+                if gaze_data["gaze_direction"] == "down":
+                    effective_risk = 6
+                elif gaze_data["gaze_away_seconds"] > 0:
+                    away_secs = gaze_data["gaze_away_seconds"]
+                    if away_secs >= 4.0:
+                        gaze_risk = 4  # 4+ seconds looking away
+                    elif away_secs >= 3.0:
+                        gaze_risk = 3
+                    elif away_secs >= 2.0:
+                        gaze_risk = 2  # crosses distraction threshold
+                    elif away_secs >= 1.0:
+                        gaze_risk = 1  # starting to look away
+                    else:
+                        gaze_risk = 0
+                    effective_risk = max(effective_risk, gaze_risk)
 
             # Eyes closed → high risk
             if gaze_data and gaze_data["eyes_closed_impaired"]:
