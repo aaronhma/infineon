@@ -78,7 +78,7 @@ def test_chunked_recording():
     
     # Verify chunks were created
     trip_dir = os.path.join(test_dir, trip_id)
-    chunks = sorted([f for f in os.listdir(trip_dir) if f.endswith('.mp4')])
+    chunks = sorted([f for f in os.listdir(trip_dir) if f.endswith('.mkv')])
     
     print(f"\nCreated {len(chunks)} chunks: {chunks}")
     
@@ -173,7 +173,7 @@ time.sleep(2)  # Give time for last writes
         print("✗ FAIL: No recording directory created")
         return False
     
-    chunks = sorted([f for f in os.listdir(trip_dir) if f.endswith('.mp4')])
+    chunks = sorted([f for f in os.listdir(trip_dir) if f.endswith('.mkv')])
     print(f"Found {len(chunks)} chunks after power loss: {chunks}")
     
     playable_count = 0

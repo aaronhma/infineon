@@ -857,18 +857,18 @@ class VideoStreamer:
 
 
 class DashcamRecorder:
-    """Records annotated camera frames to chunked MP4 files with power-loss protection.
+    """Records annotated camera frames to chunked MKV files with power-loss protection.
 
-    Uses FFmpeg with fragmented MP4 (fMP4) for guaranteed power-safety.
-    Each fragment is independently playable, so power loss only affects the
-    current incomplete fragment. Chunked recording (30-second segments) limits
-    data loss window and ensures maximum 30 seconds of video can be lost.
+    Uses FFmpeg with MKV (Matroska) container for maximum resilience.
+    MKV is designed for streaming and doesn't require a moov atom like MP4,
+    making it naturally more resistant to corruption from power loss.
     
     Key safety features:
-    - Fragmented MP4 with moov atom at start
-    - Small fragment duration (1 second) for frequent flushes
+    - MKV container is stream-friendly by design
+    - Cluster-based structure (each cluster is ~5 seconds)
     - Chunked recording limits loss to 30 seconds max
     - Direct pipe to FFmpeg bypasses OpenCV buffering
+    - H.264 video codec for compatibility
     """
 
     def __init__(self, output_dir="recordings", fps=30, max_width=640, chunk_duration_sec=30):
@@ -917,10 +917,10 @@ class DashcamRecorder:
         # Start writer thread
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
-        print(f"Dashcam recording: {self._trip_id}/ ({rec_w}x{rec_h} @ {self.fps} fps, fMP4 chunked)")
+        print(f"Dashcam recording: {self._trip_id}/ ({rec_w}x{rec_h} @ {self.fps} fps, MKV chunked)")
 
     def _start_new_chunk(self):
-        """Start a new chunk file with FFmpeg fragmented MP4."""
+        """Start a new chunk file with FFmpeg MKV container."""
         # Stop previous FFmpeg process
         if self._ffmpeg_process:
             try:
@@ -935,18 +935,21 @@ class DashcamRecorder:
         os.makedirs(trip_dir, exist_ok=True)
 
         # New chunk filename
-        chunk_name = f"chunk_{self._chunk_count:04d}.mp4"
+        chunk_name = f"chunk_{self._chunk_count:04d}.mkv"
         self._current_chunk_path = os.path.join(trip_dir, chunk_name)
 
-        # FFmpeg command for fragmented MP4 with power-loss protection:
-        # - movflags: frag_keyframe+empty_moov+default_base_moof
-        #   - frag_keyframe: create fragment at each keyframe
-        #   - empty_moov: write moov atom at start (crucial for playback)
-        #   - default_base_moof: make fragments independent
-        # - min_frag_duration: create fragment every 1 second
-        # - g: keyframe interval (same as fps for 1-second GOP)
-        # - preset ultrafast: minimize encoding time
-        # - crf 23: reasonable quality/size balance
+        # FFmpeg command for MKV with power-loss protection:
+        # MKV advantages over MP4:
+        # - No moov atom requirement (streamable by design)
+        # - Clusters are written sequentially (each ~5 seconds)
+        # - Can recover partial files more easily
+        # - Header at start, index at end but not required for playback
+        #
+        # Parameters:
+        # - g: keyframe interval (1 second for quick seeking)
+        # - preset ultrafast: minimize encoding latency
+        # - crf 23: good quality/size balance
+        # - cluster_time_limit: create new cluster every 5 seconds
         cmd = [
             "ffmpeg",
             "-y",  # Overwrite output
@@ -960,9 +963,8 @@ class DashcamRecorder:
             "-preset", "ultrafast",
             "-crf", "23",
             "-g", str(self.fps),  # Keyframe every 1 second
-            "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
-            "-min_frag_duration", "1000000",  # 1 second in microseconds
-            "-f", "mp4",
+            "-cluster_time_limit", "5000",  # New cluster every 5 seconds
+            "-f", "matroska",  # MKV container
             self._current_chunk_path
         ]
 
@@ -975,7 +977,7 @@ class DashcamRecorder:
             )
             self._chunk_start_time = time.time()
             self._chunk_count += 1
-            print(f"[Dashcam] Started chunk: {chunk_name} (fMP4)")
+            print(f"[Dashcam] Started chunk: {chunk_name} (MKV)")
         except FileNotFoundError:
             print("[Dashcam] FFmpeg not found, falling back to OpenCV")
             self._ffmpeg_process = None
@@ -1050,7 +1052,7 @@ class DashcamRecorder:
             total_size = 0
             chunk_count = 0
             for f in os.listdir(trip_dir):
-                if f.endswith('.mp4'):
+                if f.endswith('.mkv'):
                     chunk_count += 1
                     total_size += os.path.getsize(os.path.join(trip_dir, f))
             size_mb = total_size / (1024 * 1024)
