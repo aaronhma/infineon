@@ -4707,10 +4707,16 @@ def main():
                             gyro_mag,
                             latest["timestamp"],
                         )
-                        # Check for impairment alarm
+                        # Check for impairment alarm - sound immediately on shake
                         alarm_event = impairment_detector.get_alarm_event()
                         if alarm_event:
-                            buzzer.start_continuous("emergency")
+                            if not buzzer.continuous_active:
+                                buzzer.start_continuous("emergency")
+                                print(f"\n>>> IMPAIRMENT ALARM STARTED: Risk={alarm_event['risk_score']:.0f} <<<\n")
+                        # Stop buzzer when alarm is no longer active (risk dropped)
+                        if not impairment_detector.is_alarm_active() and buzzer.continuous_active:
+                            buzzer.stop_continuous()
+                            print("[IMPAIRMENT] Alarm stopped - risk level normalized")
                         # Add impairment risk to effective_risk
                         impairment_risk = impairment_detector.get_risk_score()
                         # Scale 0-100 impairment risk to 0-3 effective_risk

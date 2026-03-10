@@ -380,10 +380,19 @@ class ImpairmentDetector:
         self._risk_score = min(self.MAX_RISK, self._risk_score + risk_add)
         self._last_shake_time = timestamp
         
+        # Immediately activate alarm on shake detection
+        self._alarm_active = True
+        self._alarm_event = {
+            "type": "impairment_alarm",
+            "risk_score": round(self._risk_score, 1),
+            "shake_count": len(self._shake_history) + 1,
+            "timestamp": time.time(),
+        }
+        
         # Clean old shakes from window
         self._prune_shake_history(timestamp)
         
-        print(f"[IMPAIRMENT] Shake detected: {severity} (deviation={deviation:.2f}g, gyro={gyro_mag:.1f}°/s) → risk={self._risk_score:.0f}")
+        print(f"[IMPAIRMENT] Shake detected: {severity} (deviation={deviation:.2f}g, gyro={gyro_mag:.1f}°/s) → risk={self._risk_score:.0f} [ALARM]")
         
     def _prune_shake_history(self, current_time):
         """Remove shakes outside the tracking window."""
@@ -403,19 +412,12 @@ class ImpairmentDetector:
         self._last_update = timestamp
         
     def _check_alarm(self):
-        """Check if alarm should be triggered."""
-        prev_alarm = self._alarm_active
-        self._alarm_active = self._risk_score >= self.ALARM_THRESHOLD
-        
-        # Generate alarm event on transition
-        if self._alarm_active and not prev_alarm:
-            self._alarm_event = {
-                "type": "impairment_alarm",
-                "risk_score": round(self._risk_score, 1),
-                "shake_count": len(self._shake_history),
-                "timestamp": time.time(),
-            }
-            print(f"\n>>> IMPAIRMENT ALARM: Risk={self._risk_score:.0f}, Shakes={len(self._shake_history)} <<<\n")
+        """Check if alarm should be turned off (risk dropped below threshold)."""
+        # Alarm is activated immediately on shake detection in _detect_shake()
+        # Only turn off when risk drops below threshold
+        if self._alarm_active and self._risk_score < self.ALARM_THRESHOLD:
+            self._alarm_active = False
+            print(f"[IMPAIRMENT] Alarm cleared - risk dropped to {self._risk_score:.0f}")
             
     def get_risk_score(self):
         """Get current risk score (0-100)."""
