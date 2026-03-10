@@ -276,38 +276,39 @@ class CrashDetector:
 
 
 class ImpairmentDetector:
-    """Detects impairment from shaking patterns using sustained G-force thresholds.
+    """Detects impairment from shaking patterns using G-force deviation from baseline.
     
     Tracks multiple shakes over a time window and calculates a risk score (0-100)
     based on the severity and frequency of shaking motions.
     
-    Sustained G threshold: requires G-force above threshold for a minimum duration
-    to filter out brief bumps and focus on actual impairment-indicating patterns.
+    Shake detection: G-force deviates by more than ±0.7g from 1g baseline (gravity).
+    Since our gyro doesn't account for gravity, we use 1g as the resting baseline.
     """
     
-    # Thresholds for sustained G detection
-    SUSTAINED_G_THRESHOLD = 2.0       # Minimum G-force to consider
-    SUSTAINED_DURATION = 0.5          # Seconds the G-force must be sustained
-    HIGH_G_THRESHOLD = 3.0            # High severity threshold
-    SEVERE_G_THRESHOLD = 4.0          # Severe shake threshold
+    # Baseline for shake detection (1g = gravity, since gyro doesn't account for it)
+    BASELINE_G = 1.0
+    DEVIATION_THRESHOLD = 0.7        # ±0.7g from baseline triggers shake
+    
+    # Severity thresholds (based on deviation magnitude)
+    HIGH_DEVIATION = 1.0             # 1g+ deviation from baseline
+    SEVERE_DEVIATION = 1.5           # 1.5g+ deviation from baseline
     
     # Time windows for shake tracking
-    SHAKE_WINDOW = 5.0                # Window to track shakes (seconds)
-    SHAKE_COOLDOWN = 0.3              # Minimum time between distinct shakes
+    SHAKE_WINDOW = 5.0               # Window to track shakes (seconds)
+    SHAKE_COOLDOWN = 0.2             # Minimum time between distinct shakes
     
     # Risk score parameters
-    RISK_DECAY_RATE = 5.0             # Risk points decayed per second
-    RISK_PER_SHAKE_BASE = 15.0        # Base risk points per shake
-    RISK_PER_HIGH_SHAKE = 25.0        # Risk points for high-G shake
-    RISK_PER_SEVERE_SHAKE = 40.0      # Risk points for severe shake
-    MAX_RISK = 100.0                  # Maximum risk score
-    ALARM_THRESHOLD = 70.0            # Risk score that triggers alarm
+    RISK_DECAY_RATE = 5.0            # Risk points decayed per second
+    RISK_PER_SHAKE_BASE = 15.0       # Base risk points per shake
+    RISK_PER_HIGH_SHAKE = 25.0       # Risk points for high deviation
+    RISK_PER_SEVERE_SHAKE = 40.0     # Risk points for severe deviation
+    MAX_RISK = 100.0                 # Maximum risk score
+    ALARM_THRESHOLD = 70.0           # Risk score that triggers alarm
     
     def __init__(self):
-        # Current G-force tracking for sustained threshold
+        # Current G-force and deviation
         self._current_g = 0.0
-        self._sustained_start = None
-        self._is_sustained = False
+        self._current_deviation = 0.0
         
         # Shake history (timestamp, severity)
         self._shake_history = deque(maxlen=50)
@@ -330,40 +331,29 @@ class ImpairmentDetector:
             gyro_mag: Gyroscope magnitude in deg/s
             timestamp: Current timestamp
         """
-        # Update sustained G tracking
-        self._update_sustained_g(acc_mag, timestamp)
+        # Calculate deviation from baseline (1g)
+        self._current_g = acc_mag
+        self._current_deviation = abs(acc_mag - self.BASELINE_G)
         
         # Decay risk score over time
         self._decay_risk(timestamp)
         
-        # Check for shake event
-        if self._is_sustained and timestamp - self._last_shake_time >= self.SHAKE_COOLDOWN:
+        # Check for shake event (deviation > threshold)
+        if (self._current_deviation >= self.DEVIATION_THRESHOLD and 
+            timestamp - self._last_shake_time >= self.SHAKE_COOLDOWN):
             self._detect_shake(acc_mag, gyro_mag, timestamp)
         
         # Check alarm threshold
         self._check_alarm()
         
-    def _update_sustained_g(self, acc_mag, timestamp):
-        """Track sustained G-force threshold."""
-        if acc_mag >= self.SUSTAINED_G_THRESHOLD:
-            if self._sustained_start is None:
-                self._sustained_start = timestamp
-            elif timestamp - self._sustained_start >= self.SUSTAINED_DURATION:
-                self._is_sustained = True
-        else:
-            # Reset if G drops below threshold
-            self._sustained_start = None
-            self._is_sustained = False
-            
-        self._current_g = acc_mag
-        
     def _detect_shake(self, acc_mag, gyro_mag, timestamp):
         """Detect and record a shake event."""
-        # Determine severity
-        if acc_mag >= self.SEVERE_G_THRESHOLD:
+        # Determine severity based on deviation from baseline
+        deviation = self._current_deviation
+        if deviation >= self.SEVERE_DEVIATION:
             severity = "severe"
             risk_add = self.RISK_PER_SEVERE_SHAKE
-        elif acc_mag >= self.HIGH_G_THRESHOLD:
+        elif deviation >= self.HIGH_DEVIATION:
             severity = "high"
             risk_add = self.RISK_PER_HIGH_SHAKE
         else:
@@ -381,6 +371,7 @@ class ImpairmentDetector:
             "timestamp": timestamp,
             "severity": severity,
             "acc_mag": acc_mag,
+            "deviation": deviation,
             "gyro_mag": gyro_mag,
             "risk_added": risk_add,
         })
@@ -392,7 +383,7 @@ class ImpairmentDetector:
         # Clean old shakes from window
         self._prune_shake_history(timestamp)
         
-        print(f"[IMPAIRMENT] Shake detected: {severity} ({acc_mag:.2f}g, {gyro_mag:.1f}°/s) → risk={self._risk_score:.0f}")
+        print(f"[IMPAIRMENT] Shake detected: {severity} (deviation={deviation:.2f}g, gyro={gyro_mag:.1f}°/s) → risk={self._risk_score:.0f}")
         
     def _prune_shake_history(self, current_time):
         """Remove shakes outside the tracking window."""
@@ -451,14 +442,13 @@ class ImpairmentDetector:
             "shake_count": len(self._shake_history),
             "alarm_active": self._alarm_active,
             "current_g": round(self._current_g, 2),
-            "is_sustained": self._is_sustained,
+            "deviation": round(self._current_deviation, 2),
         }
         
     def reset(self):
         """Reset all state."""
         self._current_g = 0.0
-        self._sustained_start = None
-        self._is_sustained = False
+        self._current_deviation = 0.0
         self._shake_history.clear()
         self._last_shake_time = 0.0
         self._risk_score = 0.0
