@@ -359,9 +359,9 @@ struct V2AccountView: View {
 
         // About Section
         Section {
-          Link(destination: URL(string: "https://github.com/aaronhma")!) {
+          Link(destination: URL(string: "https://github.com/aaronhma/infineon")!) {
             VStack(alignment: .leading, spacing: 8) {
-              Text("InfineonProject")
+              Text("ARGUS")
                 .font(.headline)
 
               Text("© 2026 Aaron Ma.")
@@ -454,9 +454,9 @@ struct V2AccountView: View {
         case .licensing:
           List {
             Section("License") {
-              Link(destination: URL(string: "https://github.com/aaronhma")!) {
+              Link(destination: URL(string: "https://github.com/aaronhma/infineon")!) {
                 VStack(alignment: .leading, spacing: 8) {
-                  Text("InfineonProject")
+                  Text("ARGUS")
                     .font(.headline)
 
                   Text("© 2026 Aaron Ma.")

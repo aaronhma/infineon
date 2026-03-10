@@ -1,8 +1,20 @@
-# Winter 2026 Infineon Special Project
+# ARGUS: Autonomous Real-time Guardian for Ubiquitous Safety
+
+## Winter 2026 Infineon Special Project
+
+> Argus or Argos Panoptes (Ancient Greek: Ἄργος Πανόπτης, "All-seeing Argos") is a many-eyed giant in Greek mythology. Known for his perpetual vigilance, he served the goddess Hera as a watchman. His most famous task was guarding Io, a priestess of Hera, whom Zeus had transformed into a heifer. Argus's constant watch, with some of his eyes always open, made him a formidable guardian.
+>
+> - [Source: Wikipedia](https://en.wikipedia.org/wiki/Argus_Panoptes)
 
 ## About
 
+This research project was conducted during the Winter 2026 academic quarter at [De Anza College](https://www.deanza.edu/catalog/courses/outline.html?course=engrd077&y=2025-2026).
+
 We're making driving safe for everyone.
+
+## Project Abstract & Report
+
+Click [here to read our REPORT](REPORT.md).
 
 ## Project Structure
 
@@ -12,9 +24,9 @@ We use a monorepo structure, so all project components can be in one repo.
 
 **Folder:** [`firmware`](firmware/README.md)
 
-- *Built with:* C, Infineon ModusToolbox
+- *Built with:* Infineon ModusToolbox
 
-The actual low-level C code that runs on the Infineon AI board.
+The firmware that runs on the Infineon AI board.
 
 ## [iOS Project](iOS/)
 
@@ -47,5 +59,14 @@ This folder contains the Supabase PostgreSQL table and bucket setup, along with 
 - *Built with:* JavaScript, Bun
 
 This folder contains helpful functions for the project.
+
+## Attributions
+
+- Aaron Ma
+- Anton Bogatyrev
+- Mobin Norouzi
+- Pete Davis
+- Sheel Shah
+- Professor Saied Rafati
 
 ## © Copyright 2026 Aaron Ma. All rights reserved.

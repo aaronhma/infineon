@@ -624,7 +624,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InfineonProject/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = InfineonProject;
+				INFOPLIST_KEY_CFBundleDisplayName = ARGUS;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Save songs to your Apple Music library.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Use your camera to scan QR codes to join a vehicle.";
@@ -668,7 +668,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = InfineonProject/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = InfineonProject;
+				INFOPLIST_KEY_CFBundleDisplayName = ARGUS;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_NSAppleMusicUsageDescription = "Save songs to your Apple Music library.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Use your camera to scan QR codes to join a vehicle.";
