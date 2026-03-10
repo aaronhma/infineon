@@ -978,6 +978,7 @@ class DashcamRecorder:
             self._chunk_start_time = time.time()
             self._chunk_count += 1
             print(f"[Dashcam] Started chunk: {chunk_name} (MKV)")
+            print(f"[Dashcam] Full path: {self._current_chunk_path}")
         except FileNotFoundError:
             print("[Dashcam] FFmpeg not found, falling back to OpenCV")
             self._ffmpeg_process = None
