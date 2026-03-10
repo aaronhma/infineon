@@ -980,10 +980,8 @@ class SupabaseUploader:
         self.session_id = str(uuid.uuid4())
         self.last_upload_time = 0
         self.last_realtime_update = 0
-        self.last_driver_check = 0
         self.upload_cooldown = 2.0  # Minimum seconds between face uploads
         self.realtime_cooldown = 0.5  # Update realtime every 500ms
-        self.driver_check_cooldown = 5.0  # Check for driver identification every 5s
 
         # Shared thread pool for all background I/O (replaces per-call Thread spawns)
         self._executor = ThreadPoolExecutor(max_workers=4)
@@ -991,7 +989,6 @@ class SupabaseUploader:
         # Background thread guards to prevent blocking the main loop
         self._realtime_busy = False
         self._upload_busy = False
-        self._driver_check_busy = False
         self._buzzer_check_busy = False
         self._trip_sync_busy = False
         self._music_upload_busy = False
@@ -999,12 +996,6 @@ class SupabaseUploader:
         # Latest records for BLE relay (iOS uploads to Supabase on Pi's behalf)
         self.latest_realtime_record = {}
         self.latest_trip_record = {}
-
-        # Driver identification
-        self.driver_profiles = {}  # {profile_id: profile_data}
-        self.current_driver_name = None
-        self.current_driver_profile_id = None
-        self.last_announced_driver = None
 
         # Trip tracking
         self.trip_id = None
@@ -1029,11 +1020,10 @@ class SupabaseUploader:
         # Register vehicle on startup — allow offline operation
         try:
             self._register_vehicle()
-            # After vehicle registered, these three are independent — run in parallel
-            with ThreadPoolExecutor(max_workers=3) as pool:
+            # After vehicle registered, these two are independent — run in parallel
+            with ThreadPoolExecutor(max_workers=2) as pool:
                 futures = [
                     pool.submit(self._fetch_feature_settings),
-                    pool.submit(self._load_driver_profiles),
                     pool.submit(self._create_trip),
                 ]
                 for f in futures:
@@ -1176,33 +1166,6 @@ class SupabaseUploader:
             f"  enable_camera: {self.feature_settings['enable_camera']}  (always on)",
             flush=True,
         )
-
-    def _load_driver_profiles(self):
-        """Load all driver profiles for this vehicle"""
-        try:
-            response = (
-                self.client.table("driver_profiles")
-                .select("id, name, profile_image_path")
-                .eq("vehicle_id", self.vehicle_id)
-                .execute()
-            )
-
-            self.driver_profiles = {}
-            for profile in response.data:
-                self.driver_profiles[profile["id"]] = {
-                    "name": profile["name"],
-                    "image_path": profile.get("profile_image_path"),
-                }
-
-            if self.driver_profiles:
-                print(f"Loaded {len(self.driver_profiles)} driver profile(s)")
-                for profile_id, data in self.driver_profiles.items():
-                    print(f"  - {data['name']}")
-            else:
-                print("No driver profiles found for this vehicle")
-
-        except Exception as e:
-            print(f"Error loading driver profiles: {e}")
 
     def generate_face_embedding(self, face_image: np.ndarray) -> list | None:
         """Generate a 128-dimensional face embedding from a face image.
@@ -1408,8 +1371,6 @@ class SupabaseUploader:
             "crash_detected": self.trip_crash_detected,
             "crash_severity": self.trip_crash_severity,
         }
-        if self.current_driver_profile_id:
-            record["driver_profile_id"] = self.current_driver_profile_id
         trip_id = self.trip_id
 
         # Store for BLE relay (iOS can upload on Pi's behalf when offline)
@@ -1462,10 +1423,6 @@ class SupabaseUploader:
                 "crash_severity": self.trip_crash_severity,
             }
 
-            # Add driver profile if identified
-            if self.current_driver_profile_id:
-                record["driver_profile_id"] = self.current_driver_profile_id
-
             self.client.table("vehicle_trips").update(record).eq(
                 "id", self.trip_id
             ).execute()
@@ -1505,60 +1462,6 @@ class SupabaseUploader:
     def increment_face_detection_count(self):
         """Increment face detection count for current trip"""
         self.trip_face_detections += 1
-
-    def check_current_driver(self):
-        """Check the most recently identified driver for this vehicle (non-blocking)"""
-        current_time = time.time()
-        if current_time - self.last_driver_check < self.driver_check_cooldown:
-            return self.current_driver_name
-        if self._driver_check_busy:
-            return self.current_driver_name
-
-        self._driver_check_busy = True
-        self.last_driver_check = current_time
-
-        def _do_check():
-            try:
-                # Refresh driver profiles periodically
-                self._load_driver_profiles()
-
-                # Get the most recent face detection with a driver profile assigned
-                response = (
-                    self.client.table("face_detections")
-                    .select("driver_profile_id, created_at")
-                    .eq("vehicle_id", self.vehicle_id)
-                    .not_.is_("driver_profile_id", "null")
-                    .order("created_at", desc=True)
-                    .limit(1)
-                    .execute()
-                )
-
-                if response.data and len(response.data) > 0:
-                    profile_id = response.data[0]["driver_profile_id"]
-                    if profile_id in self.driver_profiles:
-                        driver_name = self.driver_profiles[profile_id]["name"]
-                        self.current_driver_name = driver_name
-                        self.current_driver_profile_id = profile_id
-
-                        if driver_name != self.last_announced_driver:
-                            print(f"\n>>> Driver detected: {driver_name} <<<\n")
-                            self.last_announced_driver = driver_name
-                        return
-
-                self.current_driver_name = None
-                self.current_driver_profile_id = None
-
-            except Exception as e:
-                print(f"Error checking current driver: {e}")
-            finally:
-                self._driver_check_busy = False
-
-        self._executor.submit(_do_check)
-        return self.current_driver_name
-
-    def get_current_driver(self):
-        """Get the current driver name (cached)"""
-        return self.current_driver_name
 
     def _subscribe_to_buzzer_commands(self):
         """Subscribe to realtime changes in vehicle_realtime for buzzer control
@@ -1777,7 +1680,6 @@ class SupabaseUploader:
         image_bytes = buffer.tobytes()
 
         # Snapshot all data needed for the upload (avoid referencing mutable state later)
-        driver_profile_id = self.current_driver_profile_id
 
         def _do_upload():
             try:
@@ -1821,8 +1723,6 @@ class SupabaseUploader:
                     )
                 if face_cluster_id:
                     record["face_cluster_id"] = face_cluster_id
-                if driver_profile_id:
-                    record["driver_profile_id"] = driver_profile_id
 
                 if driving_data:
                     record["speed_mph"] = int(driving_data.get("speed", 0))
@@ -1976,13 +1876,13 @@ class DistractionDetector:
         self.hand_at_ear = False  # True when phone detected via hand-at-ear
 
         # Two-tier confidence: high confidence anywhere, low confidence near face/hands
-        self._phone_conf_high = 0.30  # Phone-class objects anywhere
-        self._phone_conf_near = 0.18  # Phone-class objects near face/hands
+        self._phone_conf_high = 0.25  # Phone-class objects anywhere (lowered)
+        self._phone_conf_near = 0.15  # Phone-class objects near face/hands (lowered)
         self._drink_conf = 0.30  # Drink-class objects (bottle/cup/wine glass)
 
         # Sliding window smoothing — phone detected in N of last W frames
-        self._PHONE_WINDOW = 6
-        self._PHONE_MIN_HITS = 2
+        self._PHONE_WINDOW = 4  # Shorter window for faster response
+        self._PHONE_MIN_HITS = 1  # Only need 1 detection in window
         self._phone_window = deque(
             maxlen=self._PHONE_WINDOW
         )  # True/False per YOLO frame
@@ -1992,7 +1892,7 @@ class DistractionDetector:
 
         # Cooldown: once phone_detected goes True, hold it for at least this
         # many seconds before allowing it to drop back to False.
-        self._PHONE_COOLDOWN_SECS = 3.0
+        self._PHONE_COOLDOWN_SECS = 1.5  # Shorter cooldown for faster response
         self._phone_last_seen = 0.0
 
         # Async YOLO processing — runs inference in a background thread
@@ -2010,7 +1910,7 @@ class DistractionDetector:
 
         # Hand detection throttling: run every Nth YOLO cycle to save overhead.
         # At ~25 YOLO FPS, interval=8 means hand check ~3x/sec (sufficient for phone detection).
-        self._hand_detect_interval = 8
+        self._hand_detect_interval = 4  # Run hand detection more frequently
         self._hand_detect_counter = 0
 
         # MediaPipe Hands for hand-at-ear (phone call) detection.
@@ -2264,6 +2164,35 @@ class DistractionDetector:
 
         return (intersection / min_area) > overlap_threshold if min_area > 0 else False
 
+    def _is_gripping_hand(self, hand_lms):
+        """Check if hand is in a gripping shape (thumb close to fingers).
+
+        This helps detect phones when held with an open palm but gripped.
+        """
+        # Check thumb tip (4) to index finger tip (8), middle finger tip (12), ring finger tip (16)
+        thumb_tip = hand_lms[4]
+        index_tip = hand_lms[8]
+        middle_tip = hand_lms[12]
+        ring_tip = hand_lms[16]
+
+        # Calculate distances
+        thumb_index_dist = (
+            (thumb_tip.x - index_tip.x) ** 2 + (thumb_tip.y - index_tip.y) ** 2
+        ) ** 0.5
+        thumb_middle_dist = (
+            (thumb_tip.x - middle_tip.x) ** 2 + (thumb_tip.y - middle_tip.y) ** 2
+        ) ** 0.5
+        thumb_ring_dist = (
+            (thumb_tip.x - ring_tip.x) ** 2 + (thumb_tip.y - ring_tip.y) ** 2
+        ) ** 0.5
+
+        # If thumb is close to any finger, consider it gripping
+        return (
+            thumb_index_dist < 0.15
+            or thumb_middle_dist < 0.15
+            or thumb_ring_dist < 0.15
+        )
+
     def _is_near_face(self, object_bbox, face_bbox, proximity_ratio=0.5):
         """Check if object is near the face region (likely being held/used)"""
         if object_bbox is None or face_bbox is None:
@@ -2292,7 +2221,7 @@ class DistractionDetector:
         dx = abs(obj_center_x - face_center_x)
         dy = abs(obj_center_y - face_center_y)
 
-        return dx < extended_width and dy < extended_height
+        return dx < extended_width * 1.5 and dy < extended_height * 1.5
 
     def _detect_hands(self, frame):
         """Run MediaPipe hand detection once and return results.
@@ -2346,7 +2275,7 @@ class DistractionDetector:
             tip = hand_lms[tip_idx]
             d_tip = ((tip.x - wrist.x) ** 2 + (tip.y - wrist.y) ** 2) ** 0.5
             d_mcp = ((mcp.x - wrist.x) ** 2 + (mcp.y - wrist.y) ** 2) ** 0.5
-            if d_tip < d_mcp * 1.5:
+            if d_tip < d_mcp * 1.8:  # More permissive (was 1.5)
                 curled += 1
         return curled
 
@@ -2384,7 +2313,11 @@ class DistractionDetector:
             # gripping something (some people hold phone with open palm)
             curled = self._fingers_curled(hand_lms)
             if curled < 1:
-                continue
+                # Also check if hand is in a gripping shape (thumb close to fingers)
+                if self._is_gripping_hand(hand_lms):
+                    curled = 1  # Treat as gripping
+                else:
+                    continue
 
             if face is not None:
                 face_cx = (face["x_min"] + face["x_max"]) / 2
@@ -2410,6 +2343,66 @@ class DistractionDetector:
             return True, bbox
 
         return False, None
+
+    def _is_in_hand_region(self, object_bbox, frame_shape):
+        """Check if object is within hand region (wrist to fingertips area).
+
+        This helps detect phones when held sideways or in front of the face
+        that might not be classified as "near face" by the strict distance check.
+        """
+        if object_bbox is None:
+            return False
+
+        h, w = frame_shape
+        obj_x1, obj_y1, obj_x2, obj_y2 = object_bbox
+
+        # Get hand regions if available
+        hand_landmarks = self._detect_hands(frame_shape)
+        if hand_landmarks is None:
+            # Fallback: use general driver area (lower middle portion of frame)
+            driver_area_top = int(h * 0.3)
+            driver_area_bottom = int(h * 0.8)
+            driver_area_left = int(w * 0.2)
+            driver_area_right = int(w * 0.8)
+
+            # Check if phone bbox overlaps with driver area
+            return not (
+                obj_x2 < driver_area_left
+                or obj_x1 > driver_area_right
+                or obj_y2 < driver_area_top
+                or obj_y1 > driver_area_bottom
+            )
+
+        # Check if object is near any hand
+        for hand_lms in hand_landmarks:
+            # Get hand bounding box
+            xs = [lm.x * w for lm in hand_lms]
+            ys = [lm.y * h for lm in hand_lms]
+            hand_bbox = (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))
+
+            # Check if object overlaps with hand region (more permissive)
+            if self._boxes_overlap(object_bbox, hand_bbox, overlap_threshold=0.1):
+                return True
+
+            # Also check if object is close to hand (extended region)
+            hand_center_x = (hand_bbox[0] + hand_bbox[2]) / 2
+            hand_center_y = (hand_bbox[1] + hand_bbox[3]) / 2
+            hand_width = hand_bbox[2] - hand_bbox[0]
+            hand_height = hand_bbox[3] - hand_bbox[1]
+
+            # Object center
+            obj_center_x = (obj_x1 + obj_x2) / 2
+            obj_center_y = (obj_y1 + obj_y2) / 2
+
+            # Check distance (allow more space for phone)
+            max_distance = max(hand_width, hand_height) * 3  # Increased from 2
+            dx = abs(obj_center_x - hand_center_x)
+            dy = abs(obj_center_y - hand_center_y)
+
+            if dx < max_distance and dy < max_distance:
+                return True
+
+        return False
 
     def _detect_hand_holding(self, frame, hand_landmarks=None):
         """Detect a hand holding a phone-sized object (texting posture).
@@ -2649,8 +2642,9 @@ class DistractionDetector:
                     print(f"YOLO: DRINK (class {cls}: {class_name}) conf={conf:.2f}")
 
         # Two-tier phone filtering:
-        # Tier 1 — high confidence (0.30+): accept anywhere
-        # Tier 2 — low confidence (0.18+): accept only near face or hands
+        # Tier 1 — high confidence (0.25+): accept anywhere
+        # Tier 2 — low confidence (0.15+): accept only near face or hands
+        # Also check if phone is in hand regions (wrist to fingertips)
         face = self._last_face_bbox
         phone_candidates.sort(key=lambda x: x[1], reverse=True)  # highest conf first
         for bbox, conf, class_name in phone_candidates:
@@ -2660,11 +2654,20 @@ class DistractionDetector:
                 print(f"YOLO: PHONE ({class_name}) conf={conf:.2f}")
                 break
             elif face is not None and self._is_near_face(
-                bbox, face, proximity_ratio=1.0
+                bbox,
+                face,
+                proximity_ratio=1.5,  # Increased from 1.0
             ):
                 # Tier 2: low confidence but near the driver's face
                 current_phone = bbox
                 print(f"YOLO: PHONE-NEAR ({class_name}) conf={conf:.2f} [near face]")
+                break
+            elif face is not None and self._is_in_hand_region(bbox, frame.shape):
+                # Tier 3: Check if phone is in hand region (wrist to fingertips)
+                current_phone = bbox
+                print(
+                    f"YOLO: PHONE-IN-HAND ({class_name}) conf={conf:.2f} [in hand region]"
+                )
                 break
 
         # Hand-at-ear / hand-holding-phone fallback:
@@ -2704,6 +2707,7 @@ class DistractionDetector:
             return 0.0, 0.0, self._yolo_completions
         avg = sum(self._yolo_times) / len(self._yolo_times)
         fps = 1.0 / avg if avg > 0 else 0.0
+
         return avg * 1000, fps, self._yolo_completions
 
     def reset_yolo_stats(self):
@@ -3103,12 +3107,17 @@ class FaceAnalyzer:
 
         # Gaze distraction thresholds
         # Blendshape scores are 0.0-1.0; above this = looking in that direction
-        self.GAZE_THRESHOLD = 0.35
+        self.GAZE_THRESHOLD = 0.25  # Default threshold
+        self.GAZE_THRESHOLD_DOWN = (
+            0.15  # Lower threshold for downward gaze (more common)
+        )
         # Both eyeBlink blendshapes above this = eyes closed
         self.BLINK_CLOSED_THRESHOLD = 0.55
         # Head pose thresholds (degrees) for distraction
         self.HEAD_YAW_THRESHOLD = 30  # Looking left/right
-        self.HEAD_PITCH_THRESHOLD = 25  # Looking up/down
+        self.HEAD_PITCH_THRESHOLD = (
+            20  # Lowered from 25 for more sensitive down/up detection
+        )
         # Seconds of sustained gaze-away before flagging as distracted
         self.GAZE_DISTRACTION_SECONDS = 2.0
         # Seconds of sustained eyes-closed before flagging as impaired
@@ -3129,6 +3138,9 @@ class FaceAnalyzer:
         # continue counting as "looking away" since the driver left the camera view.
         self._face_last_seen = None  # time.time() of last face detection
         self._face_was_present = False  # True once we've seen a face this session
+        self._gaze_debug_enabled = (
+            False  # Enable with --debug-gaze flag later if needed
+        )
 
     @staticmethod
     def _euclidean(p1, p2):
@@ -3228,6 +3240,9 @@ class FaceAnalyzer:
         # instead of building a full dict over all ~52 blendshapes.
         _eOL = _eIR = _eIL = _eOR = _eDL = _eDR = _eUL = _eUR = _bL = _bR = 0.0
         _GAZE_NAMES = self._GAZE_BLENDSHAPE_NAMES
+        if not blendshapes and self._gaze_debug_enabled:
+            print("DEBUG: No blendshapes detected!")
+
         for b in blendshapes:
             _n = b.category_name
             if _n not in _GAZE_NAMES:
@@ -3260,12 +3275,19 @@ class FaceAnalyzer:
         look_down = (_eDL + _eDR) * 0.5
         look_up = (_eUL + _eUR) * 0.5
 
+        # Debug logging for gaze detection (only print when significant values detected)
+        # if max(look_left, look_right, look_down, look_up) > 0.1:
+        # print(
+        #     f"  GAZE_DEBUG: L={look_left:.3f} R={look_right:.3f} D={look_down:.3f} U={look_up:.3f} (threshold={self.GAZE_THRESHOLD:.3f})"
+        # )
+
         eye_direction = "straight"
-        if look_down > self.GAZE_THRESHOLD and look_down >= max(look_left, look_right):
+        # More sensitive detection for down gaze - common when looking at phone
+        if look_down > self.GAZE_THRESHOLD_DOWN:
             eye_direction = "down"
-        elif look_up > self.GAZE_THRESHOLD and look_up >= max(look_left, look_right):
+        elif look_up > self.GAZE_THRESHOLD:
             eye_direction = "up"
-        elif look_left > self.GAZE_THRESHOLD and look_left >= look_right:
+        elif look_left > self.GAZE_THRESHOLD:
             eye_direction = "left"
         elif look_right > self.GAZE_THRESHOLD:
             eye_direction = "right"
@@ -3299,7 +3321,8 @@ class FaceAnalyzer:
         )
 
         # --- Temporal tracking: gaze away ---
-        if gaze_direction != "straight":
+        # Only start timer for sustained gaze away (left/right/up/down)
+        if gaze_direction in ["left", "right", "up", "down"]:
             if self._gaze_away_start is None:
                 self._gaze_away_start = now
             gaze_away_seconds = now - self._gaze_away_start
@@ -3567,6 +3590,10 @@ class FaceAnalyzer:
                     head_info = ""
                     if gaze_data.get("head_yaw") or gaze_data.get("head_pitch"):
                         head_info = f" [Y:{gaze_data['head_yaw']:.0f} P:{gaze_data['head_pitch']:.0f}]"
+
+                    # Debug output for downward gaze
+                    if gaze_dir == "DOWN" and self._gaze_debug_enabled:
+                        print("DEBUG: Downward gaze detected!")
 
                     if gaze_data["eyes_closed_impaired"]:
                         gaze_label = f"EYES CLOSED ({gaze_data['eyes_closed_seconds']:.1f}s) - IMPAIRED"
@@ -4114,7 +4141,9 @@ def main():
             if camera_ok:
                 # Camera is available, proceed even if microphone is missing
                 if mic_needed and not mic_ok:
-                    print("Camera detected but microphone not available. Proceeding without microphone and Shazam.")
+                    print(
+                        "Camera detected but microphone not available. Proceeding without microphone and Shazam."
+                    )
                 break
 
             missing = []
@@ -4241,9 +4270,13 @@ def main():
         # Print hardware status summary
         print("\nHardware Status:")
         print(f"  Camera: {'✓ Available' if cap else '✗ Not available'}")
-        print(f"  Microphone: {'✓ Available' if music_recognizer else '✗ Not available'}")
+        print(
+            f"  Microphone: {'✓ Available' if music_recognizer else '✗ Not available'}"
+        )
         if enable_shazam:
-            print(f"  Shazam: {'✓ Enabled' if music_recognizer else '✗ Disabled (microphone not available)'}")
+            print(
+                f"  Shazam: {'✓ Enabled' if music_recognizer else '✗ Disabled (microphone not available)'}"
+            )
         else:
             print("  Shazam: ✗ Disabled (feature off)")
 
@@ -4621,7 +4654,7 @@ def main():
                     supabase_uploader.increment_face_detection_count()
 
                 if detection_data:
-                    supabase_uploader.check_current_driver()
+                    supabase_uploader.increment_face_detection_count()
 
             # Music recognition (independent of camera)
             if music_recognizer:
