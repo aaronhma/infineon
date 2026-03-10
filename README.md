@@ -62,11 +62,16 @@ This folder contains helpful functions for the project.
 
 ## Attributions
 
-- Aaron Ma
+**Researchers:**
+
+- Aaron Ma, Team Leader
 - Anton Bogatyrev
 - Mobin Norouzi
-- Pete Davis
+- Peter Davis, Hardware Lead
 - Sheel Shah
-- Professor Saied Rafati
+
+**Special thanks to:**
+
+- Professor Saied Rafati, De Anza College Engineering
 
 ## © Copyright 2026 Aaron Ma. All rights reserved.
