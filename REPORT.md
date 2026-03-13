@@ -4,7 +4,7 @@
 
 **ENGR 77: Introduction to Engineering Design**
 
-**March 2027**
+**March 2026**
 
 ---
 
