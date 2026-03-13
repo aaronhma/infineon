@@ -1100,6 +1100,7 @@ class SupabaseUploader:
         self._buzzer_check_busy = False
         self._trip_sync_busy = False
         self._music_upload_busy = False
+        self._last_song_key = None  # "title||artist" of the last uploaded song
 
         # Latest records for BLE relay (iOS uploads to Supabase on Pi's behalf)
         self.latest_realtime_record = {}
@@ -1390,6 +1391,22 @@ class SupabaseUploader:
         self.trip_crash_severity = crash_event.get("severity", "moderate")
         # Force an immediate sync to persist crash data
         self._sync_trip_to_db()
+        # Push crash alert to vehicle_realtime immediately for live iOS display
+        self._executor.submit(self._push_crash_to_realtime, crash_event)
+
+    def _push_crash_to_realtime(self, crash_event):
+        try:
+            self.client.table("vehicle_realtime").upsert(
+                {
+                    "vehicle_id": self.vehicle_id,
+                    "crash_detected": True,
+                    "crash_severity": crash_event.get("severity"),
+                    "crash_peak_g": float(crash_event.get("peak_g", 0)),
+                    "updated_at": datetime.now(PST).isoformat(),
+                }
+            ).execute()
+        except Exception as e:
+            print(f"Error pushing crash to realtime: {e}")
 
     def update_trip_stats(
         self,
@@ -1561,6 +1578,14 @@ class SupabaseUploader:
                 "current_song_artist": None,
                 "current_song_detected_at": None,
                 "buzzer_active": False,
+                "acc_mag": None,
+                "gyro_mag": None,
+                "gyrox": None,
+                "gyroy": None,
+                "gyroz": None,
+                "crash_detected": False,
+                "crash_severity": None,
+                "crash_peak_g": None,
             }
             self.client.table("vehicle_realtime").upsert(record).execute()
             print(f"Vehicle realtime reset to parked state for {self.vehicle_id}")
@@ -1645,14 +1670,21 @@ class SupabaseUploader:
         if self._music_upload_busy:
             return
 
+        title = song_info.get("title", "Unknown")
+        artist = song_info.get("artist", "Unknown Artist")
+        song_key = f"{title}||{artist}"
+        if song_key == self._last_song_key:
+            return
+        self._last_song_key = song_key
+
         self._music_upload_busy = True
 
         # Snapshot data to avoid races
         record = {
             "vehicle_id": self.vehicle_id,
             "session_id": self.session_id,
-            "title": song_info.get("title", "Unknown"),
-            "artist": song_info.get("artist", "Unknown Artist"),
+            "title": title,
+            "artist": artist,
             "detected_at": datetime.now(PST).isoformat(),
         }
 
@@ -1710,6 +1742,11 @@ class SupabaseUploader:
         satellites: int = 0,
         is_phone_detected: bool = False,
         is_drinking_detected: bool = False,
+        acc_mag: float = None,
+        gyro_mag: float = None,
+        gyrox: float = None,
+        gyroy: float = None,
+        gyroz: float = None,
     ):
         """Update vehicle real-time location/status (non-blocking)"""
         current_time = time.time()
@@ -1741,6 +1778,18 @@ class SupabaseUploader:
             record["latitude"] = float(latitude)
             record["longitude"] = float(longitude)
             record["satellites"] = int(satellites)
+
+        # Add gyro / accelerometer data if available
+        if acc_mag is not None:
+            record["acc_mag"] = float(acc_mag)
+        if gyro_mag is not None:
+            record["gyro_mag"] = float(gyro_mag)
+        if gyrox is not None:
+            record["gyrox"] = float(gyrox)
+        if gyroy is not None:
+            record["gyroy"] = float(gyroy)
+        if gyroz is not None:
+            record["gyroz"] = float(gyroz)
 
         # Store for BLE relay (iOS can upload on Pi's behalf when offline)
         self.latest_realtime_record = record
@@ -4665,9 +4714,11 @@ def main():
                     effective_risk = min(6, effective_risk + 1)
 
             # Gyro — graduated scale based on harshness of motion
+            current_gyro_latest = None
             if gyro_reader is not None:
                 latest = gyro_reader.get_latest()
                 if latest is not None:
+                    current_gyro_latest = latest
                     gyro_mag = latest["gyro_mag"]
                     if gyro_mag >= 150.0:
                         gyro_bump = 3  # extreme swerving
@@ -4743,6 +4794,11 @@ def main():
                 satellites=driving_sim.get_satellites(),
                 is_phone_detected=distraction_data["phone_detected"],
                 is_drinking_detected=distraction_data["drinking_detected"],
+                acc_mag=current_gyro_latest["acc_mag"] if current_gyro_latest else None,
+                gyro_mag=current_gyro_latest["gyro_mag"] if current_gyro_latest else None,
+                gyrox=current_gyro_latest.get("gyrox") if current_gyro_latest else None,
+                gyroy=current_gyro_latest.get("gyroy") if current_gyro_latest else None,
+                gyroz=current_gyro_latest.get("gyroz") if current_gyro_latest else None,
             )
 
             supabase_uploader.update_trip_stats(

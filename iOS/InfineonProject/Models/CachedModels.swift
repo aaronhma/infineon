@@ -100,6 +100,16 @@ final class CachedVehicleRealtime {
   var buzzerActive: Bool?
   var buzzerType: String?
   var buzzerUpdatedAt: Date?
+  var currentSongTitle: String?
+  var currentSongArtist: String?
+  var accMag: Double?
+  var gyroMag: Double?
+  var gyrox: Double?
+  var gyroy: Double?
+  var gyroz: Double?
+  var crashDetected: Bool?
+  var crashSeverity: String?
+  var crashPeakG: Double?
 
   init() {}
 
@@ -122,6 +132,16 @@ final class CachedVehicleRealtime {
     self.buzzerActive = data.buzzerActive
     self.buzzerType = data.buzzerType
     self.buzzerUpdatedAt = data.buzzerUpdatedAt
+    self.currentSongTitle = data.currentSongTitle
+    self.currentSongArtist = data.currentSongArtist
+    self.accMag = data.accMag
+    self.gyroMag = data.gyroMag
+    self.gyrox = data.gyrox
+    self.gyroy = data.gyroy
+    self.gyroz = data.gyroz
+    self.crashDetected = data.crashDetected
+    self.crashSeverity = data.crashSeverity
+    self.crashPeakG = data.crashPeakG
   }
 
   func toVehicleRealtime() -> VehicleRealtime {
@@ -143,7 +163,17 @@ final class CachedVehicleRealtime {
       isDrinkingDetected: isDrinkingDetected,
       buzzerActive: buzzerActive,
       buzzerType: buzzerType,
-      buzzerUpdatedAt: buzzerUpdatedAt
+      buzzerUpdatedAt: buzzerUpdatedAt,
+      currentSongTitle: currentSongTitle,
+      currentSongArtist: currentSongArtist,
+      accMag: accMag,
+      gyroMag: gyroMag,
+      gyrox: gyrox,
+      gyroy: gyroy,
+      gyroz: gyroz,
+      crashDetected: crashDetected,
+      crashSeverity: crashSeverity,
+      crashPeakG: crashPeakG
     )
   }
 
@@ -165,5 +195,15 @@ final class CachedVehicleRealtime {
     self.buzzerActive = data.buzzerActive
     self.buzzerType = data.buzzerType
     self.buzzerUpdatedAt = data.buzzerUpdatedAt
+    self.currentSongTitle = data.currentSongTitle
+    self.currentSongArtist = data.currentSongArtist
+    self.accMag = data.accMag
+    self.gyroMag = data.gyroMag
+    self.gyrox = data.gyrox
+    self.gyroy = data.gyroy
+    self.gyroz = data.gyroz
+    self.crashDetected = data.crashDetected
+    self.crashSeverity = data.crashSeverity
+    self.crashPeakG = data.crashPeakG
   }
 }

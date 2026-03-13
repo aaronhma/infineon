@@ -39,13 +39,25 @@ private enum AppTheme: String, CaseIterable {
 enum AppLanguage: String, Identifiable, CaseIterable {
   case system
   case english = "en"
+  case spanish = "es"
+  case french = "fr"
+  case german = "de"
+  case persian = "fa"
+  case chineseSimplified = "zh-Hans"
+  case chineseTraditional = "zh-Hant"
 
   var id: String { rawValue }
 
   var localeIdentifier: String? {
     switch self {
     case .system: nil
-    case .english: "en"
+    case .english: "en_US"
+    case .spanish: "es"
+    case .french: "fr"
+    case .german: "de"
+    case .persian: "fa"
+    case .chineseSimplified: "zh-Hans"
+    case .chineseTraditional: "zh-Hant"
     }
   }
 
@@ -55,6 +67,18 @@ enum AppLanguage: String, Identifiable, CaseIterable {
       String(localized: "System", bundle: .main)
     case .english:
       Locale.current.localizedString(forIdentifier: "en_US") ?? "English (US)"
+    case .spanish:
+      Locale.current.localizedString(forIdentifier: "es") ?? "Spanish"
+    case .french:
+      Locale.current.localizedString(forIdentifier: "fr") ?? "French"
+    case .german:
+      Locale.current.localizedString(forIdentifier: "de") ?? "German"
+    case .persian:
+      Locale.current.localizedString(forIdentifier: "fa") ?? "Persian"
+    case .chineseSimplified:
+      Locale.current.localizedString(forIdentifier: "zh-Hans") ?? "Chinese (Simplified)"
+    case .chineseTraditional:
+      Locale.current.localizedString(forIdentifier: "zh-Hant") ?? "Chinese (Traditional)"
     }
   }
 }
@@ -91,7 +115,6 @@ struct LocaleSwitcher<Content: View>: View {
 struct AppearanceSettingsView: View {
   @AppStorage("_appTheme") private var appTheme = AppTheme.system
   @AppStorage("_appLanguage") private var appLanguage = AppLanguage.system.rawValue
-  @State private var showLanguageConfirmation = false
 
   private var currentLanguage: AppLanguage {
     AppLanguage(rawValue: appLanguage) ?? .system
@@ -112,40 +135,23 @@ struct AppearanceSettingsView: View {
       .listSectionSeparator(.hidden)
 
       Section {
-        Button {
-          showLanguageConfirmation = true
+        Picker(selection: $appLanguage) {
+          ForEach(AppLanguage.allCases) { language in
+            Text(language.localizedName)
+              .tag(language.rawValue)
+          }
         } label: {
-          HStack {
-            Label {
-              Text("Language")
-            } icon: {
-              SettingsBoxView(
-                icon: "globe", color: .pink
-              )
-            }
-            Spacer()
-            Text(currentLanguage.localizedName)
-              .foregroundStyle(.secondary)
-            Image(systemName: "chevron.right")
-              .font(.caption)
-              .foregroundStyle(.secondary)
+          Label {
+            Text("Language")
+          } icon: {
+            SettingsBoxView(
+              icon: "globe", color: .pink
+            )
           }
         }
-        .foregroundStyle(.primary)
       }
     }
     .navigationTitle("Appearance")
-    .confirmationDialog(
-      "Select Language", isPresented: $showLanguageConfirmation, titleVisibility: .visible
-    ) {
-      ForEach(AppLanguage.allCases) { language in
-        Button(language.localizedName) {
-          appLanguage = language.rawValue
-        }
-      }
-    } message: {
-      Text("Changing the language will update the app's display language.")
-    }
   }
 
   @ViewBuilder

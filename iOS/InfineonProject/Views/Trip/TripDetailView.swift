@@ -11,7 +11,6 @@ import SwiftUI
 
 struct TripDetailView: View {
   var trip: Trip
-  var namespace: Namespace.ID
   var previewRouteCoordinates: [CLLocationCoordinate2D] = []
 
   @State private var allDetections: [FaceDetection] = []
@@ -313,7 +312,6 @@ struct TripDetailView: View {
     }
     .scrollAwareTitle(trip.tripStatus)
     .navigationBarTitleDisplayMode(.inline)
-    .navigationTransition(.zoom(sourceID: trip.id, in: namespace))
     .task {
       await loadDetections()
     }
@@ -667,31 +665,24 @@ private let sampleRouteAppleParkToGoldenGate: [CLLocationCoordinate2D] = [
   NavigationStack {
     TripDetailView(
       trip: Trip.sample,
-      namespace: namespace,
       previewRouteCoordinates: sampleRouteAppleParkToGoldenGate
     )
   }
 }
 
 #Preview("Warning Trip Score") {
-  @Previewable @Namespace var namespace
-
   NavigationStack {
     TripDetailView(
       trip: Trip.sampleWarning,
-      namespace: namespace,
       previewRouteCoordinates: sampleRouteAppleParkToGoldenGate
     )
   }
 }
 
 #Preview("Danger Trip Score") {
-  @Previewable @Namespace var namespace
-
   NavigationStack {
     TripDetailView(
       trip: Trip.sampleDanger,
-      namespace: namespace,
       previewRouteCoordinates: sampleRouteAppleParkToGoldenGate
     )
   }

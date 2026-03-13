@@ -75,7 +75,7 @@ struct HomeView: View {
         }
       }
       .navigationDestination(for: Trip.self) { trip in
-        TripDetailView(trip: trip, namespace: namespace)
+        TripDetailView(trip: trip)
       }
       .navigationDestination(for: TripEventDestination.self) { destination in
         switch destination {
@@ -95,9 +95,6 @@ struct HomeView: View {
       }
       .navigationDestination(for: TripEventDetail.self) { detail in
         EventDetailView(event: detail.event, eventType: detail.eventType)
-      }
-      .refreshable {
-        await loadTrips()
       }
       .task {
         await loadTrips()
@@ -123,16 +120,6 @@ struct HomeView: View {
               subScoreRow(label: "Impairment", score: todayDailyScore.impairment, color: .purple)
             }
           }
-
-          // Activity rings
-          RingsView(
-            size: 80,
-            lineWidth: 12,
-            progressOuter: $progressOuter,
-            progressMiddle: $progressMiddle,
-            progressInner: $progressInner
-          )
-          .frame(maxWidth: .infinity)
         }
         .padding(.vertical, 8)
       } header: {
@@ -158,14 +145,14 @@ struct HomeView: View {
         }
       } header: {
         NavigationLink(value: Constants.HomeRouteAnnouncer.trips.rawValue) {
-          HStack {
+          HStack(spacing: 2) {
             Text("Recent Trips")
               .font(.title2.bold())
-            Spacer()
             Image(systemName: "chevron.right")
               .font(.caption.bold())
               .foregroundStyle(.tertiary)
           }
+          .foregroundStyle(Color.primary)
         }
       }
     }

@@ -293,13 +293,9 @@ struct ThumbnailImageView: View {
   }
 
   private var placeholder: some View {
-    ZStack {
-      Image(systemName: "person.crop.rectangle.stack.fill")
-        .font(.system(size: 30))
-        .foregroundStyle(.tertiary)
-      Text("No Image")
-        .font(.caption2)
-        .foregroundStyle(.secondary)
+    VStack {
+      ProgressView()
+        .controlSize(.extraLarge)
     }
     .frame(width: 100, height: 100)
     .background(.secondary.opacity(0.1))
@@ -423,13 +419,6 @@ struct FaceDetectionDetailView: View {
     }
     .navigationTitle("Detection Detail")
     .navigationBarTitleDisplayMode(.inline)
-    .toolbar {
-      ToolbarItem(placement: .topBarTrailing) {
-        CloseButton {
-          dismiss()
-        }
-      }
-    }
     .task {
       await loadImage()
     }

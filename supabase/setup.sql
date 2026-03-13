@@ -136,7 +136,19 @@ CREATE TABLE IF NOT EXISTS public.vehicle_realtime (
     -- Current music info (from Shazam)
     current_song_title TEXT,
     current_song_artist TEXT,
-    current_song_detected_at TIMESTAMPTZ
+    current_song_detected_at TIMESTAMPTZ,
+
+    -- Gyroscope / accelerometer (from main.py on every realtime tick)
+    acc_mag REAL,
+    gyro_mag REAL,
+    gyrox REAL,
+    gyroy REAL,
+    gyroz REAL,
+
+    -- Crash detection (set immediately on impact, cleared on session reset)
+    crash_detected BOOLEAN DEFAULT FALSE,
+    crash_severity TEXT,
+    crash_peak_g REAL
 );
 
 -- Create indexes for vehicle tables
@@ -260,12 +272,9 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
 
     -- Notification preferences (stored as JSONB for flexibility)
     notification_preferences JSONB DEFAULT '{
-        "unidentified_face": true,
         "collision": true,
         "driver_drowsiness": true,
-        "speed_limit": true,
-        "drunk_driving": true,
-        "fsd": true
+        "speed_limit": true
     }'::jsonb NOT NULL,
 
     -- Push notification token (for future use)

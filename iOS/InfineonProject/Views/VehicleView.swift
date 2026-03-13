@@ -48,10 +48,6 @@ struct VehicleView: View {
   // Realtime refresh task
   @State private var realtimeRefreshTask: Task<Void, Never>?
 
-  // Currently playing song
-  @State private var currentSong: String? = "Why'd You Only Call Me When You're High?"
-  @State private var currentArtist: String? = "Arctic Monkeys"
-
   // Scroll tracking
   @State private var scrollOffset: CGFloat = 0
 
@@ -134,18 +130,18 @@ struct VehicleView: View {
               }
 
               // Currently playing song
-              if let currentSong {
+              if let songTitle = vehicle.realtimeData?.currentSongTitle {
                 VStack(spacing: 0) {
                   HStack {
                     VStack(alignment: .leading) {
                       MarqueeView {
-                        Text(currentSong)
+                        Text(songTitle)
                           .font(.subheadline)
                           .lineLimit(1)
                       }
-                      if let currentArtist {
+                      if let artist = vehicle.realtimeData?.currentSongArtist {
                         MarqueeView {
-                          Text(currentArtist)
+                          Text(artist)
                             .foregroundStyle(.secondary)
                             .font(.subheadline)
                             .lineLimit(1)
@@ -168,9 +164,6 @@ struct VehicleView: View {
                       applyGlass: false)
                   )
                   .padding()
-                  .onTapGesture {
-                    showingShazamHistorySheet.toggle()
-                  }
                 }
                 .background(Color(.secondarySystemBackground))
                 .clipShape(.rect(cornerRadius: 12))
@@ -193,6 +186,7 @@ struct VehicleView: View {
                     color: .blue
                   )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
               }
               .tint(.primary)
               .contentShape(.rect)
@@ -213,6 +207,7 @@ struct VehicleView: View {
                     color: .indigo
                   )
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
               }
               .tint(.primary)
               .contentShape(.rect)
@@ -236,6 +231,7 @@ struct VehicleView: View {
                         color: .green
                       )
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                   }
                   .tint(.primary)
                   .contentShape(.rect)
@@ -256,6 +252,7 @@ struct VehicleView: View {
                         color: .red
                       )
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                   }
                   .tint(.primary)
                   .contentShape(.rect)
@@ -302,6 +299,7 @@ struct VehicleView: View {
                         color: .blue
                       )
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                   }
                   .tint(.primary)
                   .contentShape(.rect)
@@ -352,6 +350,7 @@ struct VehicleView: View {
                         color: bluetooth.isConnected ? .green : .gray
                       )
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                   }
                   .tint(.primary)
                   .contentShape(.rect)
@@ -368,6 +367,7 @@ struct VehicleView: View {
                     } icon: {
                       SettingsBoxView(icon: "car.fill", color: .blue)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                   }
                   .tint(.primary)
                   .contentShape(.rect)
@@ -486,7 +486,6 @@ struct VehicleView: View {
               id: "settingsSheet", namespace: namespace, shape: .circle, applyGlass: false))
         }
       }
-      //      .dynamicIslandToast(isPresented: .constant(vehicleStreetName != nil), toast: .init(symbol: "xmark.circle.fill", symbolForegroundStyle: (.green, .white), title: "Distracted Driving", message: "Driver was alerted"))
     }
     .sheet(isPresented: $showingLiveCameraSheet) {
       VehicleLiveCameraView(vehicleId: vehicle.vehicle.id)
@@ -2001,6 +2000,62 @@ struct VehicleLiveCameraView: View {
 
                 Divider()
               }
+
+              // Accelerometer / gyroscope
+              if let accMag = data.accMag, let gyroMag = data.gyroMag {
+                Divider()
+
+                HStack {
+                  Label("Accelerometer", systemImage: "waveform.path.ecg")
+                  Spacer()
+                  Text(accMag, format: .number.precision(.fractionLength(2)))
+                    .bold()
+                    + Text(" g")
+                    .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                HStack {
+                  Label("Gyroscope", systemImage: "gyroscope")
+                  Spacer()
+                  Text(gyroMag, format: .number.precision(.fractionLength(1)))
+                    .bold()
+                    + Text(" °/s")
+                    .foregroundStyle(.secondary)
+                }
+              }
+
+              // Crash alert
+              if data.crashDetected == true {
+                Divider()
+
+                HStack(spacing: 12) {
+                  Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .font(.title2)
+                  VStack(alignment: .leading, spacing: 2) {
+                    Text("Crash Detected")
+                      .bold()
+                      .foregroundStyle(.red)
+                    if let severity = data.crashSeverity {
+                      Text(severity.capitalized)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    if let peakG = data.crashPeakG {
+                      Text("Peak: \(peakG, format: .number.precision(.fractionLength(2))) g")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                  }
+                  Spacer()
+                }
+                .padding()
+                .background(Color.red.opacity(0.1), in: .rect(cornerRadius: 10))
+              }
+
+              Divider()
 
               // Last updated
               HStack {

@@ -95,10 +95,14 @@ struct ShazamHistoryView: View {
 
 struct MusicDetectionRow: View {
   let detection: MusicDetection
+  @Environment(\.openURL) private var openURL
 
   var body: some View {
-    HStack(alignment: .top, spacing: 12) {
-      // Song information
+    Button {
+      if let shazamUrl = detection.shazamUrl, let url = URL(string: shazamUrl) {
+        openURL(url)
+      }
+    } label: {
       VStack(alignment: .leading, spacing: 8) {
         // Title and artist
         VStack(alignment: .leading, spacing: 2) {
@@ -141,20 +145,6 @@ struct MusicDetectionRow: View {
           }
         }
 
-        // Links
-        VStack(alignment: .leading, spacing: 12) {
-          if let shazamUrl = detection.shazamUrl, let url = URL(string: shazamUrl) {
-            Link(destination: url) {
-              HStack {
-                Image(systemName: "waveform.circle.fill")
-                Text("Shazam")
-              }
-              .font(.caption)
-              .foregroundStyle(.blue)
-            }
-          }
-        }
-
         // Detection time
         HStack(spacing: 4) {
           Image(systemName: "clock")
@@ -165,8 +155,10 @@ struct MusicDetectionRow: View {
             .foregroundStyle(.secondary)
         }
       }
+      .padding(.vertical, 4)
     }
-    .padding(.vertical, 4)
+    .foregroundStyle(.primary)
+    .contentShape(Rectangle())
   }
 }
 

@@ -131,6 +131,19 @@ struct VehicleRealtime: Codable, Identifiable {
   let buzzerActive: Bool?
   let buzzerType: String?
   let buzzerUpdatedAt: Date?
+  // Currently playing song (from Shazam)
+  let currentSongTitle: String?
+  let currentSongArtist: String?
+  // Gyroscope / accelerometer
+  let accMag: Double?
+  let gyroMag: Double?
+  let gyrox: Double?
+  let gyroy: Double?
+  let gyroz: Double?
+  // Crash detection
+  let crashDetected: Bool?
+  let crashSeverity: String?
+  let crashPeakG: Double?
 
   enum CodingKeys: String, CodingKey {
     case vehicleId = "vehicle_id"
@@ -150,6 +163,14 @@ struct VehicleRealtime: Codable, Identifiable {
     case buzzerActive = "buzzer_active"
     case buzzerType = "buzzer_type"
     case buzzerUpdatedAt = "buzzer_updated_at"
+    case currentSongTitle = "current_song_title"
+    case currentSongArtist = "current_song_artist"
+    case accMag = "acc_mag"
+    case gyroMag = "gyro_mag"
+    case gyrox, gyroy, gyroz
+    case crashDetected = "crash_detected"
+    case crashSeverity = "crash_severity"
+    case crashPeakG = "crash_peak_g"
   }
 
   init(
@@ -170,7 +191,17 @@ struct VehicleRealtime: Codable, Identifiable {
     isDrinkingDetected: Bool?,
     buzzerActive: Bool? = nil,
     buzzerType: String? = nil,
-    buzzerUpdatedAt: Date? = nil
+    buzzerUpdatedAt: Date? = nil,
+    currentSongTitle: String? = nil,
+    currentSongArtist: String? = nil,
+    accMag: Double? = nil,
+    gyroMag: Double? = nil,
+    gyrox: Double? = nil,
+    gyroy: Double? = nil,
+    gyroz: Double? = nil,
+    crashDetected: Bool? = nil,
+    crashSeverity: String? = nil,
+    crashPeakG: Double? = nil
   ) {
     self.vehicleId = vehicleId
     self.updatedAt = updatedAt
@@ -190,6 +221,16 @@ struct VehicleRealtime: Codable, Identifiable {
     self.buzzerActive = buzzerActive
     self.buzzerType = buzzerType
     self.buzzerUpdatedAt = buzzerUpdatedAt
+    self.currentSongTitle = currentSongTitle
+    self.currentSongArtist = currentSongArtist
+    self.accMag = accMag
+    self.gyroMag = gyroMag
+    self.gyrox = gyrox
+    self.gyroy = gyroy
+    self.gyroz = gyroz
+    self.crashDetected = crashDetected
+    self.crashSeverity = crashSeverity
+    self.crashPeakG = crashPeakG
   }
 }
 
