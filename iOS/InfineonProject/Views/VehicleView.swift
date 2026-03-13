@@ -1866,6 +1866,7 @@ struct VehicleLiveCameraView: View {
   @State private var dataTask: Task<Void, Never>?
   @State private var httpCameraFrame: UIImage?
   @State private var httpPollTask: Task<Void, Never>?
+  @State private var watchdogTask: Task<Void, Never>?
 
   private var activeFrame: UIImage? {
     if bluetooth.isConnected {
@@ -2100,9 +2101,12 @@ struct VehicleLiveCameraView: View {
 
   private func startPolling() {
     stopPolling()
-    // BLE: poll HTTP camera server on the Pi's local network
+    isStreaming = true
+    consecutiveErrors = 0
+    lastFrameDate = .now
+
     if bluetooth.isConnected {
-      isStreaming = true
+      // BLE: poll HTTP camera server on the Pi's local network
       httpPollTask = Task {
         while !Task.isCancelled {
           if let camURL = bluetooth.latestRealtime?.cam,
@@ -2114,54 +2118,66 @@ struct VehicleLiveCameraView: View {
                 httpCameraFrame = image
                 lastFrameDate = .now
                 consecutiveErrors = 0
+                self.error = nil
               }
             } catch {
               consecutiveErrors += 1
               if consecutiveErrors > 15 && httpCameraFrame == nil {
                 self.error = "Cannot reach camera server on Pi."
                 isStreaming = false
-                return
+                // Don't return — watchdog will restart if it recovers
               }
             }
           }
           try? await Task.sleep(for: .milliseconds(200))
         }
       }
-      return
-    }
-    isStreaming = true
-    consecutiveErrors = 0
+    } else {
+      // Primary: broadcast-driven fetches with auto-reconnect
+      pollTask = Task {
+        while !Task.isCancelled {
+          let channel = await supabase.client.realtimeV2.channel("live-frames:\(vehicleId)")
+          let broadcastStream = await channel.broadcast(event: "new_frame")
+          await channel.subscribe()
 
-    // Primary: broadcast-driven fetches with auto-reconnect
-    pollTask = Task {
-      while !Task.isCancelled {
-        let channel = await supabase.client.realtimeV2.channel("live-frames:\(vehicleId)")
-        let broadcastStream = await channel.broadcast(event: "new_frame")
-        await channel.subscribe()
-
-        await fetchLatestFrame()
-
-        for await _ in broadcastStream {
-          guard !Task.isCancelled else { break }
           await fetchLatestFrame()
+
+          for await _ in broadcastStream {
+            guard !Task.isCancelled else { break }
+            await fetchLatestFrame()
+          }
+
+          await supabase.client.realtimeV2.removeChannel(channel)
+
+          // Broadcast stream ended — reconnect after a brief pause
+          guard !Task.isCancelled else { break }
+          try? await Task.sleep(for: .seconds(1))
         }
+      }
 
-        await supabase.client.realtimeV2.removeChannel(channel)
-
-        // Broadcast stream ended (channel disconnected) — reconnect after a brief pause
-        guard !Task.isCancelled else { break }
-        try? await Task.sleep(for: .seconds(1))
+      // Fallback: periodic polling in case broadcast stalls silently
+      fallbackPollTask = Task {
+        while !Task.isCancelled {
+          try? await Task.sleep(for: .seconds(2))
+          guard !Task.isCancelled else { break }
+          if Date.now.timeIntervalSince(lastFrameDate) > 1.5 {
+            await fetchLatestFrame()
+          }
+        }
       }
     }
 
-    // Fallback: periodic polling in case broadcast stalls silently
-    fallbackPollTask = Task {
+    // Watchdog: restart all stream tasks if no frame arrives for 6s
+    watchdogTask = Task {
       while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(2))
+        try? await Task.sleep(for: .seconds(5))
         guard !Task.isCancelled else { break }
-        // Only poll if no frame arrived recently
-        if Date.now.timeIntervalSince(lastFrameDate) > 1.5 {
-          await fetchLatestFrame()
+        if Date.now.timeIntervalSince(lastFrameDate) > 6 {
+          // Unstick isFetchingFrame in case the download hung without throwing
+          isFetchingFrame = false
+          self.error = nil
+          startPolling()  // cancels this watchdog and spawns a fresh one
+          break
         }
       }
     }
@@ -2174,20 +2190,36 @@ struct VehicleLiveCameraView: View {
     defer { isFetchingFrame = false }
 
     do {
-      let data = try await supabase.client.storage
-        .from("live-frames")
-        .download(path: "\(vehicleId)/latest.jpg")
+      // 8-second timeout prevents a hung download from locking isFetchingFrame forever
+      let data = try await withThrowingTaskGroup(of: Data.self) { group in
+        group.addTask {
+          try await supabase.client.storage
+            .from("live-frames")
+            .download(path: "\(vehicleId)/latest.jpg")
+        }
+        group.addTask {
+          try await Task.sleep(for: .seconds(8))
+          throw CancellationError()
+        }
+        guard let result = try await group.next() else { throw CancellationError() }
+        group.cancelAll()
+        return result
+      }
 
       if let image = UIImage(data: data) {
         currentFrame = image
         consecutiveErrors = 0
         lastFrameDate = .now
+        // Recover from any prior error state
+        self.error = nil
+        isStreaming = true
       }
     } catch {
       consecutiveErrors += 1
       if consecutiveErrors > 15 && currentFrame == nil {
         self.error = "Make sure ENABLE_STREAM=true on the vehicle."
         isStreaming = false
+        // Don't exit the polling loop — watchdog will restart when the stream recovers
       }
     }
   }
@@ -2199,6 +2231,8 @@ struct VehicleLiveCameraView: View {
     fallbackPollTask = nil
     httpPollTask?.cancel()
     httpPollTask = nil
+    watchdogTask?.cancel()
+    watchdogTask = nil
     isStreaming = false
   }
 

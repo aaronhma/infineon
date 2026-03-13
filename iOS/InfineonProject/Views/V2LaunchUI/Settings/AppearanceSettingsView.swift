@@ -8,6 +8,42 @@
 import AaronUI
 import SwiftUI
 
+// MARK: - Bundle Language Switching
+
+private let _mainBundlePath = Bundle.main.bundlePath
+private var _activeLanguageBundle: Bundle?
+private var _bundleSwapped = false
+
+private final class _LanguageBundle: Bundle, @unchecked Sendable {
+  override func localizedString(forKey key: String, value: String?, table tableName: String?)
+    -> String
+  {
+    if let bundle = _activeLanguageBundle {
+      return bundle.localizedString(forKey: key, value: value, table: tableName)
+    }
+    return super.localizedString(forKey: key, value: value, table: tableName)
+  }
+}
+
+extension Bundle {
+  static func setLanguage(_ languageCode: String?) {
+    if !_bundleSwapped {
+      object_setClass(Bundle.main, _LanguageBundle.self)
+      _bundleSwapped = true
+    }
+    guard let code = languageCode,
+      let lookup = Bundle(path: _mainBundlePath),
+      let lpath = lookup.path(forResource: code, ofType: "lproj")
+    else {
+      _activeLanguageBundle = nil
+      return
+    }
+    _activeLanguageBundle = Bundle(path: lpath)
+  }
+}
+
+// MARK: - App Theme
+
 private enum AppTheme: String, CaseIterable {
   case system = "System"
   case light = "Light"
@@ -15,29 +51,24 @@ private enum AppTheme: String, CaseIterable {
 
   var icon: String {
     switch self {
-    case .system:
-      "circle.righthalf.filled"
-    case .light:
-      "sun.max.fill"
-    case .dark:
-      "moon.fill"
+    case .system: "circle.righthalf.filled"
+    case .light: "sun.max.fill"
+    case .dark: "moon.fill"
     }
   }
 
   var colorScheme: ColorScheme? {
     switch self {
-    case .system:
-      nil
-    case .light:
-      .light
-    case .dark:
-      .dark
+    case .system: nil
+    case .light: .light
+    case .dark: .dark
     }
   }
 }
 
+// MARK: - App Language
+
 enum AppLanguage: String, Identifiable, CaseIterable {
-  case system
   case english = "en"
   case spanish = "es"
   case french = "fr"
@@ -48,9 +79,8 @@ enum AppLanguage: String, Identifiable, CaseIterable {
 
   var id: String { rawValue }
 
-  var localeIdentifier: String? {
+  var localeIdentifier: String {
     switch self {
-    case .system: nil
     case .english: "en_US"
     case .spanish: "es"
     case .french: "fr"
@@ -63,18 +93,11 @@ enum AppLanguage: String, Identifiable, CaseIterable {
 
   var localizedName: String {
     switch self {
-    case .system:
-      String(localized: "System", bundle: .main)
-    case .english:
-      Locale.current.localizedString(forIdentifier: "en_US") ?? "English (US)"
-    case .spanish:
-      Locale.current.localizedString(forIdentifier: "es") ?? "Spanish"
-    case .french:
-      Locale.current.localizedString(forIdentifier: "fr") ?? "French"
-    case .german:
-      Locale.current.localizedString(forIdentifier: "de") ?? "German"
-    case .persian:
-      Locale.current.localizedString(forIdentifier: "fa") ?? "Persian"
+    case .english: Locale.current.localizedString(forIdentifier: "en_US") ?? "English (US)"
+    case .spanish: Locale.current.localizedString(forIdentifier: "es") ?? "Spanish"
+    case .french: Locale.current.localizedString(forIdentifier: "fr") ?? "French"
+    case .german: Locale.current.localizedString(forIdentifier: "de") ?? "German"
+    case .persian: Locale.current.localizedString(forIdentifier: "fa") ?? "Persian"
     case .chineseSimplified:
       Locale.current.localizedString(forIdentifier: "zh-Hans") ?? "Chinese (Simplified)"
     case .chineseTraditional:
@@ -82,6 +105,36 @@ enum AppLanguage: String, Identifiable, CaseIterable {
     }
   }
 }
+
+// MARK: - Language Manager
+
+@Observable
+final class LanguageManager {
+  @ObservationIgnored
+  @AppStorage("_appLanguage") private var _storedLanguage = AppLanguage.english.rawValue
+
+  private(set) var renderID = UUID()
+
+  var currentLanguage: AppLanguage {
+    AppLanguage(rawValue: _storedLanguage) ?? .english
+  }
+
+  var locale: Locale {
+    Locale(identifier: currentLanguage.localeIdentifier)
+  }
+
+  init() {
+    Bundle.setLanguage(currentLanguage.localeIdentifier)
+  }
+
+  func setLanguage(_ language: AppLanguage) {
+    _storedLanguage = language.rawValue
+    Bundle.setLanguage(language.localeIdentifier)
+    renderID = UUID()
+  }
+}
+
+// MARK: - Switchers
 
 struct ThemeSwitcher<Content: View>: View {
   @ViewBuilder var content: Content
@@ -93,32 +146,14 @@ struct ThemeSwitcher<Content: View>: View {
   }
 }
 
-struct LocaleSwitcher<Content: View>: View {
-  @ViewBuilder var content: Content
-  @AppStorage("_appLanguage") private var appLanguage = AppLanguage.system.rawValue
-
-  private var currentLocale: Locale {
-    guard let language = AppLanguage(rawValue: appLanguage),
-      let identifier = language.localeIdentifier
-    else {
-      return .current
-    }
-    return Locale(identifier: identifier)
-  }
-
-  var body: some View {
-    content
-      .environment(\.locale, currentLocale)
-  }
-}
+// MARK: - Appearance Settings
 
 struct AppearanceSettingsView: View {
   @AppStorage("_appTheme") private var appTheme = AppTheme.system
-  @AppStorage("_appLanguage") private var appLanguage = AppLanguage.system.rawValue
+  @Environment(LanguageManager.self) private var languageManager
 
-  private var currentLanguage: AppLanguage {
-    AppLanguage(rawValue: appLanguage) ?? .system
-  }
+  @State private var pendingLanguage: AppLanguage?
+  @State private var showLanguageConfirmation = false
 
   var body: some View {
     List {
@@ -135,23 +170,49 @@ struct AppearanceSettingsView: View {
       .listSectionSeparator(.hidden)
 
       Section {
-        Picker(selection: $appLanguage) {
+        Picker(
+          selection: .init(
+            get: { languageManager.currentLanguage },
+            set: { newValue in
+              if newValue != languageManager.currentLanguage {
+                Haptics.impact()
+                pendingLanguage = newValue
+                showLanguageConfirmation = true
+              }
+            }
+          )
+        ) {
           ForEach(AppLanguage.allCases) { language in
             Text(language.localizedName)
-              .tag(language.rawValue)
+              .tag(language)
           }
         } label: {
           Label {
             Text("Language")
           } icon: {
-            SettingsBoxView(
-              icon: "globe", color: .pink
-            )
+            SettingsBoxView(icon: "globe", color: .pink)
           }
         }
       }
     }
     .navigationTitle("Appearance")
+    .confirmationDialog(
+      "Change Language",
+      isPresented: $showLanguageConfirmation,
+      presenting: pendingLanguage,
+      actions: { language in
+        Button("Yes") {
+          languageManager.setLanguage(language)
+          pendingLanguage = nil
+        }
+        Button("No", role: .cancel) {
+          pendingLanguage = nil
+        }
+      },
+      message: { language in
+        Text("Switch language to \(language.localizedName)?")
+      }
+    )
   }
 
   @ViewBuilder
@@ -164,9 +225,7 @@ struct AppearanceSettingsView: View {
           .fill(
             appTheme == theme
               ? AnyShapeStyle(.ultraThinMaterial)
-              : AnyShapeStyle(
-                .background
-              )
+              : AnyShapeStyle(.background)
           )
           .frame(height: 120)
           .frame(maxWidth: .infinity)

@@ -17,8 +17,6 @@ struct VehicleAccessSheet: View {
   @State private var accessUsers: [VehicleAccessUser] = []
   @State private var isLoading = true
   @State private var errorMessage: String?
-  @State private var userToRemove: VehicleAccessUser?
-  @State private var isRemovingAccess = false
   @State private var showShareAccessViewSheet = false
 
   private var currentUserId: UUID? {
@@ -62,8 +60,8 @@ struct VehicleAccessSheet: View {
                 AccessUserRow(
                   user: owner,
                   canRemove: false,
-                  onRemove: {
-                  })
+                  isSelf: owner.userId == currentUserId,
+                  onRemove: {})
               }
             }
 
@@ -76,9 +74,10 @@ struct VehicleAccessSheet: View {
                   let canRemove = isOwner || user.userId == currentUserId
                   AccessUserRow(
                     user: user,
-                    canRemove: canRemove
+                    canRemove: canRemove,
+                    isSelf: user.userId == currentUserId
                   ) {
-                    userToRemove = user
+                    Task { await removeAccess(for: user) }
                   }
                 }
               }
@@ -114,32 +113,6 @@ struct VehicleAccessSheet: View {
           }
         }
       }
-      .confirmationDialog(
-        "Remove Access",
-        isPresented: .init(
-          get: { userToRemove != nil },
-          set: { if !$0 { userToRemove = nil } }
-        ),
-        presenting: userToRemove
-      ) { user in
-        Button("Remove", role: .destructive) {
-          Task {
-            await removeAccess(for: user)
-          }
-        }
-        Button("Cancel", role: .cancel) {
-          userToRemove = nil
-        }
-      } message: { user in
-        if user.userId == currentUserId {
-          Text(
-            "Are you sure you want to leave this vehicle? You will need an invite code to rejoin.")
-        } else {
-          Text(
-            "Are you sure you want to remove \(user.displayName ?? user.email ?? "this user")'s access?"
-          )
-        }
-      }
       .task {
         await loadAccessUsers()
       }
@@ -170,27 +143,16 @@ struct VehicleAccessSheet: View {
   }
 
   private func removeAccess(for user: VehicleAccessUser) async {
-    isRemovingAccess = true
-
     do {
       if user.userId == currentUserId {
         try await supabase.leaveVehicle(vehicle.id)
-        await MainActor.run {
-          dismiss()
-        }
+        await MainActor.run { dismiss() }
       } else {
-        try await supabase
-          .removeUserAccess(
-            vehicleId: vehicle.id,
-            userId: user.userId
-          )
+        try await supabase.removeUserAccess(vehicleId: vehicle.id, userId: user.userId)
         await loadAccessUsers()
       }
     } catch {
-      await MainActor.run {
-        errorMessage = error.localizedDescription
-        isRemovingAccess = false
-      }
+      await MainActor.run { errorMessage = error.localizedDescription }
     }
   }
 }
@@ -198,9 +160,11 @@ struct VehicleAccessSheet: View {
 struct AccessUserRow: View {
   let user: VehicleAccessUser
   let canRemove: Bool
+  let isSelf: Bool
   let onRemove: () -> Void
 
   @State private var avatarImage: UIImage?
+  @State private var showingConfirmation = false
 
   var body: some View {
     HStack(spacing: 12) {
@@ -241,12 +205,29 @@ struct AccessUserRow: View {
 
       if canRemove {
         Button {
-          onRemove()
+          Haptics.impact()
+          showingConfirmation = true
         } label: {
           Image(systemName: "minus.circle.fill")
             .foregroundStyle(.red)
         }
         .buttonStyle(.plain)
+      }
+    }
+    .confirmationDialog(
+      isSelf ? "Leave Vehicle" : "Remove Access",
+      isPresented: $showingConfirmation
+    ) {
+      Button(isSelf ? "Leave Vehicle" : "Remove", role: .destructive) {
+        onRemove()
+      }
+    } message: {
+      if isSelf {
+        Text("Are you sure you want to leave this vehicle? You will need an invite code to rejoin.")
+      } else {
+        Text(
+          "Are you sure you want to remove \(user.displayName ?? user.email ?? "this user")'s access?"
+        )
       }
     }
     .task {

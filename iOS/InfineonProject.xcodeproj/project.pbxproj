@@ -319,7 +319,6 @@
 				en,
 				Base,
 				fr,
-				ru,
 				fa,
 				de,
 				"zh-Hans",

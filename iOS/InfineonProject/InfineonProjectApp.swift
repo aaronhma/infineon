@@ -16,6 +16,8 @@ struct InfineonProjectApp: App {
     "lastSelectedVehicleId"
   ) private var lastSelectedVehicleId: String?
 
+  @State private var languageManager = LanguageManager()
+
   private func handleShortcut(url: URL) {
     deepLinkManager.handleURL(url)
   }
@@ -72,6 +74,9 @@ struct InfineonProjectApp: App {
             )
           }
       }
+      .id(languageManager.renderID)
+      .environment(\.locale, languageManager.locale)
+      .environment(languageManager)
     }
     .modelContainer(sharedModelContainer)
     .onChange(of: scenePhase) {

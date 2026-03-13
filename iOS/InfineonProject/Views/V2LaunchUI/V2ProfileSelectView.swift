@@ -6,6 +6,7 @@
 //
 
 import AaronUI
+import SwiftData
 import SwiftUI
 
 struct RectAnchorKey: PreferenceKey {
@@ -56,6 +57,11 @@ struct AnimatedPositionModifier: ViewModifier, Animatable {
 struct V2ProfileSelectView: View {
   @Environment(\.colorScheme) private var colorScheme
   @Environment(V2AppData.self) private var appData
+
+  // SwiftData query — loads instantly from disk on first render,
+  // then live-updates whenever SupabaseService writes new cache entries.
+  @Query(sort: \CachedVehicle.updatedAt, order: .reverse)
+  private var cachedVehicles: [CachedVehicle]
 
   @AppStorage(
     "lastSelectedVehicleId"
@@ -127,7 +133,7 @@ struct V2ProfileSelectView: View {
   var body: some View {
     NavigationStack {
       Group {
-        if supabase.vehicles.isEmpty {
+        if cachedVehicles.isEmpty {
           JoinVehicleView()
         } else {
           LazyVGrid(
@@ -137,13 +143,13 @@ struct V2ProfileSelectView: View {
             )
           ) {
             ForEach(
-              supabase.vehicles.map {
+              cachedVehicles.map {
                 V2Profile(
                   id: $0.id,
-                  name: $0.name!,
+                  name: $0.name ?? "",
                   icon: "benji",
                   vehicleId: $0.id,
-                  vehicle: $0
+                  vehicle: $0.toVehicle()
                 )
               }
             ) { profile in

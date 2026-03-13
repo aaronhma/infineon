@@ -135,8 +135,16 @@ struct JoinVehicleView: View {
         }
       }
       .dynamicIslandQRCodeScanner(isScanning: $showScanner) { code in
-        print(code)
-        //                  joinVehicle()
+        guard
+          let url = URL(string: code),
+          url.scheme == "infineon",
+          url.host == "add-vehicle",
+          let extracted = url.pathComponents.last,
+          extracted.count == 6,
+          extracted.allSatisfy({ $0.isLetter || $0.isNumber })
+        else { return }
+        inviteCode = extracted.uppercased()
+        joinVehicle()
       }
       .navigationTitle("Join Vehicle")
       .navigationBarTitleDisplayMode(.inline)
