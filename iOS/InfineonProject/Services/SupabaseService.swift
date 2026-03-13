@@ -559,30 +559,21 @@ struct MusicDetection: Codable, Identifiable {
 }
 
 struct NotificationPreferences: Codable, Equatable {
-  var unidentifiedFace: Bool
   var collision: Bool
   var driverDrowsiness: Bool
   var speedLimit: Bool
-  var drunkDriving: Bool
-  var fsd: Bool
 
   enum CodingKeys: String, CodingKey {
-    case unidentifiedFace = "unidentified_face"
     case collision
     case driverDrowsiness = "driver_drowsiness"
     case speedLimit = "speed_limit"
-    case drunkDriving = "drunk_driving"
-    case fsd
   }
 
   static var allEnabled: NotificationPreferences {
     NotificationPreferences(
-      unidentifiedFace: true,
       collision: true,
       driverDrowsiness: true,
-      speedLimit: true,
-      drunkDriving: true,
-      fsd: true
+      speedLimit: true
     )
   }
 }

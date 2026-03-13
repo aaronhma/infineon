@@ -363,6 +363,7 @@ struct V2AccountView: View {
             VStack(alignment: .leading, spacing: 8) {
               Text("ARGUS")
                 .font(.headline)
+                .fontWidth(.expanded)
 
               Text("© 2026 Aaron Ma.")
                 .font(.subheadline)
@@ -435,6 +436,7 @@ struct V2AccountView: View {
                 Text(name)
                   .bold()
                   .font(.title2)
+                  .fontWidth(.expanded)
                   .titleVisibilityAnchor()
 
                 Text(creator)
@@ -458,6 +460,7 @@ struct V2AccountView: View {
                 VStack(alignment: .leading, spacing: 8) {
                   Text("ARGUS")
                     .font(.headline)
+                    .fontWidth(.expanded)
 
                   Text("© 2026 Aaron Ma.")
                     .font(.subheadline)
@@ -505,6 +508,7 @@ struct V2AccountView: View {
       HStack {
         VStack(alignment: .leading) {
           Text(name)
+            .fontWidth(.expanded)
             .bold()
 
           Text(creator)
@@ -598,18 +602,16 @@ struct EditProfileView: View {
         }
       }
 
-      Section("Debug") {
-        LabeledContent("User ID") {
-          if let userId = supabase.currentUser?.id.uuidString {
-            Text(userId)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .textSelection(.enabled)
-          } else {
-            Text("Not available")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
+      Section("User ID") {
+        if let userId = supabase.currentUser?.id.uuidString {
+          Text(userId)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+        } else {
+          Text("Not available")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
       }
     }
@@ -747,12 +749,9 @@ struct NotificationSettingsView: View {
   @State private var isSaving = false
   @State private var notificationsEnabled = false
 
-  @State private var unidentifiedFace = true
   @State private var collision = true
   @State private var driverDrowsiness = true
   @State private var speedLimit = true
-  @State private var drunkDriving = true
-  @State private var fsd = true
 
   var body: some View {
     List {
@@ -782,13 +781,6 @@ struct NotificationSettingsView: View {
       if notificationsEnabled {
         Section("Notify Me When...") {
           notificationToggle(
-            "Unidentified Face",
-            icon: "faceid",
-            description: "Notify when a new driver is detected",
-            isOn: $unidentifiedFace
-          )
-
-          notificationToggle(
             "Collision",
             icon: "car.side.rear.and.collision.and.car.side.front",
             description: "Notify when a car crash is detected",
@@ -808,36 +800,20 @@ struct NotificationSettingsView: View {
             description: "Notify when speed limit is exceeded",
             isOn: $speedLimit
           )
-
-          notificationToggle(
-            "Drunk Driving",
-            icon: "wineglass.fill",
-            description: "Notify when impaired driving is detected",
-            isOn: $drunkDriving
-          )
-
-          notificationToggle(
-            "FSD",
-            icon: "car.side.fill",
-            description: "Notify when FSD is engaged or disengaged",
-            isOn: $fsd
-          )
         }
       }
 
-      Section("Debug") {
-        LabeledContent("Device Token") {
-          if let token = supabase.deviceToken {
-            Text(token)
-              .font(.caption2)
-              .foregroundStyle(.secondary)
-              .textSelection(.enabled)
-              .lineLimit(3)
-          } else {
-            Text("Not available")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
+      Section("Device Token") {
+        if let token = supabase.deviceToken {
+          Text(token)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .lineLimit(3)
+        } else {
+          Text("Not available")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
       }
     }
@@ -887,12 +863,9 @@ struct NotificationSettingsView: View {
       notificationsEnabled = profile.notificationsEnabled ?? false
 
       if let prefs = profile.notificationPreferences {
-        unidentifiedFace = prefs.unidentifiedFace
         collision = prefs.collision
         driverDrowsiness = prefs.driverDrowsiness
         speedLimit = prefs.speedLimit
-        drunkDriving = prefs.drunkDriving
-        fsd = prefs.fsd
       }
     }
     isLoading = false
@@ -902,12 +875,9 @@ struct NotificationSettingsView: View {
     isSaving = true
 
     let preferences = NotificationPreferences(
-      unidentifiedFace: unidentifiedFace,
       collision: collision,
       driverDrowsiness: driverDrowsiness,
-      speedLimit: speedLimit,
-      drunkDriving: drunkDriving,
-      fsd: fsd
+      speedLimit: speedLimit
     )
 
     var pushToken: String?

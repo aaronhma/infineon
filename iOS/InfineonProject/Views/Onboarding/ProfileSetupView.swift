@@ -73,12 +73,6 @@ struct ProfileSetupView: View {
 
   @State private var enabledAirAIFeatures = [
     AirBrowserAIFeature(
-      name: "Unidentified Face",
-      icon: "faceid",
-      description: "Notify when a new driver is detected",
-      isEnabled: true
-    ),
-    AirBrowserAIFeature(
       name: "Collision",
       icon: "car.side.rear.and.collision.and.car.side.front",
       description: "Notify when a car crash is detected",
@@ -95,19 +89,6 @@ struct ProfileSetupView: View {
       icon: "gauge.with.dots.needle.100percent",
       description:
         "Notify when speed limit is exceeded",
-      isEnabled: true
-    ),
-    AirBrowserAIFeature(
-      name: "Drunk Driving",
-      icon: "wineglass.fill",
-      description: "Notify when alcohol or drink driving is detected",
-      isEnabled: true
-    ),
-    AirBrowserAIFeature(
-      name: "FSD",
-      icon: "car.side.fill",
-      description:
-        "Notify when FSD is engaged or disengaged",
       isEnabled: true
     ),
   ]
@@ -173,7 +154,8 @@ struct ProfileSetupView: View {
         AllowNotificationsView(
           config: NotificationConfig(
             title: "Stay connected", content: "Get notified when important events happen",
-            notificationTitle: "YO WHATS UP", notificationContent: "CLICK ME OR ELSE",
+            notificationTitle: "Severe Crash Detected",
+            notificationContent: "At 4:20PM at One Infinite Highway.",
             primaryButtonTitle: "continue", secondaryButtonTitle: "skip for now"),
           fontDesignStyle: .expanded
         ) {
@@ -202,7 +184,7 @@ struct ProfileSetupView: View {
     .overlay(alignment: .bottom) {
       if currentTab != .allowNotifications {
         AaronButtonView(
-          text: "continue",
+          "continue",
           opacity: currentStepUncompleted ? 0.7 : 1,
           disabled: currentStepUncompleted
         ) {
@@ -337,7 +319,7 @@ struct ProfileSetupView: View {
           }
           .padding(.vertical, 5)
 
-          if i.name != "FSD" {
+          if i.name != "Follow Speed Limit" {
             Divider()
           }
         }
@@ -359,14 +341,10 @@ struct ProfileSetupView: View {
 
     // Build notification preferences from the enabled features
     let notificationPreferences = NotificationPreferences(
-      unidentifiedFace: enabledAirAIFeatures.first { $0.name == "Unidentified Face" }?.isEnabled
-        ?? true,
       collision: enabledAirAIFeatures.first { $0.name == "Collision" }?.isEnabled ?? true,
       driverDrowsiness: enabledAirAIFeatures.first { $0.name == "Driver Drowsiness" }?.isEnabled
         ?? true,
-      speedLimit: enabledAirAIFeatures.first { $0.name == "Follow Speed Limit" }?.isEnabled ?? true,
-      drunkDriving: enabledAirAIFeatures.first { $0.name == "Drunk Driving" }?.isEnabled ?? true,
-      fsd: enabledAirAIFeatures.first { $0.name == "FSD" }?.isEnabled ?? true
+      speedLimit: enabledAirAIFeatures.first { $0.name == "Follow Speed Limit" }?.isEnabled ?? true
     )
 
     // Register for remote notifications if enabled

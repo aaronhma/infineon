@@ -76,9 +76,6 @@ struct ShazamHistoryView: View {
       .task {
         await loadMusicDetections()
       }
-      .refreshable {
-        await loadMusicDetections()
-      }
     }
   }
 
@@ -99,56 +96,8 @@ struct ShazamHistoryView: View {
 struct MusicDetectionRow: View {
   let detection: MusicDetection
 
-  @State private var artworkURL: URL?
-
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
-      // Album art
-      //      AsyncImage(url: artworkURL) { phase in
-      //        switch phase {
-      //        case .empty:
-      //          ZStack {
-      //            RoundedRectangle(cornerRadius: 8)
-      //              .fill(Color.purple.opacity(0.2))
-      //              .frame(width: 80, height: 80)
-      //
-      //            ProgressView()
-      //              .tint(.purple)
-      //          }
-      //        case .success(let image):
-      //          image
-      //            .resizable()
-      //            .aspectRatio(contentMode: .fill)
-      //            .frame(width: 80, height: 80)
-      //            .clipShape(RoundedRectangle(cornerRadius: 8))
-      //        case .failure:
-      //          ZStack {
-      //            RoundedRectangle(cornerRadius: 8)
-      //              .fill(Color.purple.opacity(0.2))
-      //              .frame(width: 80, height: 80)
-      //
-      //            Image(systemName: "music.note")
-      //              .font(.title2)
-      //              .foregroundStyle(.purple)
-      //          }
-      //        @unknown default:
-      //          ZStack {
-      //            RoundedRectangle(cornerRadius: 8)
-      //              .fill(Color.purple.opacity(0.2))
-      //              .frame(width: 80, height: 80)
-      //
-      //            Image(systemName: "music.note")
-      //              .font(.title2)
-      //              .foregroundStyle(.purple)
-      //          }
-      //        }
-      //      }
-      Image("benji")
-        .resizable()
-        .aspectRatio(contentMode: .fill)
-        .frame(width: 80, height: 80)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-
       // Song information
       VStack(alignment: .leading, spacing: 8) {
         // Title and artist
@@ -202,28 +151,6 @@ struct MusicDetectionRow: View {
               }
               .font(.caption)
               .foregroundStyle(.blue)
-            }
-          }
-
-          if let appleMusicUrl = detection.appleMusicUrl, let url = URL(string: appleMusicUrl) {
-            Link(destination: url) {
-              HStack {
-                Image(systemName: "applelogo")
-                Text("Apple Music")
-              }
-              .font(.caption)
-              .foregroundStyle(.red)
-            }
-          }
-
-          if let spotifyUrl = detection.spotifyUrl, let url = URL(string: spotifyUrl) {
-            Link(destination: url) {
-              HStack {
-                Image(systemName: "play.circle.fill")
-                Text("Spotify")
-              }
-              .font(.caption)
-              .foregroundStyle(.green)
             }
           }
         }

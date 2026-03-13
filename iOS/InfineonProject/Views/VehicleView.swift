@@ -87,6 +87,23 @@ struct VehicleView: View {
               Text(data.isMoving ? "\(data.speedMph) MPH" : "Parked")
                 .contentTransition(.numericText(value: 0))
                 .foregroundStyle(.secondary)
+
+              //                HStack {
+              //                  Text(
+              //                    "\(Text("\(data.speedMph)").font(.title2).foregroundStyle(.primary))/\(data.speedLimitMph)MPH"
+              //                  )
+              //                  .contentTransition(.numericText(value: 0))
+              //                  .foregroundStyle(
+              //                    data.isSpeeding ? .red : .secondary
+              //                  )
+              //
+              //                  if data.isSpeeding {
+              //                    Image(
+              //                      systemName: "exclamationmark.triangle.fill"
+              //                    )
+              //                    .foregroundStyle(.red)
+              //                  }
+              //                }
             }
           }
           .blur(radius: scrollBlurAmount)
@@ -141,50 +158,7 @@ struct VehicleView: View {
                   .padding(.horizontal)
                   .padding(.vertical, 12)
 
-                  HStack(spacing: 4) {
-                    HStack(spacing: 0) {
-                      Button("Previous", systemImage: "backward.end.fill") {
-                        Haptics.impact()
-                      }
-                      .frame(maxWidth: .infinity)
-                      Button("Pause", systemImage: "pause.fill") {
-                        Haptics.impact()
-                      }
-                      .frame(maxWidth: .infinity)
-                      Button("Next", systemImage: "forward.end.fill") {
-                        Haptics.impact()
-                      }
-                      .frame(maxWidth: .infinity)
-                    }
-                    .padding(.vertical, 12)
-                    .background(Color(.tertiarySystemBackground))
-                    .clipShape(.rect(cornerRadius: 8))
-
-                    HStack(spacing: 0) {
-                      Button("Previous Source", systemImage: "chevron.left") {
-                        Haptics.impact()
-                      }
-                      .frame(maxWidth: .infinity)
-                      Button("Volume", systemImage: "speaker.wave.2.fill") {
-                        Haptics.impact()
-                      }
-                      .frame(maxWidth: .infinity)
-                      Button("Next Source", systemImage: "chevron.right") {
-                        Haptics.impact()
-                      }
-                      .frame(maxWidth: .infinity)
-                    }
-                    .padding(.vertical, 12)
-                    .background(Color(.tertiarySystemBackground))
-                    .clipShape(.rect(cornerRadius: 8))
-                  }
-                  .labelStyle(.iconOnly)
-                  .buttonStyle(.plain)
-                  .foregroundStyle(.secondary)
-                  .padding(.horizontal, 8)
-                  .padding(.bottom, 8)
-
-                  AaronButtonView(text: "All Songs") {
+                  AaronButtonView("All Songs", systemImage: "music.note.list", applyGlass: false) {
                     showingShazamHistorySheet.toggle()
                   }
                   .contentShape(.capsule)
@@ -402,65 +376,6 @@ struct VehicleView: View {
                       id: "vehicleSettingsSheet", namespace: namespace, shape: .rect,
                       applyGlass: false))
 
-                  LabeledContent("Speed") {
-                    HStack {
-                      Text(
-                        "\(Text("\(data.speedMph)").font(.title2).foregroundStyle(.primary))/\(data.speedLimitMph)MPH"
-                      )
-                      .contentTransition(.numericText(value: 0))
-                      .foregroundStyle(
-                        data.isSpeeding ? .red : .secondary
-                      )
-
-                      if data.isSpeeding {
-                        Image(
-                          systemName: "exclamationmark.triangle.fill"
-                        )
-                        .foregroundStyle(.red)
-                      }
-                    }
-                  }
-
-                  LabeledContent("Heading") {
-                    HStack {
-                      Image(systemName: "location.north.fill")
-                        .rotationEffect(
-                          .degrees(
-                            Double(data.headingDegrees)
-                          )
-                        )
-                        .foregroundStyle(.blue)
-                      Text(
-                        "\(data.headingDegrees)° \(data.compassDirection)"
-                      )
-                    }
-                  }
-
-                  LabeledContent("Driver Status") {
-                    DriverStatusBadge(status: data.driverStatus)
-                  }
-
-                  LabeledContent("Risk Score") {
-                    Text("\(data.intoxicationScore)/6")
-                      .foregroundStyle(
-                        intoxicationColor(
-                          for: data.intoxicationScore
-                        )
-                      )
-                  }
-
-                  // GPS Satellites
-                  if let satellites = data.satellites {
-                    LabeledContent("GPS Satellites") {
-                      HStack {
-                        Image(systemName: "location.fill")
-                          .foregroundStyle(satellites > 0 ? .green : .gray)
-                        Text("\(satellites)")
-                          .foregroundStyle(satellites > 0 ? .primary : .secondary)
-                      }
-                    }
-                  }
-
                   // Distraction indicators
                   if data.isPhoneDetected == true || data.isDrinkingDetected == true {
                     LabeledContent("Distraction") {
@@ -525,7 +440,8 @@ struct VehicleView: View {
                 }
               }
             }
-            .padding([.horizontal, .bottom])
+            .padding(.horizontal)
+            .padding(.bottom, 50)
             .frame(maxWidth: .infinity)
           }
         }
