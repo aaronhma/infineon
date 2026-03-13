@@ -1123,6 +1123,10 @@ class SupabaseUploader:
         self.was_drowsy = False  # Track drowsy state changes
         self.was_excessive_blinking = False  # Track excessive blinking state changes
         self.was_unstable_eyes = False  # Track unstable eyes state changes
+        self.trip_phone_distraction_events = 0
+        self.trip_distracted_gaze_events = 0
+        self.was_phone_detected = False  # Track phone detection state changes
+        self.was_distracted_gaze = False  # Track distracted gaze state changes
         self.trip_crash_detected = False
         self.trip_crash_severity = None
 
@@ -1416,6 +1420,8 @@ class SupabaseUploader:
         is_drowsy: bool,
         is_excessive_blinking: bool,
         is_unstable_eyes: bool,
+        is_phone_detected: bool = False,
+        is_distracted_gaze: bool = False,
         latitude: float = 0.0,
         longitude: float = 0.0,
         is_real_gps: bool = False,
@@ -1447,6 +1453,16 @@ class SupabaseUploader:
         if is_unstable_eyes and not self.was_unstable_eyes:
             self.trip_unstable_eyes_events += 1
         self.was_unstable_eyes = is_unstable_eyes
+
+        # Count phone distraction events (only when transitioning)
+        if is_phone_detected and not self.was_phone_detected:
+            self.trip_phone_distraction_events += 1
+        self.was_phone_detected = is_phone_detected
+
+        # Count distracted gaze events (only when transitioning)
+        if is_distracted_gaze and not self.was_distracted_gaze:
+            self.trip_distracted_gaze_events += 1
+        self.was_distracted_gaze = is_distracted_gaze
 
         # Record GPS waypoint (only with real satellite fix)
         if is_real_gps and latitude != 0.0 and longitude != 0.0:
@@ -1493,6 +1509,8 @@ class SupabaseUploader:
             "speed_sample_sum": int(sum(self.trip_speed_samples)),
             "status": self._calculate_trip_status(),
             "route_waypoints": self.trip_waypoints,
+            "phone_distraction_event_count": int(self.trip_phone_distraction_events),
+            "distracted_gaze_event_count": int(self.trip_distracted_gaze_events),
             "crash_detected": self.trip_crash_detected,
             "crash_severity": self.trip_crash_severity,
         }
@@ -1544,6 +1562,8 @@ class SupabaseUploader:
                 "speed_sample_sum": int(sum(self.trip_speed_samples)),
                 "status": self._calculate_trip_status(),
                 "route_waypoints": self.trip_waypoints,
+                "phone_distraction_event_count": int(self.trip_phone_distraction_events),
+                "distracted_gaze_event_count": int(self.trip_distracted_gaze_events),
                 "crash_detected": self.trip_crash_detected,
                 "crash_severity": self.trip_crash_severity,
             }
@@ -1895,6 +1915,9 @@ class SupabaseUploader:
                     )
                     record["is_drinking_detected"] = bool(
                         distraction_data.get("drinking_detected", False)
+                    )
+                    record["is_distracted_gaze"] = bool(
+                        intox_data.get("distracted_gaze", False)
                     )
 
                 self.client.table("face_detections").insert(record).execute()
@@ -4805,9 +4828,11 @@ def main():
                 speed=driving_sim.get_speed(),
                 intox_score=effective_risk,
                 is_speeding=driving_sim.is_speeding(),
-                is_drowsy=False,
-                is_excessive_blinking=False,
-                is_unstable_eyes=False,
+                is_drowsy=bool(intox_data.get("drowsy", False)) if intox_data else False,
+                is_excessive_blinking=bool(intox_data.get("excessive_blinking", False)) if intox_data else False,
+                is_unstable_eyes=bool(intox_data.get("unstable_eyes", False)) if intox_data else False,
+                is_phone_detected=distraction_data["phone_detected"],
+                is_distracted_gaze=bool(gaze_data["gaze_distracted"]) if gaze_data else False,
                 latitude=driving_sim.get_latitude(),
                 longitude=driving_sim.get_longitude(),
                 is_real_gps=driving_sim.is_using_gps() and driving_sim.has_gps_fix(),
@@ -4876,6 +4901,10 @@ def main():
                         "direction": driving_sim.get_compass_direction(),
                         "is_speeding": driving_sim.is_speeding(),
                     }
+                    upload_intox_data = dict(detection_data["intox_data"])
+                    upload_intox_data["distracted_gaze"] = bool(
+                        gaze_data["gaze_distracted"] if gaze_data else False
+                    )
                     supabase_uploader.upload_face_detection(
                         face_image=detection_data["face_crop"],
                         face_bbox=detection_data["face_bbox"],
@@ -4883,7 +4912,7 @@ def main():
                         left_eye_ear=detection_data["left_eye_ear"],
                         right_eye_state=detection_data["right_eye_state"],
                         right_eye_ear=detection_data["right_eye_ear"],
-                        intox_data=detection_data["intox_data"],
+                        intox_data=upload_intox_data,
                         driving_data=driving_data,
                         distraction_data=distraction_data,
                     )

@@ -91,6 +91,8 @@ struct HomeView: View {
           EventsListView(trip: trip, eventType: .phoneDistraction)
         case .drinkingEvents(let trip):
           EventsListView(trip: trip, eventType: .drinking)
+        case .distractedGazeEvents(let trip):
+          EventsListView(trip: trip, eventType: .distractedGaze)
         }
       }
       .navigationDestination(for: TripEventDetail.self) { detail in
@@ -145,7 +147,7 @@ struct HomeView: View {
         }
       } header: {
         NavigationLink(value: Constants.HomeRouteAnnouncer.trips.rawValue) {
-          HStack(spacing: 2) {
+          HStack(spacing: 5) {
             Text("Recent Trips")
               .font(.title2.bold())
             Image(systemName: "chevron.right")

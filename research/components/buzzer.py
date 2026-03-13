@@ -147,12 +147,16 @@ class BuzzerController:
                 buzzer_type, patterns["alert"]
             )
 
-        print(f"[BUZZER] Starting continuous {buzzer_type} buzzer ({frequency}Hz, duty={duty_cycle}%)")
+        print(
+            f"[BUZZER] Starting continuous {buzzer_type} buzzer ({frequency}Hz, duty={duty_cycle}%)"
+        )
 
         while self.continuous_active:
             # Play tone
             if self.use_fake:
-                print(f"[BUZZER SIMULATED] Continuous {buzzer_type} beep ({frequency}Hz)")
+                print(
+                    f"[BUZZER SIMULATED] Continuous {buzzer_type} beep ({frequency}Hz)"
+                )
             else:
                 try:
                     with self._lock:
@@ -192,14 +196,18 @@ class BuzzerController:
 
         self.continuous_active = True
         self.continuous_thread = threading.Thread(
-            target=self._continuous_buzzer_loop, args=(buzzer_type,),
-            kwargs={"custom_params": custom_params}, daemon=True
+            target=self._continuous_buzzer_loop,
+            args=(buzzer_type,),
+            kwargs={"custom_params": custom_params},
+            daemon=True,
         )
         self.continuous_thread.start()
         if custom_params:
-            print(f"[BUZZER] Custom buzzer activated ({custom_params['freq']}Hz, "
-                  f"{custom_params['on']}s on, {custom_params['off']}s off, "
-                  f"{custom_params['duty']}% duty)")
+            print(
+                f"[BUZZER] Custom buzzer activated ({custom_params['freq']}Hz, "
+                f"{custom_params['on']}s on, {custom_params['off']}s off, "
+                f"{custom_params['duty']}% duty)"
+            )
         else:
             print(f"[BUZZER] Remote continuous buzzer activated ({buzzer_type})")
 

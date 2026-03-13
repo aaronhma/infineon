@@ -24,6 +24,7 @@ struct TripDetailView: View {
         || event.isSpeeding == true
         || event.isPhoneDetected == true
         || event.isDrinkingDetected == true
+        || event.isDistractedGaze == true
     }
   }
 
@@ -187,6 +188,27 @@ struct TripDetailView: View {
           }
         } else {
           Label("No unstable eyes detected", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+
+        if trip.distractedGazeEventCount > 0 {
+          NavigationLink(value: TripEventDestination.distractedGazeEvents(trip: trip)) {
+            Label {
+              VStack(alignment: .leading) {
+                Text(
+                  "\(trip.distractedGazeEventCount) Distracted Gaze Event\(trip.distractedGazeEventCount == 1 ? "" : "s")"
+                )
+                Text("Tap to view details")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "eye.slash.fill")
+                .foregroundStyle(.red)
+            }
+          }
+        } else {
+          Label("No distracted gaze detected", systemImage: "checkmark.circle.fill")
             .foregroundStyle(.green)
         }
 
@@ -381,6 +403,7 @@ struct TripDetailView: View {
     if event.isPhoneDetected == true { return "Phone" }
     if event.isSpeeding == true { return "Speeding" }
     if event.isDrinkingDetected == true { return "Drinking" }
+    if event.isDistractedGaze == true { return "Gaze" }
     if event.isExcessiveBlinking { return "Blinking" }
     if event.isUnstableEyes { return "Unstable Eyes" }
     return "Event"
@@ -591,7 +614,7 @@ struct SubScoreCard: View {
         }
       }
     }
-    .frame(maxWidth: .infinity)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding(.vertical, 8)
     .background(.secondary.opacity(0.05))
     .clipShape(.rect(cornerRadius: 10))
@@ -608,6 +631,7 @@ struct EventMapPin: View {
     if event.isPhoneDetected == true { return "iphone.gen3" }
     if event.isSpeeding == true { return "bolt.fill" }
     if event.isDrinkingDetected == true { return "cup.and.saucer.fill" }
+    if event.isDistractedGaze == true { return "eye.slash.fill" }
     if event.isExcessiveBlinking { return "eye" }
     if event.isUnstableEyes { return "eye.trianglebadge.exclamationmark" }
     return "exclamationmark.circle.fill"
@@ -618,6 +642,7 @@ struct EventMapPin: View {
     if event.isPhoneDetected == true { return .red }
     if event.isSpeeding == true { return .orange }
     if event.isDrinkingDetected == true { return .orange }
+    if event.isDistractedGaze == true { return .red }
     if event.isExcessiveBlinking { return .teal }
     if event.isUnstableEyes { return .red }
     return .gray

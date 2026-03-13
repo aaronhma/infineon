@@ -34,6 +34,7 @@ struct Trip: Identifiable {
   // Distraction events
   var phoneDistractionEventCount: Int { vehicleTrip.phoneDistractionEventCount ?? 0 }
   var drinkingEventCount: Int { vehicleTrip.drinkingEventCount ?? 0 }
+  var distractedGazeEventCount: Int { vehicleTrip.distractedGazeEventCount ?? 0 }
   // Crash detection
   var crashDetected: Bool { vehicleTrip.crashDetected ?? false }
   var crashSeverity: String? { vehicleTrip.crashSeverity }
@@ -88,6 +89,7 @@ enum TripEventDestination: Hashable {
   case speedingEvents(trip: Trip)
   case phoneDistractionEvents(trip: Trip)
   case drinkingEvents(trip: Trip)
+  case distractedGazeEvents(trip: Trip)
 }
 
 struct TripEventDetail: Hashable {
@@ -101,6 +103,7 @@ struct TripEventDetail: Hashable {
     case speeding
     case phoneDistraction
     case drinking
+    case distractedGaze
 
     var displayName: String {
       switch self {
@@ -110,6 +113,7 @@ struct TripEventDetail: Hashable {
       case .speeding: "Speeding"
       case .phoneDistraction: "Phone Distraction"
       case .drinking: "Drinking"
+      case .distractedGaze: "Distracted Gaze"
       }
     }
 
@@ -121,6 +125,7 @@ struct TripEventDetail: Hashable {
       case .speeding: "exclamationmark.triangle.fill"
       case .phoneDistraction: "iphone.gen3"
       case .drinking: "cup.and.saucer.fill"
+      case .distractedGaze: "eye.slash.fill"
       }
     }
 
@@ -132,6 +137,7 @@ struct TripEventDetail: Hashable {
       case .speeding: .orange
       case .phoneDistraction: .red
       case .drinking: .orange
+      case .distractedGaze: .red
       }
     }
   }
@@ -175,6 +181,7 @@ extension Trip {
       speedSampleSum: 4550,
       phoneDistractionEventCount: 0,
       drinkingEventCount: 0,
+      distractedGazeEventCount: nil,
       routeWaypoints: nil,
       crashDetected: nil,
       crashSeverity: nil
@@ -203,6 +210,7 @@ extension Trip {
       speedSampleSum: 2750,
       phoneDistractionEventCount: 2,
       drinkingEventCount: 1,
+      distractedGazeEventCount: nil,
       routeWaypoints: nil,
       crashDetected: nil,
       crashSeverity: nil
@@ -231,6 +239,7 @@ extension Trip {
       speedSampleSum: 2100,
       phoneDistractionEventCount: 5,
       drinkingEventCount: 3,
+      distractedGazeEventCount: nil,
       routeWaypoints: nil,
       crashDetected: nil,
       crashSeverity: nil

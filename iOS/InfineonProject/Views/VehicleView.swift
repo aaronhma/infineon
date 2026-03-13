@@ -359,22 +359,24 @@ struct VehicleView: View {
                       id: "bluetoothSheet", namespace: namespace, shape: .rect,
                       applyGlass: false))
 
-                  Button {
-                    showingVehicleSettingsSheet.toggle()
-                  } label: {
-                    Label {
-                      Text("Vehicle Settings")
-                    } icon: {
-                      SettingsBoxView(icon: "car.fill", color: .blue)
+                  if vehicle.vehicle.ownerId == supabase.currentUser?.id {
+                    Button {
+                      showingVehicleSettingsSheet.toggle()
+                    } label: {
+                      Label {
+                        Text("Vehicle Settings")
+                      } icon: {
+                        SettingsBoxView(icon: "car.fill", color: .blue)
+                      }
+                      .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .tint(.primary)
+                    .contentShape(.rect)
+                    .buttonStyle(
+                      FluidZoomTransitionStyle(
+                        id: "vehicleSettingsSheet", namespace: namespace, shape: .rect,
+                        applyGlass: false))
                   }
-                  .tint(.primary)
-                  .contentShape(.rect)
-                  .buttonStyle(
-                    FluidZoomTransitionStyle(
-                      id: "vehicleSettingsSheet", namespace: namespace, shape: .rect,
-                      applyGlass: false))
 
                   // Distraction indicators
                   if data.isPhoneDetected == true || data.isDrinkingDetected == true {
@@ -2004,8 +2006,6 @@ struct VehicleLiveCameraView: View {
 
               // Accelerometer / gyroscope
               if let accMag = data.accMag, let gyroMag = data.gyroMag {
-                Divider()
-
                 HStack {
                   Label("Accelerometer", systemImage: "waveform.path.ecg")
                   Spacer()
@@ -2025,12 +2025,12 @@ struct VehicleLiveCameraView: View {
                     + Text(" °/s")
                     .foregroundStyle(.secondary)
                 }
+
+                Divider()
               }
 
               // Crash alert
               if data.crashDetected == true {
-                Divider()
-
                 HStack(spacing: 12) {
                   Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)
@@ -2054,9 +2054,9 @@ struct VehicleLiveCameraView: View {
                 }
                 .padding()
                 .background(Color.red.opacity(0.1), in: .rect(cornerRadius: 10))
-              }
 
-              Divider()
+                Divider()
+              }
 
               // Last updated
               HStack {

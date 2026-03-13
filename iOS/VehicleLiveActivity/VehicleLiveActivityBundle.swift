@@ -11,7 +11,6 @@ import WidgetKit
 @main
 struct VehicleLiveActivityBundle: WidgetBundle {
   var body: some Widget {
-    VehicleLiveActivity()
     VehicleLiveActivityLiveActivity()
   }
 }

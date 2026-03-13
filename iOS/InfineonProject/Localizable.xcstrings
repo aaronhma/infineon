@@ -611,6 +611,16 @@
         }
       }
     },
+    "%lld Distracted Gaze Event%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld Distracted Gaze Event%2$@"
+          }
+        }
+      }
+    },
     "%lld Drinking Event%@" : {
       "localizations" : {
         "de" : {
@@ -8223,6 +8233,9 @@
           }
         }
       }
+    },
+    "No distracted gaze detected" : {
+
     },
     "No drinking detected" : {
       "localizations" : {

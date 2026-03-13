@@ -273,6 +273,7 @@ struct FaceDetection: Codable, Identifiable {
   // Distraction detection
   let isPhoneDetected: Bool?
   let isDrinkingDetected: Bool?
+  let isDistractedGaze: Bool?
   // GPS coordinates at time of detection
   let latitude: Double?
   let longitude: Double?
@@ -301,6 +302,7 @@ struct FaceDetection: Codable, Identifiable {
     case sessionId = "session_id"
     case isPhoneDetected = "is_phone_detected"
     case isDrinkingDetected = "is_drinking_detected"
+    case isDistractedGaze = "is_distracted_gaze"
     case latitude
     case longitude
   }
@@ -424,6 +426,7 @@ struct VehicleTrip: Codable, Identifiable {
   // Distraction event counts
   let phoneDistractionEventCount: Int?
   let drinkingEventCount: Int?
+  let distractedGazeEventCount: Int?
 
   // GPS route waypoints
   let routeWaypoints: [RouteWaypoint]?
@@ -453,6 +456,7 @@ struct VehicleTrip: Codable, Identifiable {
     case speedSampleSum = "speed_sample_sum"
     case phoneDistractionEventCount = "phone_distraction_event_count"
     case drinkingEventCount = "drinking_event_count"
+    case distractedGazeEventCount = "distracted_gaze_event_count"
     case routeWaypoints = "route_waypoints"
     case crashDetected = "crash_detected"
     case crashSeverity = "crash_severity"
@@ -464,8 +468,8 @@ struct VehicleTrip: Codable, Identifiable {
     maxIntoxicationScore: Int, speedingEventCount: Int, drowsyEventCount: Int,
     excessiveBlinkingEventCount: Int, unstableEyesEventCount: Int, faceDetectionCount: Int,
     speedSampleCount: Int, speedSampleSum: Int, phoneDistractionEventCount: Int?,
-    drinkingEventCount: Int?, routeWaypoints: [RouteWaypoint]?, crashDetected: Bool?,
-    crashSeverity: String?
+    drinkingEventCount: Int?, distractedGazeEventCount: Int?, routeWaypoints: [RouteWaypoint]?,
+    crashDetected: Bool?, crashSeverity: String?
   ) {
     self.id = id
     self.createdAt = createdAt
@@ -487,6 +491,7 @@ struct VehicleTrip: Codable, Identifiable {
     self.speedSampleSum = speedSampleSum
     self.phoneDistractionEventCount = phoneDistractionEventCount
     self.drinkingEventCount = drinkingEventCount
+    self.distractedGazeEventCount = distractedGazeEventCount
     self.routeWaypoints = routeWaypoints
     self.crashDetected = crashDetected
     self.crashSeverity = crashSeverity
@@ -515,6 +520,7 @@ struct VehicleTrip: Codable, Identifiable {
     phoneDistractionEventCount = try c.decodeIfPresent(
       Int.self, forKey: .phoneDistractionEventCount)
     drinkingEventCount = try c.decodeIfPresent(Int.self, forKey: .drinkingEventCount)
+    distractedGazeEventCount = try c.decodeIfPresent(Int.self, forKey: .distractedGazeEventCount)
 
     // Handle route_waypoints: may be a JSON array or a double-encoded JSON string
     if let waypoints = try? c.decodeIfPresent([RouteWaypoint].self, forKey: .routeWaypoints) {
@@ -1710,6 +1716,23 @@ class SupabaseService {
       .eq("vehicle_id", value: vehicleId)
       .eq("session_id", value: sessionId)
       .eq("is_drinking_detected", value: true)
+      .order("created_at", ascending: false)
+      .execute()
+      .value
+
+    return detections
+  }
+
+  func fetchDistractedGazeEvents(for sessionId: UUID, vehicleId: String) async throws
+    -> [FaceDetection]
+  {
+    let detections: [FaceDetection] =
+      try await client
+      .from("face_detections")
+      .select()
+      .eq("vehicle_id", value: vehicleId)
+      .eq("session_id", value: sessionId)
+      .eq("is_distracted_gaze", value: true)
       .order("created_at", ascending: false)
       .execute()
       .value
