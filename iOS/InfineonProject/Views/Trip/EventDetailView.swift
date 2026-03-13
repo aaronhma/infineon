@@ -19,10 +19,6 @@ struct EventDetailView: View {
     "\(eventType.displayName) Event"
   }
 
-  private var eventIcon: String {
-    eventType.icon
-  }
-
   private var eventColor: Color {
     eventType.color
   }
@@ -79,7 +75,7 @@ struct EventDetailView: View {
         }
 
         LabeledContent("Event Type") {
-          Label(eventTitle, systemImage: eventIcon)
+          Label(eventTitle, systemImage: eventType.icon)
             .foregroundStyle(eventColor)
         }
 
@@ -96,7 +92,7 @@ struct EventDetailView: View {
             HStack {
               Text(leftState)
               if let ear = event.leftEyeEar {
-                Text("(\(ear, specifier: "%.3f"))")
+                Text("(\(ear.formatted(.number.precision(.fractionLength(3))))")
                   .foregroundStyle(.secondary)
               }
             }
@@ -108,7 +104,7 @@ struct EventDetailView: View {
             HStack {
               Text(rightState)
               if let ear = event.rightEyeEar {
-                Text("(\(ear, specifier: "%.3f"))")
+                Text("(\(ear.formatted(.number.precision(.fractionLength(3))))")
                   .foregroundStyle(.secondary)
               }
             }
@@ -150,7 +146,12 @@ struct EventDetailView: View {
 
           if let heading = event.headingDegrees, let direction = event.compassDirection {
             LabeledContent("Heading") {
-              Text("\(heading)° \(direction)")
+              HStack(spacing: 4) {
+                Image(systemName: "location.north.fill")
+                  .rotationEffect(.degrees(Double(heading)))
+                  .foregroundStyle(.blue)
+                Text("\(heading)° \(direction)")
+              }
             }
           }
         }
@@ -185,21 +186,12 @@ struct EventDetailView: View {
   private func indicatorRow(_ title: String, isActive: Bool, icon: String, color: Color)
     -> some View
   {
-    HStack {
-      Image(systemName: icon)
+    LabeledContent {
+      Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
         .foregroundStyle(isActive ? color : .secondary)
-
-      Text(title)
-
-      Spacer()
-
-      if isActive {
-        Image(systemName: "checkmark.circle.fill")
-          .foregroundStyle(color)
-      } else {
-        Image(systemName: "circle")
-          .foregroundStyle(.secondary)
-      }
+    } label: {
+      Label(title, systemImage: icon)
+        .foregroundStyle(isActive ? color : .secondary)
     }
   }
 
@@ -234,51 +226,5 @@ struct EventDetailView: View {
         self.isLoadingImage = false
       }
     }
-  }
-}
-
-// Make FaceDetection conform to Hashable for NavigationLink
-extension FaceDetection: Hashable {
-  static func == (lhs: FaceDetection, rhs: FaceDetection) -> Bool {
-    lhs.id == rhs.id
-  }
-
-  func hash(into hasher: inout Hasher) {
-    hasher.combine(id)
-  }
-}
-
-#Preview {
-  NavigationStack {
-    EventDetailView(
-      event: FaceDetection(
-        id: UUID(),
-        createdAt: .now,
-        vehicleId: "test",
-        driverProfileId: nil,
-        faceClusterId: UUID(),
-        faceBbox: nil,
-        leftEyeState: "CLOSED",
-        leftEyeEar: 0.15,
-        rightEyeState: "CLOSED",
-        rightEyeEar: 0.14,
-        avgEar: 0.145,
-        isDrowsy: true,
-        isExcessiveBlinking: false,
-        isUnstableEyes: true,
-        intoxicationScore: 4,
-        speedMph: 72,
-        headingDegrees: 45,
-        compassDirection: "NE",
-        isSpeeding: true,
-        imagePath: "test/path.jpg",
-        sessionId: UUID(),
-        isPhoneDetected: false,
-        isDrinkingDetected: false,
-        latitude: 37.3349,
-        longitude: -122.0090
-      ),
-      eventType: .drowsiness
-    )
   }
 }

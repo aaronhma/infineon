@@ -25,13 +25,11 @@ struct TripInfoView: View {
         // Top line: status + duration
         HStack(alignment: .firstTextBaseline) {
           Text(trip.tripStatus)
-            .font(.system(.subheadline, design: .rounded))
-            .bold()
+            .font(.subheadline.bold())
 
           if trip.isOngoing {
             Text("LIVE")
-              .font(.system(.caption2, design: .rounded))
-              .bold()
+              .font(.caption2.bold())
               .padding(.horizontal, 5)
               .padding(.vertical, 1)
               .background(.red.gradient)
@@ -42,7 +40,7 @@ struct TripInfoView: View {
           Spacer()
 
           Text(trip.formattedDuration)
-            .font(.system(.caption, design: .rounded))
+            .font(.caption)
             .foregroundStyle(.tertiary)
         }
 
@@ -90,13 +88,9 @@ struct TripInfoView: View {
 
             // Max speed
             if trip.maxSpeedMph > 0 {
-              Text("\(trip.maxSpeedMph)")
-                .font(.system(.caption2, design: .rounded))
-                .bold()
+              Text("\(trip.maxSpeedMph) mph")
+                .font(.caption2.bold())
                 .foregroundStyle(trip.maxSpeedMph > 80 ? .red : .secondary)
-                + Text(" mph")
-                .font(.system(.caption2, design: .rounded))
-                .foregroundStyle(.tertiary)
             }
           }
         }
@@ -141,7 +135,6 @@ struct TripScoreRing: View {
         foregroundStyle: color
       )
 
-      // Score text
       Text("\(score)")
         .font(.system(size: size * 0.32, weight: .bold, design: .rounded))
         .contentTransition(.numericText(value: Double(score)))

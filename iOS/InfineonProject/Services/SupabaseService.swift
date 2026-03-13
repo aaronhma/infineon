@@ -265,6 +265,18 @@ struct FaceDetection: Codable, Identifiable {
   }
 }
 
+// MARK: - FaceDetection Hashable
+
+extension FaceDetection: Hashable {
+  static func == (lhs: FaceDetection, rhs: FaceDetection) -> Bool {
+    lhs.id == rhs.id
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine(id)
+  }
+}
+
 /// Represents a cluster of similar unidentified faces
 struct FaceCluster: Codable, Identifiable {
   var id: UUID { clusterId }

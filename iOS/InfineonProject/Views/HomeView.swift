@@ -24,7 +24,6 @@ struct HomeView: View {
 
   @Namespace private var namespace
 
-  // Computed properties for today's stats
   private var todayTripCount: Int {
     todayTrips.count
   }
@@ -45,9 +44,7 @@ struct HomeView: View {
             Text(errorMessage)
           } actions: {
             Button("Retry") {
-              Task {
-                await loadTrips()
-              }
+              Task { await loadTrips() }
             }
           }
         } else if trips.isEmpty {
@@ -61,6 +58,7 @@ struct HomeView: View {
         }
       }
       .navigationTitle("Trips")
+      .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         ToolbarItem(placement: .topBarLeading) {
           CloseButton {
@@ -71,7 +69,7 @@ struct HomeView: View {
       .navigationDestination(for: String.self) { destination in
         switch destination {
         case Constants.HomeRouteAnnouncer.trips.rawValue:
-          allTripsView
+          AllTripsView(trips: trips, namespace: namespace)
         default:
           Text("Unknown destination: \(destination)")
         }
@@ -109,39 +107,24 @@ struct HomeView: View {
 
   private var tripsList: some View {
     List {
-      // Today's summary section
+      // Today's summary
       Section {
         VStack(spacing: 16) {
+          // Score and sub-scores
           HStack(alignment: .top) {
-            // Score ring — hero element
             TripScoreRing(score: todayDailyScore.overall, size: 90)
 
-            Spacer(minLength: 16)
+            Spacer()
 
-            // Sub-score gauges
-            VStack(spacing: 10) {
-              DailySubScoreGauge(
-                label: "Attentiveness",
-                score: todayDailyScore.attentiveness,
-                icon: "eye.fill",
-                color: .cyan
-              )
-              DailySubScoreGauge(
-                label: "Safety",
-                score: todayDailyScore.safety,
-                icon: "shield.fill",
-                color: .blue
-              )
-              DailySubScoreGauge(
-                label: "Impairment",
-                score: todayDailyScore.impairment,
-                icon: "brain.head.profile.fill",
-                color: .purple
-              )
+            VStack(alignment: .trailing, spacing: 8) {
+              subScoreRow(
+                label: "Attentiveness", score: todayDailyScore.attentiveness, color: .cyan)
+              subScoreRow(label: "Safety", score: todayDailyScore.safety, color: .blue)
+              subScoreRow(label: "Impairment", score: todayDailyScore.impairment, color: .purple)
             }
           }
 
-          // Rings
+          // Activity rings
           RingsView(
             size: 80,
             lineWidth: 12,
@@ -149,35 +132,24 @@ struct HomeView: View {
             progressMiddle: $progressMiddle,
             progressInner: $progressInner
           )
-          .frame(maxWidth: .infinity, alignment: .center)
+          .frame(maxWidth: .infinity)
         }
-        .padding(.vertical, 4)
-        .onAppear {
-          updateRings()
-        }
-        .onChange(of: todayTrips.count) {
-          updateRings()
-        }
+        .padding(.vertical, 8)
       } header: {
-        HStack(alignment: .firstTextBaseline) {
+        HStack {
           Text("Today")
-            .foregroundStyle(Color.primary)
-            .font(.system(.title2, design: .rounded))
-            .bold()
-
+            .font(.title2.bold())
           Spacer()
-
           if !todayTrips.isEmpty {
-            Text(
-              "\(todayTripCount) trip\(todayTripCount == 1 ? "" : "s")"
-            )
-            .font(.system(.subheadline, design: .rounded))
-            .foregroundStyle(.secondary)
+            Text("\(todayTripCount) trip\(todayTripCount == 1 ? "" : "s")")
+              .foregroundStyle(.secondary)
           }
         }
       }
+      .onAppear { updateRings() }
+      .onChange(of: todayTrips.count) { updateRings() }
 
-      // Recent trips section
+      // Recent trips
       Section {
         ForEach(trips.prefix(8)) { trip in
           NavigationLink(value: trip) {
@@ -186,43 +158,44 @@ struct HomeView: View {
         }
       } header: {
         NavigationLink(value: Constants.HomeRouteAnnouncer.trips.rawValue) {
-          HStack(alignment: .firstTextBaseline) {
+          HStack {
             Text("Recent Trips")
-              .font(.system(.title2, design: .rounded))
-              .bold()
-
-            Image(systemName: "chevron.right")
-              .font(.system(.caption, design: .rounded))
-              .bold()
-              .foregroundStyle(.tertiary)
-
+              .font(.title2.bold())
             Spacer()
+            Image(systemName: "chevron.right")
+              .font(.caption.bold())
+              .foregroundStyle(.tertiary)
           }
         }
-        .foregroundStyle(.primary)
       }
+    }
+    .listStyle(.insetGrouped)
+  }
+
+  private func subScoreRow(label: String, score: Int, color: Color) -> some View {
+    HStack(spacing: 8) {
+      Text(label)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      Text("\(score)")
+        .font(.caption.bold())
+        .foregroundStyle(scoreColor(for: score, baseColor: color))
     }
   }
 
-  private var allTripsView: some View {
-    List {
-      ForEach(trips) { trip in
-        NavigationLink(value: trip) {
-          TripInfoView(trip: trip, namespace: namespace)
-        }
-      }
+  private func scoreColor(for score: Int, baseColor: Color) -> Color {
+    switch DrivingScoreCalculator.scoreCategory(for: score) {
+    case .good: baseColor
+    case .moderate: .orange
+    case .poor: .red
     }
-    .navigationTitle("All Trips")
   }
 
   private func updateRings() {
     let daily = todayDailyScore
     withAnimation(.easeInOut(duration: 0.5)) {
-      // Outer ring: overall driving score
       progressOuter = CGFloat(daily.overall) / 100.0
-      // Middle ring: attentiveness sub-score
       progressMiddle = CGFloat(daily.attentiveness) / 100.0
-      // Inner ring: safety sub-score
       progressInner = CGFloat(daily.safety) / 100.0
     }
   }
@@ -252,61 +225,19 @@ struct HomeView: View {
   }
 }
 
-// MARK: - Daily Sub-Score Gauge
+// MARK: - All Trips View
 
-struct DailySubScoreGauge: View {
-  let label: String
-  let score: Int
-  let icon: String
-  let color: Color
-
-  private var effectiveColor: Color {
-    switch DrivingScoreCalculator.scoreCategory(for: score) {
-    case .good: color
-    case .moderate: .orange
-    case .poor: .red
-    }
-  }
+struct AllTripsView: View {
+  let trips: [Trip]
+  let namespace: Namespace.ID
 
   var body: some View {
-    HStack(spacing: 8) {
-      Image(systemName: icon)
-        .font(.system(size: 10))
-        .foregroundStyle(effectiveColor)
-        .frame(width: 14)
-
-      VStack(alignment: .leading, spacing: 2) {
-        HStack {
-          Text(label)
-            .font(.system(.caption2, design: .rounded))
-            .foregroundStyle(.secondary)
-
-          Spacer(minLength: 0)
-
-          Text("\(score)")
-            .font(.system(.caption2, design: .rounded))
-            .bold()
-            .foregroundStyle(effectiveColor)
-        }
-
-        Gauge(value: Double(score), in: 0...100) {
-          EmptyView()
-        }
-        .gaugeStyle(.linearCapacity)
-        .tint(effectiveColor.gradient)
+    List(trips) { trip in
+      NavigationLink(value: trip) {
+        TripInfoView(trip: trip, namespace: namespace)
       }
     }
-  }
-}
-
-// Make Trip conform to Hashable for NavigationLink
-extension Trip: Hashable {
-  static func == (lhs: Trip, rhs: Trip) -> Bool {
-    lhs.id == rhs.id
-  }
-
-  func hash(into hasher: inout Hasher) {
-    hasher.combine(id)
+    .navigationTitle("All Trips")
   }
 }
 

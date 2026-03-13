@@ -29,9 +29,7 @@ struct TripDetailView: View {
   }
 
   private var routeCoordinates: [CLLocationCoordinate2D] {
-    // Prefer continuous GPS route waypoints over sparse face-detection locations
     if !trip.routeCoordinates.isEmpty { return trip.routeCoordinates }
-    // Fallback to face detection locations for old trips
     let detected = allDetections.compactMap { event -> CLLocationCoordinate2D? in
       guard let lat = event.latitude, let lng = event.longitude else { return nil }
       return CLLocationCoordinate2D(latitude: lat, longitude: lng)
@@ -40,330 +38,277 @@ struct TripDetailView: View {
   }
 
   var body: some View {
-    ZStack {
-      LinearGradient(
-        colors: [
-          trip.tripColor,
-          trip.tripColor.opacity(0.9),
-          .clear,
-          .clear,
-          .clear,
-          .clear,
-          .clear,
-        ],
-        startPoint: .top,
-        endPoint: .bottom
-      )
-      .ignoresSafeArea()
+    List {
+      // Hero header
+      Section {
+        VStack(spacing: 16) {
+          // Score ring
+          TripScoreRing(score: trip.score.overall, size: 120)
 
-      List {
-        // Hero header
-        Section {
-          VStack(spacing: 16) {
-            // Score ring as the hero
-            TripScoreRing(score: trip.score.overall, size: 120)
+          // Status label
+          Text(trip.tripStatus)
+            .font(.title3.bold())
+            .titleVisibilityAnchor()
 
-            // Status label
-            Text(trip.tripStatus)
-              .font(.system(.title3, design: .rounded))
-              .bold()
-              .titleVisibilityAnchor()
-
-            if trip.isOngoing {
-              HStack(spacing: 4) {
-                Circle()
-                  .fill(.red)
-                  .frame(width: 6, height: 6)
-                Text("Trip in progress")
-                  .font(.system(.caption, design: .rounded))
-              }
-              .foregroundStyle(.red)
+          if trip.isOngoing {
+            HStack(spacing: 4) {
+              Circle()
+                .fill(.red)
+                .frame(width: 6, height: 6)
+              Text("Trip in progress")
+                .font(.caption)
             }
-
-            if trip.crashDetected {
-              HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                Text("Crash Detected")
-                  .font(.system(.caption, design: .rounded, weight: .semibold))
-                if let severity = trip.crashSeverity {
-                  Text("(\(severity))")
-                    .font(.system(.caption2, design: .rounded))
-                }
-              }
-              .foregroundStyle(.white)
-              .padding(.horizontal, 12)
-              .padding(.vertical, 6)
-              .background(.red, in: .capsule)
-            }
-
-            // Time + duration pills
-            HStack(spacing: 8) {
-              DetailPill(
-                icon: "calendar",
-                text: trip.timeStarted.formatted(
-                  .dateTime.month(.abbreviated).day().hour().minute())
-              )
-
-              DetailPill(icon: "clock.fill", text: trip.formattedDuration)
-            }
-
-            // Sub-score bars
-            TripScoreBreakdown(trip: trip)
+            .foregroundStyle(.red)
           }
-          .frame(maxWidth: .infinity)
-          .padding(.vertical, 4)
+
+          if trip.crashDetected {
+            Label(
+              "Crash Detected\(trip.crashSeverity.map { " (\($0))" } ?? "")",
+              systemImage: "exclamationmark.triangle.fill"
+            )
+            .font(.caption.bold())
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(.red)
+            .foregroundStyle(.white)
+            .clipShape(.capsule)
+          }
+
+          // Time + duration pills
+          HStack(spacing: 8) {
+            Label(
+              trip.timeStarted.formatted(.dateTime.month(.abbreviated).day().hour().minute()),
+              systemImage: "calendar"
+            )
+            .font(.caption2)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.secondary.opacity(0.1))
+            .clipShape(.capsule)
+
+            Label(trip.formattedDuration, systemImage: "clock.fill")
+              .font(.caption2)
+              .padding(.horizontal, 8)
+              .padding(.vertical, 4)
+              .background(.secondary.opacity(0.1))
+              .clipShape(.capsule)
+          }
+          .foregroundStyle(.secondary)
+
+          // Sub-score bars
+          TripScoreBreakdown(trip: trip)
         }
-        .listRowBackground(Color.clear)
-        .listRowSeparator(.hidden)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+      }
+      .listRowBackground(Color.clear)
 
-        // Trip Statistics
-        Section("Trip Statistics") {
-          LabeledContent("Max Speed") {
-            Text("\(trip.maxSpeedMph) mph")
-              .foregroundStyle(trip.maxSpeedMph > 65 ? .red : .primary)
-          }
-
-          LabeledContent("Average Speed") {
-            Text(trip.avgSpeedMph, format: .number.precision(.fractionLength(1)))
-              + Text(" mph")
-          }
-
-          LabeledContent("Face Detections") {
-            Text("\(trip.faceDetectionCount)")
-          }
-
-          LabeledContent("Session ID") {
-            Text(trip.sessionId.uuidString)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
+      // Trip Statistics
+      Section("Trip Statistics") {
+        LabeledContent("Max Speed") {
+          Text("\(trip.maxSpeedMph) mph")
+            .foregroundStyle(trip.maxSpeedMph > 65 ? .red : .primary)
         }
 
-        // Driver Monitoring Section - Now with NavigationLinks
-        Section("Driver Monitoring") {
-          // Drowsiness events
-          if trip.drowsyEventCount > 0 {
-            NavigationLink(value: TripEventDestination.drowsinessEvents(trip: trip)) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text(
-                    "\(trip.drowsyEventCount) Drowsiness Event\(trip.drowsyEventCount == 1 ? "" : "s")"
-                  )
-                  Text("Tap to view details")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "moon.fill")
-                  .foregroundStyle(.yellow)
-              }
-            }
-            .tint(.primary)
-          } else {
-            Label {
-              Text("No drowsiness detected")
-            } icon: {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            }
-          }
-
-          // Excessive blinking events
-          if trip.excessiveBlinkingEventCount > 0 {
-            NavigationLink(value: TripEventDestination.excessiveBlinkingEvents(trip: trip)) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text(
-                    "\(trip.excessiveBlinkingEventCount) Excessive Blinking Event\(trip.excessiveBlinkingEventCount == 1 ? "" : "s")"
-                  )
-                  Text("Tap to view details")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "eye")
-                  .foregroundStyle(.orange)
-              }
-            }
-            .tint(.primary)
-          } else {
-            Label {
-              Text("No excessive blinking detected")
-            } icon: {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            }
-          }
-
-          // Unstable eyes events
-          if trip.unstableEyesEventCount > 0 {
-            NavigationLink(value: TripEventDestination.unstableEyesEvents(trip: trip)) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text(
-                    "\(trip.unstableEyesEventCount) Unstable Eyes Event\(trip.unstableEyesEventCount == 1 ? "" : "s")"
-                  )
-                  Text("Tap to view details")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "eye.trianglebadge.exclamationmark")
-                  .foregroundStyle(.red)
-              }
-            }
-            .tint(.primary)
-          } else {
-            Label {
-              Text("No unstable eyes detected")
-            } icon: {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            }
-          }
-
-          LabeledContent("Max Risk Score") {
-            Text("\(trip.maxIntoxicationScore)/6")
-              .foregroundStyle(riskScoreColor)
-          }
+        LabeledContent("Average Speed") {
+          Text(trip.avgSpeedMph.formatted(.number.precision(.fractionLength(1))))
+            + Text(" mph")
         }
 
-        // Distraction Events Section
-        Section("Distraction Events") {
-          // Phone distraction events
-          if trip.phoneDistractionEventCount > 0 {
-            NavigationLink(value: TripEventDestination.phoneDistractionEvents(trip: trip)) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text(
-                    "\(trip.phoneDistractionEventCount) Phone Distraction\(trip.phoneDistractionEventCount == 1 ? "" : "s")"
-                  )
-                  Text("Tap to view details")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "iphone.gen3")
-                  .foregroundStyle(.red)
-              }
-            }
-            .tint(.primary)
-          } else {
-            Label {
-              Text("No phone distractions")
-            } icon: {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            }
-          }
-
-          // Drinking events
-          if trip.drinkingEventCount > 0 {
-            NavigationLink(value: TripEventDestination.drinkingEvents(trip: trip)) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text(
-                    "\(trip.drinkingEventCount) Drinking Event\(trip.drinkingEventCount == 1 ? "" : "s")"
-                  )
-                  Text("Tap to view details")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "cup.and.saucer.fill")
-                  .foregroundStyle(.orange)
-              }
-            }
-            .tint(.primary)
-          } else {
-            Label {
-              Text("No drinking detected")
-            } icon: {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-            }
-          }
+        LabeledContent("Face Detections") {
+          Text("\(trip.faceDetectionCount)")
         }
 
-        // Speed Violations Section - Now with NavigationLink
-        Section("Speed Violations") {
-          if trip.speedingEventCount > 0 {
-            NavigationLink(value: TripEventDestination.speedingEvents(trip: trip)) {
-              Label {
-                VStack(alignment: .leading) {
-                  Text(
-                    "\(trip.speedingEventCount) Speeding Event\(trip.speedingEventCount == 1 ? "" : "s")"
-                  )
-                  Text("Tap to view details")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-              } icon: {
-                Image(systemName: "exclamationmark.triangle.fill")
-                  .foregroundStyle(.orange)
-              }
-            }
-            .tint(.primary)
-          } else {
+        LabeledContent("Session ID") {
+          Text(trip.sessionId.uuidString)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      // Driver Monitoring
+      Section("Driver Monitoring") {
+        if trip.drowsyEventCount > 0 {
+          NavigationLink(value: TripEventDestination.drowsinessEvents(trip: trip)) {
             Label {
-              Text("No speeding violations")
+              VStack(alignment: .leading) {
+                Text(
+                  "\(trip.drowsyEventCount) Drowsiness Event\(trip.drowsyEventCount == 1 ? "" : "s")"
+                )
+                Text("Tap to view details")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
             } icon: {
-              Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+              Image(systemName: "moon.fill")
+                .foregroundStyle(.yellow)
+            }
+          }
+        } else {
+          Label("No drowsiness detected", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+
+        if trip.excessiveBlinkingEventCount > 0 {
+          NavigationLink(value: TripEventDestination.excessiveBlinkingEvents(trip: trip)) {
+            Label {
+              VStack(alignment: .leading) {
+                Text(
+                  "\(trip.excessiveBlinkingEventCount) Excessive Blinking Event\(trip.excessiveBlinkingEventCount == 1 ? "" : "s")"
+                )
+                Text("Tap to view details")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "eye")
+                .foregroundStyle(.orange)
+            }
+          }
+        } else {
+          Label("No excessive blinking detected", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+
+        if trip.unstableEyesEventCount > 0 {
+          NavigationLink(value: TripEventDestination.unstableEyesEvents(trip: trip)) {
+            Label {
+              VStack(alignment: .leading) {
+                Text(
+                  "\(trip.unstableEyesEventCount) Unstable Eyes Event\(trip.unstableEyesEventCount == 1 ? "" : "s")"
+                )
+                Text("Tap to view details")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "eye.trianglebadge.exclamationmark")
+                .foregroundStyle(.red)
+            }
+          }
+        } else {
+          Label("No unstable eyes detected", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+
+        LabeledContent("Max Risk Score") {
+          Text("\(trip.maxIntoxicationScore)/6")
+            .foregroundStyle(riskScoreColor)
+        }
+      }
+
+      // Distraction Events
+      Section("Distraction Events") {
+        if trip.phoneDistractionEventCount > 0 {
+          NavigationLink(value: TripEventDestination.phoneDistractionEvents(trip: trip)) {
+            Label {
+              VStack(alignment: .leading) {
+                Text(
+                  "\(trip.phoneDistractionEventCount) Phone Distraction\(trip.phoneDistractionEventCount == 1 ? "" : "s")"
+                )
+                Text("Tap to view details")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "iphone.gen3")
+                .foregroundStyle(.red)
+            }
+          }
+        } else {
+          Label("No phone distractions", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+
+        if trip.drinkingEventCount > 0 {
+          NavigationLink(value: TripEventDestination.drinkingEvents(trip: trip)) {
+            Label {
+              VStack(alignment: .leading) {
+                Text(
+                  "\(trip.drinkingEventCount) Drinking Event\(trip.drinkingEventCount == 1 ? "" : "s")"
+                )
+                Text("Tap to view details")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "cup.and.saucer.fill")
+                .foregroundStyle(.orange)
+            }
+          }
+        } else {
+          Label("No drinking detected", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+      }
+
+      // Speed Violations
+      Section("Speed Violations") {
+        if trip.speedingEventCount > 0 {
+          NavigationLink(value: TripEventDestination.speedingEvents(trip: trip)) {
+            Label {
+              VStack(alignment: .leading) {
+                Text(
+                  "\(trip.speedingEventCount) Speeding Event\(trip.speedingEventCount == 1 ? "" : "s")"
+                )
+                Text("Tap to view details")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+            } icon: {
+              Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            }
+          }
+        } else {
+          Label("No speeding violations", systemImage: "checkmark.circle.fill")
+            .foregroundStyle(.green)
+        }
+      }
+
+      // Trip Route
+      Section("Trip Route") {
+        Map(position: $mapCameraPosition) {
+          if routeCoordinates.count >= 2 {
+            MapPolyline(coordinates: routeCoordinates)
+              .stroke(.blue, lineWidth: 4)
+          }
+
+          if let first = routeCoordinates.first {
+            Annotation("Start", coordinate: first) {
+              Image(systemName: "flag.fill")
+                .padding(6)
+                .background(.green.gradient)
+                .foregroundStyle(.white)
+                .clipShape(.circle)
+            }
+          }
+
+          if let last = routeCoordinates.last, routeCoordinates.count > 1 {
+            Annotation("End", coordinate: last) {
+              Image(systemName: "flag.checkered")
+                .padding(6)
+                .background(.red.gradient)
+                .foregroundStyle(.white)
+                .clipShape(.circle)
+            }
+          }
+
+          ForEach(flaggedEvents) { event in
+            if let lat = event.latitude, let lng = event.longitude {
+              Annotation(
+                eventLabel(for: event),
+                coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng)
+              ) {
+                EventMapPin(event: event)
+              }
             }
           }
         }
-
-        // Trip Route + Event Map
-        Section("Trip Route") {
-          Map(position: $mapCameraPosition) {
-            // Route polyline from GPS track
-            if routeCoordinates.count >= 2 {
-              MapPolyline(coordinates: routeCoordinates)
-                .stroke(.blue, lineWidth: 4)
-            }
-
-            // Start marker
-            if let first = routeCoordinates.first {
-              Annotation("Start", coordinate: first) {
-                Image(systemName: "flag.fill")
-                  .font(.system(size: 12, weight: .bold))
-                  .foregroundStyle(.white)
-                  .padding(6)
-                  .background(.green.gradient)
-                  .clipShape(.circle)
-              }
-            }
-
-            // End marker
-            if let last = routeCoordinates.last, routeCoordinates.count > 1 {
-              Annotation("End", coordinate: last) {
-                Image(systemName: "flag.checkered")
-                  .font(.system(size: 12, weight: .bold))
-                  .foregroundStyle(.white)
-                  .padding(6)
-                  .background(.red.gradient)
-                  .clipShape(.circle)
-              }
-            }
-
-            // Flagged event pins
-            ForEach(flaggedEvents) { event in
-              if let lat = event.latitude, let lng = event.longitude {
-                Annotation(
-                  eventLabel(for: event),
-                  coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng)
-                ) {
-                  EventMapPin(event: event)
-                }
-              }
-            }
-          }
-          .mapStyle(.standard(elevation: .realistic))
-          .frame(height: 300)
-          .clipShape(.rect(cornerRadius: 12))
-          .listRowInsets(EdgeInsets())
-        }
+        .mapStyle(.standard(elevation: .realistic))
+        .frame(height: 300)
+        .clipShape(.rect(cornerRadius: 12))
+        .listRowInsets(EdgeInsets())
       }
     }
     .scrollAwareTitle(trip.tripStatus)
@@ -444,27 +389,6 @@ struct TripDetailView: View {
   }
 }
 
-// MARK: - Detail Pill
-
-struct DetailPill: View {
-  let icon: String
-  let text: String
-
-  var body: some View {
-    HStack(spacing: 4) {
-      Image(systemName: icon)
-        .font(.system(size: 9))
-      Text(text)
-        .font(.system(.caption2, design: .rounded))
-    }
-    .foregroundStyle(.secondary)
-    .padding(.horizontal, 8)
-    .padding(.vertical, 4)
-    .background(Color(.tertiarySystemFill))
-    .clipShape(.capsule)
-  }
-}
-
 // MARK: - Trip Score Breakdown
 
 struct TripScoreBreakdown: View {
@@ -480,22 +404,22 @@ struct TripScoreBreakdown: View {
           Image(systemName: "video.slash")
           Text("Camera data unavailable")
         }
-        .font(.system(.caption2, design: .rounded))
+        .font(.caption2)
         .foregroundStyle(.orange)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background(Color.orange.opacity(0.1))
+        .background(.orange.opacity(0.1))
         .clipShape(.capsule)
       } else if !tripScore.isConfident {
         HStack(spacing: 4) {
           Image(systemName: "exclamationmark.circle")
           Text("Low confidence")
         }
-        .font(.system(.caption2, design: .rounded))
+        .font(.caption2)
         .foregroundStyle(.orange)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background(Color.orange.opacity(0.1))
+        .background(.orange.opacity(0.1))
         .clipShape(.capsule)
       }
 
@@ -610,8 +534,7 @@ struct TripScoreBreakdown: View {
 
   private func formatRate(_ rate: Double) -> String {
     let precision: Int = rate < 1 ? 1 : 0
-    let formatted = rate.formatted(.number.precision(.fractionLength(precision)))
-    return "\(formatted)/hr"
+    return "\(rate.formatted(.number.precision(.fractionLength(precision))))/hr"
   }
 }
 
@@ -636,25 +559,20 @@ struct SubScoreCard: View {
 
   var body: some View {
     VStack(spacing: 6) {
-      // Icon
       Image(systemName: icon)
         .font(.system(size: 14))
         .foregroundStyle(effectiveColor)
 
-      // Score
       Text("\(score)")
-        .font(.system(.title3, design: .rounded))
-        .bold()
-        .foregroundStyle(effectiveColor)
+        .font(.title3.bold())
         .contentTransition(.numericText(value: Double(score)))
+        .foregroundStyle(effectiveColor)
 
-      // Label
       Text(label)
-        .font(.system(size: 9, weight: .medium, design: .rounded))
+        .font(.system(size: 9, weight: .medium))
         .foregroundStyle(.secondary)
         .lineLimit(1)
 
-      // Ring gauge (AaronUI ProgressRing)
       ProgressRing(
         size: 40,
         lineWidth: 4,
@@ -665,20 +583,19 @@ struct SubScoreCard: View {
         ringProgress = CGFloat(score) / 100.0
       }
 
-      // Factor details
       if !factors.isEmpty {
         VStack(spacing: 1) {
           ForEach(factors, id: \.0) { factor in
             Text("\(factor.0) \(factor.1)")
-              .font(.system(size: 8, weight: .medium, design: .rounded))
+              .font(.system(size: 8, weight: .medium))
               .foregroundStyle(.tertiary)
           }
         }
       }
     }
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    .frame(maxWidth: .infinity)
     .padding(.vertical, 8)
-    .background(Color(.tertiarySystemFill).opacity(0.5))
+    .background(.secondary.opacity(0.05))
     .clipShape(.rect(cornerRadius: 10))
   }
 }
@@ -719,9 +636,9 @@ struct EventMapPin: View {
   }
 }
 
-// Apple Park to Golden Gate Bridge sample route
+// Sample route for previews
 private let sampleRouteAppleParkToGoldenGate: [CLLocationCoordinate2D] = [
-  CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090),  // Apple Park
+  CLLocationCoordinate2D(latitude: 37.3349, longitude: -122.0090),
   CLLocationCoordinate2D(latitude: 37.3415, longitude: -122.0310),
   CLLocationCoordinate2D(latitude: 37.3530, longitude: -122.0480),
   CLLocationCoordinate2D(latitude: 37.3680, longitude: -122.0590),
@@ -741,7 +658,7 @@ private let sampleRouteAppleParkToGoldenGate: [CLLocationCoordinate2D] = [
   CLLocationCoordinate2D(latitude: 37.7600, longitude: -122.4300),
   CLLocationCoordinate2D(latitude: 37.7850, longitude: -122.4500),
   CLLocationCoordinate2D(latitude: 37.8080, longitude: -122.4650),
-  CLLocationCoordinate2D(latitude: 37.8199, longitude: -122.4783),  // Golden Gate Bridge
+  CLLocationCoordinate2D(latitude: 37.8199, longitude: -122.4783),
 ]
 
 #Preview {

@@ -26,9 +26,7 @@ struct EventsListView: View {
           Text(errorMessage)
         } actions: {
           Button("Retry") {
-            Task {
-              await loadEvents()
-            }
+            Task { await loadEvents() }
           }
         }
       } else if events.isEmpty {
@@ -118,6 +116,67 @@ struct EventsListView: View {
         self.isLoading = false
       }
     }
+  }
+}
+
+// MARK: - Event Row
+
+struct EventRow: View {
+  let event: FaceDetection
+  let eventType: TripEventDetail.EventType
+
+  private var eventIcon: String {
+    eventType.icon
+  }
+
+  private var eventColor: Color {
+    eventType.color
+  }
+
+  private var riskScoreColor: Color {
+    if event.intoxicationScore >= 4 { return .red }
+    if event.intoxicationScore >= 2 { return .orange }
+    return .green
+  }
+
+  var body: some View {
+    HStack(spacing: 12) {
+      // Icon
+      Circle()
+        .fill(eventColor.gradient)
+        .frame(width: 40, height: 40)
+        .overlay {
+          Image(systemName: eventIcon)
+            .font(.system(size: 18))
+            .foregroundStyle(.white)
+        }
+
+      // Info
+      VStack(alignment: .leading, spacing: 4) {
+        Text(event.createdAt.formatted(.dateTime.hour().minute().second()))
+          .font(.headline)
+
+        Text(event.createdAt.formatted(.dateTime.weekday(.wide).month().day()))
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+
+        // Quick stats
+        HStack(spacing: 8) {
+          Label("\(event.intoxicationScore)/6", systemImage: "gauge")
+            .font(.caption)
+            .foregroundStyle(riskScoreColor)
+
+          if let speed = event.speedMph {
+            Label("\(speed) mph", systemImage: "speedometer")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
+      }
+
+      Spacer()
+    }
+    .padding(.vertical, 4)
   }
 }
 

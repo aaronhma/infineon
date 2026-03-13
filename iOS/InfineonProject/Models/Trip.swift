@@ -137,6 +137,20 @@ struct TripEventDetail: Hashable {
   }
 }
 
+// MARK: - Hashable
+
+extension Trip: Hashable {
+  static func == (lhs: Trip, rhs: Trip) -> Bool {
+    lhs.id == rhs.id
+  }
+
+  func hash(into hasher: inout Hasher) {
+    hasher.combine(id)
+  }
+}
+
+// MARK: - Sample Data
+
 extension Trip {
   /// Sample trip for previews
   static let sample = Trip(
