@@ -8,19 +8,45 @@
 import AaronUI
 import SwiftUI
 
-enum DetectionFilter: Hashable {
+enum DetectionEventFilter: Hashable {
   case all
-  case driver(UUID)
-  case unidentified
+  case drowsy
+  case phone
+  case drinking
+  case riskScore(Int)
 
   var displayName: String {
     switch self {
     case .all:
-      return "All Drivers"
-    case .driver:
-      return "Driver"
-    case .unidentified:
-      return "Unidentified"
+      return "All Events"
+    case .drowsy:
+      return "Drowsy"
+    case .phone:
+      return "Phone"
+    case .drinking:
+      return "Drinking"
+    case .riskScore(let score):
+      return "Risk \(score)+"
+    }
+  }
+
+  var icon: String {
+    switch self {
+    case .all: return "person.crop.rectangle.stack.fill"
+    case .drowsy: return "moon.fill"
+    case .phone: return "iphone.gen3"
+    case .drinking: return "cup.and.saucer.fill"
+    case .riskScore: return "exclamationmark.triangle.fill"
+    }
+  }
+
+  var color: Color {
+    switch self {
+    case .all: return .blue
+    case .drowsy: return .yellow
+    case .phone: return .red
+    case .drinking: return .orange
+    case .riskScore: return .purple
     }
   }
 }
@@ -31,10 +57,9 @@ struct FaceDetectionsView: View {
   let vehicle: Vehicle
 
   @State private var allDetections: [FaceDetection] = []
-  @State private var driverProfiles: [DriverProfile] = []
   @State private var isLoading = true
   @State private var errorMessage: String?
-  @State private var selectedFilter: DetectionFilter = .all
+  @State private var selectedFilter: DetectionEventFilter = .all
 
   private let columns = [
     GridItem(.adaptive(minimum: 100, maximum: 150), spacing: 8)
@@ -44,22 +69,19 @@ struct FaceDetectionsView: View {
     switch selectedFilter {
     case .all:
       return allDetections
-    case .driver(let profileId):
-      return allDetections.filter { $0.driverProfileId == profileId }
-    case .unidentified:
-      return allDetections.filter { $0.driverProfileId == nil }
+    case .drowsy:
+      return allDetections.filter { $0.isDrowsy }
+    case .phone:
+      return allDetections.filter { $0.isPhoneDetected == true }
+    case .drinking:
+      return allDetections.filter { $0.isDrinkingDetected == true }
+    case .riskScore(let minScore):
+      return allDetections.filter { $0.intoxicationScore >= minScore }
     }
   }
 
   private var filterTitle: String {
-    switch selectedFilter {
-    case .all:
-      return "All Drivers"
-    case .driver(let profileId):
-      return driverProfiles.first { $0.id == profileId }?.name ?? "Driver"
-    case .unidentified:
-      return "Unidentified"
-    }
+    selectedFilter.displayName
   }
 
   var body: some View {
@@ -74,26 +96,14 @@ struct FaceDetectionsView: View {
             Text(errorMessage)
           } actions: {
             Button("Retry") {
-              Task {
-                await loadData()
-              }
+              Task { await loadData() }
             }
           }
-        } else if filteredDetections.isEmpty {
+        } else if allDetections.isEmpty {
           ContentUnavailableView {
             Label("No Detections", systemImage: "face.dashed")
           } description: {
-            if selectedFilter == .all {
-              Text("No face detections recorded for this vehicle yet.")
-            } else {
-              Text("No detections found for this filter.")
-            }
-          } actions: {
-            if selectedFilter != .all {
-              Button("Show All") {
-                selectedFilter = .all
-              }
-            }
+            Text("No face detections recorded for this vehicle yet.")
           }
         } else {
           ScrollView {
@@ -126,31 +136,47 @@ struct FaceDetectionsView: View {
               Haptics.impact()
               selectedFilter = .all
             } label: {
-              Label("All Drivers", systemImage: selectedFilter == .all ? "checkmark" : "")
+              Label("All Events", systemImage: selectedFilter == .all ? "checkmark" : "")
             }
 
             Divider()
 
-            ForEach(driverProfiles) { profile in
-              Button {
-                Haptics.impact()
-                selectedFilter = .driver(profile.id)
-              } label: {
-                Label(
-                  profile.name,
-                  systemImage: selectedFilter == .driver(profile.id) ? "checkmark" : "")
-              }
-            }
-
-            if !driverProfiles.isEmpty {
-              Divider()
+            // Event type filters
+            Button {
+              Haptics.impact()
+              selectedFilter = .drowsy
+            } label: {
+              Label("Drowsy", systemImage: "moon.fill")
+                .foregroundStyle(.yellow)
             }
 
             Button {
               Haptics.impact()
-              selectedFilter = .unidentified
+              selectedFilter = .phone
             } label: {
-              Label("Unidentified", systemImage: selectedFilter == .unidentified ? "checkmark" : "")
+              Label("Phone", systemImage: "iphone.gen3")
+                .foregroundStyle(.red)
+            }
+
+            Button {
+              Haptics.impact()
+              selectedFilter = .drinking
+            } label: {
+              Label("Drinking", systemImage: "cup.and.saucer.fill")
+                .foregroundStyle(.orange)
+            }
+
+            Divider()
+
+            // Risk score filters
+            ForEach(0..<6, id: \.self) { score in
+              Button {
+                Haptics.impact()
+                selectedFilter = .riskScore(score)
+              } label: {
+                Label("Risk \(score)+", systemImage: "exclamationmark.triangle.fill")
+                  .foregroundStyle(score >= 4 ? .red : (score >= 2 ? .orange : .green))
+              }
             }
           } label: {
             HStack(spacing: 4) {
@@ -177,14 +203,9 @@ struct FaceDetectionsView: View {
     errorMessage = nil
 
     do {
-      async let fetchedDetections = supabase.fetchFaceDetections(for: vehicle.id)
-      async let fetchedProfiles = supabase.fetchDriverProfiles(for: vehicle.id)
-
-      let (detections, profiles) = try await (fetchedDetections, fetchedProfiles)
-
+      let fetchedDetections = try await supabase.fetchFaceDetections(for: vehicle.id)
       await MainActor.run {
-        allDetections = detections
-        driverProfiles = profiles
+        allDetections = fetchedDetections
         isLoading = false
       }
     } catch {
@@ -199,505 +220,238 @@ struct FaceDetectionsView: View {
 struct FaceDetectionThumbnail: View {
   let detection: FaceDetection
 
-  @State private var image: UIImage?
-  @State private var isLoading = true
+  var body: some View {
+    ZStack {
+      if let imagePath = detection.imagePath {
+        ThumbnailImageView(imagePath: imagePath)
+      } else {
+        ZStack {
+          Image(systemName: "person.crop.rectangle.stack.fill")
+            .font(.system(size: 30))
+            .foregroundStyle(.tertiary)
+          Text("No Image")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(width: 100, height: 100)
+        .background(.secondary.opacity(0.1))
+        .clipShape(.rect(cornerRadius: 8))
+      }
 
-  var statusColor: Color {
-    if detection.intoxicationScore >= 4 {
-      return .red
-    } else if detection.intoxicationScore >= 2 {
-      return .orange
-    } else {
-      return .green
+      // Detection indicators overlay
+      VStack(alignment: .trailing, spacing: 2) {
+        if detection.isDrowsy {
+          Image(systemName: "moon.fill")
+            .font(.system(size: 10))
+            .foregroundStyle(.yellow)
+        }
+        if detection.isPhoneDetected == true {
+          Image(systemName: "iphone.gen3")
+            .font(.system(size: 10))
+            .foregroundStyle(.red)
+        }
+        if detection.isDrinkingDetected == true {
+          Image(systemName: "cup.and.saucer.fill")
+            .font(.system(size: 10))
+            .foregroundStyle(.orange)
+        }
+      }
+      .padding(4)
+      .background(.ultraThinMaterial, in: .rect(cornerRadius: 4))
     }
   }
+}
+
+struct ThumbnailImageView: View {
+  let imagePath: String
+  @State private var imageURL: URL?
 
   var body: some View {
-    ZStack(alignment: .bottomTrailing) {
-      if let image {
-        Image(uiImage: image)
-          .resizable()
-          .aspectRatio(contentMode: .fill)
-          .frame(minWidth: 100, minHeight: 100)
-          .clipped()
-      } else if isLoading {
-        Rectangle()
-          .fill(Color.gray.opacity(0.2))
-          .overlay {
-            ProgressView()
+    Group {
+      if let imageURL {
+        AsyncImage(url: imageURL) { phase in
+          switch phase {
+          case .success(let image):
+            image
+              .resizable()
+              .aspectRatio(contentMode: .fill)
+              .frame(width: 100, height: 100)
+              .clipShape(.rect(cornerRadius: 8))
+          case .failure, .empty:
+            placeholder
+          @unknown default:
+            placeholder
           }
+        }
       } else {
-        Rectangle()
-          .fill(Color.gray.opacity(0.2))
-          .overlay {
-            Image(systemName: "photo")
-              .foregroundStyle(.secondary)
-          }
+        placeholder
       }
-
-      // Status indicator
-      Circle()
-        .fill(statusColor)
-        .frame(width: 12, height: 12)
-        .padding(6)
     }
-    .frame(minWidth: 100, minHeight: 100)
-    .clipShape(RoundedRectangle(cornerRadius: 8))
-    .overlay(
-      RoundedRectangle(cornerRadius: 8)
-        .stroke(statusColor.opacity(0.5), lineWidth: 2)
-    )
     .task {
-      await loadImage()
+      imageURL = try? await supabase.getFaceImageURL(path: imagePath)
     }
   }
 
-  private func loadImage() async {
-    guard let imagePath = detection.imagePath else {
-      isLoading = false
-      return
+  private var placeholder: some View {
+    ZStack {
+      Image(systemName: "person.crop.rectangle.stack.fill")
+        .font(.system(size: 30))
+        .foregroundStyle(.tertiary)
+      Text("No Image")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
-
-    do {
-      let data = try await supabase.downloadFaceImage(path: imagePath)
-      await MainActor.run {
-        image = UIImage(data: data)
-        isLoading = false
-      }
-    } catch {
-      print("Error loading thumbnail: \(error)")
-      await MainActor.run {
-        isLoading = false
-      }
-    }
+    .frame(width: 100, height: 100)
+    .background(.secondary.opacity(0.1))
+    .clipShape(.rect(cornerRadius: 8))
   }
 }
 
 struct FaceDetectionDetailView: View {
   let detection: FaceDetection
+  @Environment(\.dismiss) private var dismiss
 
-  @State private var image: UIImage?
+  @State private var imageURL: URL?
   @State private var isLoadingImage = true
-  @State private var driverProfile: DriverProfile?
-  @State private var showingDriverDetections = false
+
+  @State private var imageLoadError: String?
 
   var body: some View {
-    ScrollView {
-      VStack(spacing: 20) {
-        // Image section
-        imageSection
-
-        // Metadata sections
-        VStack(spacing: 16) {
-          // Driver Profile section (if identified)
-          if let profile = driverProfile {
-            driverProfileSection(profile: profile)
-          } else if detection.driverProfileId != nil {
-            // Loading state
-            GroupBox("Driver") {
-              HStack {
-                ProgressView()
-                Text("Loading profile...")
-                  .foregroundStyle(.secondary)
+    List {
+      // Image section
+      Section {
+        if isLoadingImage {
+          HStack {
+            Spacer()
+            ProgressView("Loading image...")
+            Spacer()
+          }
+          .frame(height: 250)
+        } else if let imageURL {
+          AsyncImage(url: imageURL) { phase in
+            switch phase {
+            case .success(let image):
+              image
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxHeight: 300)
+                .clipShape(.rect(cornerRadius: 12))
+            case .failure:
+              ContentUnavailableView {
+                Label("Image Unavailable", systemImage: "photo")
+              } description: {
+                Text("Could not load the snapshot")
               }
+              .frame(height: 250)
+            @unknown default:
+              EmptyView()
             }
-          } else {
-            // Unidentified
-            GroupBox("Driver") {
-              HStack {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                  .font(.title2)
-                  .foregroundStyle(.orange)
-                Text("Unidentified")
-                  .foregroundStyle(.secondary)
-                Spacer()
+          }
+        } else if let error = imageLoadError {
+          ContentUnavailableView {
+            Label("No Image", systemImage: "photo")
+          } description: {
+            Text("No snapshot available for this detection.")
+          }
+          .frame(height: 250)
+        }
+      }
+
+      // Detection info
+      Section("Detection Info") {
+        LabeledContent("Time") {
+          Text(detection.createdAt.formatted(.dateTime))
+        }
+
+        LabeledContent("Risk Score") {
+          Text("\(detection.intoxicationScore)/6")
+            .foregroundStyle(
+              detection.intoxicationScore >= 4
+                ? .red
+                : (detection.intoxicationScore >= 2 ? .orange : .green)
+            )
+        }
+      }
+
+      // Detection flags
+      Section("Detection Flags") {
+        HStack {
+          if detection.isDrowsy {
+            Label("Drowsy", systemImage: "moon.fill")
+              .foregroundStyle(.yellow)
+          }
+          if detection.isPhoneDetected == true {
+            Label("Phone", systemImage: "iphone.gen3")
+              .foregroundStyle(.red)
+          }
+          if detection.isDrinkingDetected == true {
+            Label("Drinking", systemImage: "cup.and.saucer.fill")
+              .foregroundStyle(.orange)
+          }
+          if detection.isExcessiveBlinking {
+            Label("Excessive Blinking", systemImage: "eye")
+              .foregroundStyle(.orange)
+          }
+          if detection.isUnstableEyes {
+            Label("Unstable Eyes", systemImage: "eye.trianglebadge.exclamationmark")
+              .foregroundStyle(.red)
+          }
+        }
+      }
+
+      // Location context
+      if detection.latitude != nil && detection.longitude != nil {
+        Section("Location") {
+          LabeledContent("Coordinates") {
+            Text(
+              "\(detection.latitude!, specifier: "%.4f"), \(detection.longitude!, specifier: "%.4f")"
+            )
+          }
+
+          if let heading = detection.headingDegrees, let direction = detection.compassDirection {
+            LabeledContent("Heading") {
+              HStack(spacing: 4) {
+                Image(systemName: "location.north.fill")
+                  .rotationEffect(.degrees(Double(heading)))
+                  .foregroundStyle(.blue)
+                Text("\(heading)° \(direction)")
               }
             }
           }
-
-          eyeStateSection
-          alertsSection
-          drivingContextSection
-          timestampSection
         }
-        .padding(.horizontal)
       }
     }
-    .navigationTitle("Detection Details")
+    .navigationTitle("Detection Detail")
     .navigationBarTitleDisplayMode(.inline)
+    .toolbar {
+      ToolbarItem(placement: .topBarTrailing) {
+        CloseButton {
+          dismiss()
+        }
+      }
+    }
     .task {
       await loadImage()
-      await loadDriverProfile()
-    }
-    .sheet(isPresented: $showingDriverDetections) {
-      if let profile = driverProfile, let vehicleId = detection.vehicleId {
-        DriverDetectionsView(profile: profile, vehicleId: vehicleId)
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func driverProfileSection(profile: DriverProfile) -> some View {
-    GroupBox("Driver") {
-      Button {
-        showingDriverDetections = true
-      } label: {
-        HStack(spacing: 12) {
-          // Profile avatar
-          Circle()
-            .fill(Color.blue.opacity(0.2))
-            .frame(width: 44, height: 44)
-            .overlay {
-              Text(profile.name.prefix(1).uppercased())
-                .font(.headline)
-                .foregroundStyle(.blue)
-            }
-
-          VStack(alignment: .leading, spacing: 2) {
-            Text(profile.name)
-              .font(.headline)
-              .foregroundStyle(.primary)
-            Text("View all detections")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-
-          Spacer()
-
-          Image(systemName: "chevron.right")
-            .foregroundStyle(.secondary)
-        }
-      }
-      .buttonStyle(.plain)
-    }
-  }
-
-  private func loadDriverProfile() async {
-    guard let profileId = detection.driverProfileId,
-      let vehicleId = detection.vehicleId
-    else { return }
-
-    do {
-      let profiles = try await supabase.fetchDriverProfiles(for: vehicleId)
-      await MainActor.run {
-        driverProfile = profiles.first { $0.id == profileId }
-      }
-    } catch {
-      print("Error loading driver profile: \(error)")
-    }
-  }
-
-  @ViewBuilder
-  private var imageSection: some View {
-    ZStack {
-      if let image {
-        Image(uiImage: image)
-          .resizable()
-          .aspectRatio(contentMode: .fit)
-          .clipShape(RoundedRectangle(cornerRadius: 12))
-      } else if isLoadingImage {
-        Rectangle()
-          .fill(Color.gray.opacity(0.2))
-          .aspectRatio(4 / 3, contentMode: .fit)
-          .overlay {
-            ProgressView("Loading image...")
-          }
-          .clipShape(RoundedRectangle(cornerRadius: 12))
-      } else {
-        Rectangle()
-          .fill(Color.gray.opacity(0.2))
-          .aspectRatio(4 / 3, contentMode: .fit)
-          .overlay {
-            VStack {
-              Image(systemName: "photo")
-                .font(.largeTitle)
-              Text("Image unavailable")
-                .font(.caption)
-            }
-            .foregroundStyle(.secondary)
-          }
-          .clipShape(RoundedRectangle(cornerRadius: 12))
-      }
-    }
-    .padding(.horizontal)
-  }
-
-  @ViewBuilder
-  private var eyeStateSection: some View {
-    GroupBox("Eye State") {
-      VStack(spacing: 12) {
-        HStack {
-          Label("Left Eye", systemImage: "eye")
-          Spacer()
-          Text(detection.leftEyeState ?? "Unknown")
-            .foregroundStyle(detection.leftEyeState == "OPEN" ? .green : .orange)
-          if let ear = detection.leftEyeEar {
-            Text("(\(ear, specifier: "%.3f"))")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-
-        HStack {
-          Label("Right Eye", systemImage: "eye")
-          Spacer()
-          Text(detection.rightEyeState ?? "Unknown")
-            .foregroundStyle(detection.rightEyeState == "OPEN" ? .green : .orange)
-          if let ear = detection.rightEyeEar {
-            Text("(\(ear, specifier: "%.3f"))")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-
-        if let avgEar = detection.avgEar {
-          HStack {
-            Label("Avg EAR", systemImage: "chart.bar")
-            Spacer()
-            Text("\(avgEar, specifier: "%.4f")")
-              .monospacedDigit()
-          }
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var alertsSection: some View {
-    GroupBox("Driver Alerts") {
-      VStack(spacing: 12) {
-        HStack {
-          Label("Intoxication Score", systemImage: "gauge.with.needle")
-          Spacer()
-          Text("\(detection.intoxicationScore)/6")
-            .bold()
-            .foregroundStyle(intoxicationColor)
-        }
-
-        if detection.isDrowsy {
-          Label("Drowsy", systemImage: "moon.fill")
-            .foregroundStyle(.orange)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        if detection.isExcessiveBlinking {
-          Label("Excessive Blinking", systemImage: "eye.trianglebadge.exclamationmark")
-            .foregroundStyle(.orange)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        if detection.isUnstableEyes {
-          Label("Unstable Eyes", systemImage: "exclamationmark.triangle")
-            .foregroundStyle(.orange)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        if !detection.isDrowsy && !detection.isExcessiveBlinking && !detection.isUnstableEyes {
-          Label("No alerts", systemImage: "checkmark.circle")
-            .foregroundStyle(.green)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var drivingContextSection: some View {
-    GroupBox("Driving Context") {
-      VStack(spacing: 12) {
-        if let speed = detection.speedMph {
-          HStack {
-            Label("Speed", systemImage: "speedometer")
-            Spacer()
-            Text("\(speed) mph")
-              .foregroundStyle(detection.isSpeeding == true ? .red : .primary)
-          }
-        }
-
-        if let heading = detection.headingDegrees, let direction = detection.compassDirection {
-          HStack {
-            Label("Heading", systemImage: "location.north")
-            Spacer()
-            Text("\(heading)° \(direction)")
-          }
-        }
-
-        if detection.isSpeeding == true {
-          Label("Speeding", systemImage: "exclamationmark.triangle.fill")
-            .foregroundStyle(.red)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private var timestampSection: some View {
-    GroupBox("Timestamp") {
-      VStack(spacing: 8) {
-        HStack {
-          Label("Captured", systemImage: "clock")
-          Spacer()
-          Text(detection.createdAt.formatted(date: .abbreviated, time: .standard))
-        }
-
-        if let sessionId = detection.sessionId {
-          HStack {
-            Label("Session", systemImage: "number")
-            Spacer()
-            Text(sessionId.uuidString)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-        }
-      }
-    }
-  }
-
-  private var intoxicationColor: Color {
-    if detection.intoxicationScore >= 4 {
-      return .red
-    } else if detection.intoxicationScore >= 2 {
-      return .orange
-    } else {
-      return .green
     }
   }
 
   private func loadImage() async {
     guard let imagePath = detection.imagePath else {
       isLoadingImage = false
+      imageLoadError = nil
       return
     }
 
     do {
-      let data = try await supabase.downloadFaceImage(path: imagePath)
+      let url = try await supabase.getFaceImageURL(path: imagePath)
       await MainActor.run {
-        image = UIImage(data: data)
-        isLoadingImage = false
-      }
-    } catch {
-      print("Error loading image: \(error)")
-      await MainActor.run {
-        isLoadingImage = false
-      }
-    }
-  }
-}
-
-// MARK: - Driver Detections View
-
-struct DriverDetectionsView: View {
-  let profile: DriverProfile
-  let vehicleId: String
-
-  @Environment(\.dismiss) private var dismiss
-  @State private var detections: [FaceDetection] = []
-  @State private var isLoading = true
-  @State private var errorMessage: String?
-
-  private let columns = [
-    GridItem(.adaptive(minimum: 100, maximum: 150), spacing: 8)
-  ]
-
-  var body: some View {
-    NavigationStack {
-      Group {
-        if isLoading {
-          ProgressView("Loading detections...")
-        } else if let errorMessage {
-          ContentUnavailableView {
-            Label("Error", systemImage: "exclamationmark.triangle")
-          } description: {
-            Text(errorMessage)
-          } actions: {
-            Button("Retry") {
-              Task {
-                await loadDetections()
-              }
-            }
-          }
-        } else if detections.isEmpty {
-          ContentUnavailableView {
-            Label("No Detections", systemImage: "face.dashed")
-          } description: {
-            Text("No detections found for \(profile.name).")
-          }
-        } else {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-              // Profile header
-              HStack(spacing: 12) {
-                Circle()
-                  .fill(Color.blue.opacity(0.2))
-                  .frame(width: 60, height: 60)
-                  .overlay {
-                    Text(profile.name.prefix(1).uppercased())
-                      .font(.title)
-                      .fontWeight(.semibold)
-                      .foregroundStyle(.blue)
-                  }
-
-                VStack(alignment: .leading) {
-                  Text(profile.name)
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                  Text("\(detections.count) detection\(detections.count == 1 ? "" : "s")")
-                    .foregroundStyle(.secondary)
-                }
-              }
-              .padding(.horizontal)
-
-              // Detections grid
-              LazyVGrid(columns: columns, spacing: 8) {
-                ForEach(detections) { detection in
-                  NavigationLink {
-                    FaceDetectionDetailView(detection: detection)
-                  } label: {
-                    FaceDetectionThumbnail(detection: detection)
-                  }
-                  .buttonStyle(.plain)
-                }
-              }
-              .padding(.horizontal)
-            }
-            .padding(.vertical)
-          }
-        }
-      }
-      .navigationTitle("Driver Detections")
-      .navigationBarTitleDisplayMode(.inline)
-      .toolbar {
-        ToolbarItem(placement: .cancellationAction) {
-          Button("Done") {
-            dismiss()
-          }
-        }
-      }
-      .task {
-        await loadDetections()
-      }
-      .refreshable {
-        await loadDetections()
-      }
-    }
-  }
-
-  private func loadDetections() async {
-    isLoading = true
-    errorMessage = nil
-
-    do {
-      let fetched = try await supabase.fetchDetectionsForDriver(
-        profileId: profile.id, vehicleId: vehicleId)
-      await MainActor.run {
-        detections = fetched
-        isLoading = false
+        self.imageURL = url
+        self.isLoadingImage = false
       }
     } catch {
       await MainActor.run {
-        errorMessage = error.localizedDescription
-        isLoading = false
+        self.imageLoadError = error.localizedDescription
+        self.isLoadingImage = false
       }
     }
   }
@@ -707,13 +461,19 @@ struct DriverDetectionsView: View {
   NavigationStack {
     FaceDetectionsView(
       vehicle: Vehicle(
-        id: "test",
+        id: "test-vehicle-id",
         createdAt: .now,
         updatedAt: .now,
         name: "Test Vehicle",
         description: nil,
-        inviteCode: "ABC123",
-        ownerId: nil
+        inviteCode: "TEST123",
+        ownerId: UUID(),
+        enableYolo: true,
+        enableStream: true,
+        enableShazam: false,
+        enableMicrophone: true,
+        enableCamera: true,
+        enableDashcam: true
       ))
   }
 }

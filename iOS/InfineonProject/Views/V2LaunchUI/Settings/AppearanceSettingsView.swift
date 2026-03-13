@@ -36,6 +36,29 @@ private enum AppTheme: String, CaseIterable {
   }
 }
 
+enum AppLanguage: String, Identifiable, CaseIterable {
+  case system
+  case english = "en"
+
+  var id: String { rawValue }
+
+  var localeIdentifier: String? {
+    switch self {
+    case .system: nil
+    case .english: "en"
+    }
+  }
+
+  var localizedName: String {
+    switch self {
+    case .system:
+      String(localized: "System", bundle: .main)
+    case .english:
+      Locale.current.localizedString(forIdentifier: "en_US") ?? "English (US)"
+    }
+  }
+}
+
 struct ThemeSwitcher<Content: View>: View {
   @ViewBuilder var content: Content
   @AppStorage("_appTheme") private var appTheme = AppTheme.system
@@ -46,8 +69,33 @@ struct ThemeSwitcher<Content: View>: View {
   }
 }
 
+struct LocaleSwitcher<Content: View>: View {
+  @ViewBuilder var content: Content
+  @AppStorage("_appLanguage") private var appLanguage = AppLanguage.system.rawValue
+
+  private var currentLocale: Locale {
+    guard let language = AppLanguage(rawValue: appLanguage),
+      let identifier = language.localeIdentifier
+    else {
+      return .current
+    }
+    return Locale(identifier: identifier)
+  }
+
+  var body: some View {
+    content
+      .environment(\.locale, currentLocale)
+  }
+}
+
 struct AppearanceSettingsView: View {
   @AppStorage("_appTheme") private var appTheme = AppTheme.system
+  @AppStorage("_appLanguage") private var appLanguage = AppLanguage.system.rawValue
+  @State private var showLanguageConfirmation = false
+
+  private var currentLanguage: AppLanguage {
+    AppLanguage(rawValue: appLanguage) ?? .system
+  }
 
   var body: some View {
     List {
@@ -64,21 +112,40 @@ struct AppearanceSettingsView: View {
       .listSectionSeparator(.hidden)
 
       Section {
-        Picker(selection: .constant("English")) {
-          Text("English")
-            .tag("English")
+        Button {
+          showLanguageConfirmation = true
         } label: {
-          Label {
-            Text("Language")
-          } icon: {
-            SettingsBoxView(
-              icon: "globe", color: .pink
-            )
+          HStack {
+            Label {
+              Text("Language")
+            } icon: {
+              SettingsBoxView(
+                icon: "globe", color: .pink
+              )
+            }
+            Spacer()
+            Text(currentLanguage.localizedName)
+              .foregroundStyle(.secondary)
+            Image(systemName: "chevron.right")
+              .font(.caption)
+              .foregroundStyle(.secondary)
           }
         }
+        .foregroundStyle(.primary)
       }
     }
     .navigationTitle("Appearance")
+    .confirmationDialog(
+      "Select Language", isPresented: $showLanguageConfirmation, titleVisibility: .visible
+    ) {
+      ForEach(AppLanguage.allCases) { language in
+        Button(language.localizedName) {
+          appLanguage = language.rawValue
+        }
+      }
+    } message: {
+      Text("Changing the language will update the app's display language.")
+    }
   }
 
   @ViewBuilder

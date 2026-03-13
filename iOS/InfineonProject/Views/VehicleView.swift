@@ -18,7 +18,6 @@ struct VehicleView: View {
 
   @Namespace private var namespace
 
-  @State private var showingUnidentifiedFacesSheet = false
   @State private var showingFaceDetectionsSheet = false
   @State private var showingAlertSheet = false
 
@@ -208,32 +207,7 @@ struct VehicleView: View {
                 driverAlertSection(data: data)
               }
 
-              // Face Detection Section
-              if vehicle.unidentifiedFacesCount > 0 {
-                Button {
-                  showingUnidentifiedFacesSheet.toggle()
-                } label: {
-                  Label {
-                    VStack(alignment: .leading) {
-                      Text(
-                        "\(vehicle.unidentifiedFacesCount) Unidentified Face\(vehicle.unidentifiedFacesCount == 1 ? "" : "s")"
-                      )
-                    }
-                  } icon: {
-                    SettingsBoxView(
-                      icon: "face.smiling",
-                      color: .orange
-                    )
-                  }
-                }
-                .tint(.primary)
-                .contentShape(.rect)
-                .buttonStyle(
-                  FluidZoomTransitionStyle(
-                    id: "unidentifiedFacesSheet", namespace: namespace, shape: .rect,
-                    applyGlass: false))
-              }
-
+              // Face Detections
               Button {
                 showingFaceDetectionsSheet.toggle()
               } label: {
@@ -650,10 +624,6 @@ struct VehicleView: View {
     .sheet(isPresented: $showingFaceDetectionsSheet) {
       FaceDetectionsView(vehicle: vehicle.vehicle)
         .navigationTransition(.zoom(sourceID: "faceDetectionsSheet", in: namespace))
-    }
-    .sheet(isPresented: $showingUnidentifiedFacesSheet) {
-      UnidentifiedFacesView(vehicle: vehicle.vehicle)
-        .navigationTransition(.zoom(sourceID: "unidentifiedFacesSheet", in: namespace))
     }
     .sheet(isPresented: $showingAccountSheet) {
       V2AccountView()
