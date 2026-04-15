@@ -1,5 +1,11 @@
 # ARGUS: Autonomous Real-time Guardian for Ubiquitous Safety
 
+> [!NOTE]
+> This repository will be fully updated in a few weeks when our research paper is published.
+
+> [!NOTE]
+> Come find us this Sunday at Santa Clara Convention Center at booth G3!
+
 ## Winter 2026 Infineon Special Project
 
 > Argus or Argos Panoptes (Ancient Greek: Ἄργος Πανόπτης, "All-seeing Argos") is a many-eyed giant in Greek mythology. Known for his perpetual vigilance, he served the goddess Hera as a watchman. His most famous task was guarding Io, a priestess of Hera, whom Zeus had transformed into a heifer. Argus's constant watch, with some of his eyes always open, made him a formidable guardian.
