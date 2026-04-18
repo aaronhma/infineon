@@ -11,7 +11,7 @@ import SwiftUI
 struct HomeView: View {
   @Environment(\.dismiss) private var dismiss
 
-  var vehicle: V2Profile
+  var vehicle: Profile
 
   @State private var trips: [Trip] = []
   @State private var todayTrips: [Trip] = []
@@ -232,7 +232,7 @@ struct AllTripsView: View {
 
 #Preview {
   HomeView(
-    vehicle: V2Profile(
+    vehicle: Profile(
       id: "test",
       name: "Test Vehicle",
       icon: "benji",

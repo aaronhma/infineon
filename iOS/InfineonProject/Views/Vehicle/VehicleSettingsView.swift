@@ -10,7 +10,7 @@ import Supabase
 import SwiftUI
 
 struct VehicleSettingsView: View {
-  @Environment(V2AppData.self) private var appData
+  @Environment(AppData.self) private var appData
   @Environment(\.dismiss) private var dismiss
 
   let vehicle: Vehicle

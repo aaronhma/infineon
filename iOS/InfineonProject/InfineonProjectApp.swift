@@ -101,7 +101,7 @@ struct RootView: View {
         ProgressView()
           .controlSize(.extraLarge)
       } else if supabase.isLoggedIn {
-        V2MainView()
+        MainView()
       } else {
         OnboardingView()
       }

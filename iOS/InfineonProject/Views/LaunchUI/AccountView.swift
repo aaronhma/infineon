@@ -1,5 +1,5 @@
 //
-//  V2AccountView.swift
+//  AccountView.swift
 //  InfineonProject
 //
 //  Created by Aaron Ma on 1/20/26.
@@ -10,10 +10,10 @@ import PhotosUI
 import Supabase
 import SwiftUI
 
-struct V2AccountView: View {
+struct AccountView: View {
   @Environment(\.dismiss) private var dismiss
 
-  @Environment(V2AppData.self) private var appData
+  @Environment(AppData.self) private var appData
 
   @Namespace private var namespace
 
@@ -903,12 +903,12 @@ struct NotificationSettingsView: View {
 }
 
 #Preview {
-  @Previewable @State var appData = V2AppData()
+  @Previewable @State var appData = AppData()
   @Previewable @Namespace var namespace
 
   Text("Sheet will open")
     .sheet(isPresented: .constant(true)) {
-      V2AccountView()
+      AccountView()
         .navigationTransition(.zoom(sourceID: "settingsSheet", in: namespace))
     }
     .environment(appData)

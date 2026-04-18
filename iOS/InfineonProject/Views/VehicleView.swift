@@ -14,7 +14,7 @@ import Supabase
 import SwiftUI
 
 struct VehicleView: View {
-  var vehicle: V2Profile
+  var vehicle: Profile
 
   @Namespace private var namespace
 
@@ -543,7 +543,7 @@ struct VehicleView: View {
         .navigationTransition(.zoom(sourceID: "faceDetectionsSheet", in: namespace))
     }
     .sheet(isPresented: $showingAccountSheet) {
-      V2AccountView()
+      AccountView()
         .navigationTransition(.zoom(sourceID: "settingsSheet", in: namespace))
     }
     .task(id: vehicle.vehicle.id) {
@@ -1182,7 +1182,7 @@ struct VehicleLiveLocationView: View {
 
 #Preview {
   VehicleView(
-    vehicle: V2Profile(
+    vehicle: Profile(
       id: "111", name: "AA", icon: "benji", vehicleId: "111",
       vehicle: Vehicle(
         id: "", createdAt: .now, updatedAt: .now, name: "", description: "", inviteCode: "",

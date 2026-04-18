@@ -1,5 +1,5 @@
 //
-//  V2ProfileSelectView.swift
+//  ProfileSelectView.swift
 //  InfineonProject
 //
 //  Created by Aaron Ma on 1/16/26.
@@ -54,9 +54,9 @@ struct AnimatedPositionModifier: ViewModifier, Animatable {
   }
 }
 
-struct V2ProfileSelectView: View {
+struct ProfileSelectView: View {
   @Environment(\.colorScheme) private var colorScheme
-  @Environment(V2AppData.self) private var appData
+  @Environment(AppData.self) private var appData
 
   // SwiftData query — loads instantly from disk on first render,
   // then live-updates whenever SupabaseService writes new cache entries.
@@ -72,7 +72,7 @@ struct V2ProfileSelectView: View {
 
   @State private var showingJoinVehicleSheet = false
   @State private var editMode: EditMode = .inactive
-  @State private var selectedEditProfile: V2Profile?
+  @State private var selectedEditProfile: Profile?
   @State private var showingDeleteVehicleConfirmation = false
 
   func prefetchStatus() async {
@@ -144,7 +144,7 @@ struct V2ProfileSelectView: View {
           ) {
             ForEach(
               cachedVehicles.map {
-                V2Profile(
+                Profile(
                   id: $0.id,
                   name: $0.name ?? "",
                   icon: "benji",
@@ -380,7 +380,7 @@ struct V2ProfileSelectView: View {
             )
             .offset(animateToMainView ? diff : .zero)
 
-          V2LoadingView()
+          LoadingView()
             .frame(width: 60, height: 60)
             .offset(y: 80)
             .opacity(animateToCenter ? 1 : 0)
@@ -397,7 +397,7 @@ struct V2ProfileSelectView: View {
   }
 
   @ViewBuilder
-  private func profileCard(_ profile: V2Profile) -> some View {
+  private func profileCard(_ profile: Profile) -> some View {
     VStack(spacing: 8) {
       let status = profile.id == appData.watchingProfile?.id
 
@@ -437,7 +437,7 @@ struct V2ProfileSelectView: View {
 }
 
 #Preview {
-  V2ProfileSelectView()
-    .environment(V2AppData())
+  ProfileSelectView()
+    .environment(AppData())
     .preferredColorScheme(.dark)
 }

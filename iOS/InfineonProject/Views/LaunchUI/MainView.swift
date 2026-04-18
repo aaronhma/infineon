@@ -1,5 +1,5 @@
 //
-//  V2MainView.swift
+//  MainView.swift
 //  InfineonProject
 //
 //  Created by Aaron Ma on 1/16/26.
@@ -8,9 +8,9 @@
 import AaronUI
 import SwiftUI
 
-struct V2MainView: View {
+struct MainView: View {
   @Environment(\.colorScheme) private var colorScheme
-  @State var appData = V2AppData()
+  @State var appData = AppData()
 
   var body: some View {
     ZStack {
@@ -23,7 +23,7 @@ struct V2MainView: View {
         .frame(maxHeight: .infinity)
         .overlay(alignment: .bottom) {
           if appData.watchingProfile != nil {
-            V2LaunchUITabView()
+            LaunchUITabView()
           }
         }
       }
@@ -31,7 +31,7 @@ struct V2MainView: View {
 
       Group {
         if appData.showProfileView {
-          V2ProfileSelectView()
+          ProfileSelectView()
         }
       }
       .animation(.snappy, value: appData.showProfileView)
@@ -54,7 +54,7 @@ struct V2MainView: View {
             if let pendingId = deepLinkManager.pendingVehicleId,
               let vehicle = supabase.vehicles.first(where: { $0.id == pendingId })
             {
-              let profile = V2Profile(
+              let profile = Profile(
                 id: vehicle.id,
                 name: vehicle.name ?? "Vehicle",
                 icon: "benji",
@@ -93,7 +93,7 @@ struct V2MainView: View {
         return
       }
 
-      let profile = V2Profile(
+      let profile = Profile(
         id: vehicle.id,
         name: vehicle.name ?? "Vehicle",
         icon: "benji",
@@ -110,5 +110,5 @@ struct V2MainView: View {
 }
 
 #Preview {
-  V2MainView()
+  MainView()
 }

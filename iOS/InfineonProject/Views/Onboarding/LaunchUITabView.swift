@@ -1,5 +1,5 @@
 //
-//  V2LaunchUITabView.swift
+//  LaunchUITabView.swift
 //  InfineonProject
 //
 //  Created by Aaron Ma on 1/16/26.
@@ -8,7 +8,7 @@
 import AaronUI
 import SwiftUI
 
-struct V2Profile: Identifiable {
+struct Profile: Identifiable {
   var id: String
   var name: String
   var icon: String
@@ -33,7 +33,7 @@ var sampleVehicle = Vehicle(
   id: "BENJI123", createdAt: .now, updatedAt: .now, name: "Benji", description: "Model Y",
   inviteCode: "111111", ownerId: UUID())
 
-var mockProfiles: [V2Profile] = [
+var mockProfiles: [Profile] = [
   .init(
     id: "BENJI123", name: "Benji", icon: "benji", vehicleId: "BENJI123", vehicle: sampleVehicle),
   .init(
@@ -41,12 +41,12 @@ var mockProfiles: [V2Profile] = [
 ]
 
 @Observable
-class V2AppData {
+class AppData {
   var isSplashFinished = false
   var hideMainView = false
   var showProfileView = false
   var tabProfileRect: CGRect = .zero
-  var watchingProfile: V2Profile?
+  var watchingProfile: Profile?
   var animateProfile = false
   var fromTabBar = false
 }
@@ -57,8 +57,8 @@ private struct NoAnimationButtonStyle: ButtonStyle {
   }
 }
 
-struct V2LaunchUITabView: View {
-  @Environment(V2AppData.self) private var appData
+struct LaunchUITabView: View {
+  @Environment(AppData.self) private var appData
 
   var body: some View {
     HStack(spacing: 0) {
@@ -115,13 +115,13 @@ struct V2LaunchUITabView: View {
 }
 
 #Preview {
-  @Previewable @State var appData = V2AppData()
+  @Previewable @State var appData = AppData()
 
   ZStack {
     VStack {
       Spacer(minLength: 0)
 
-      V2LaunchUITabView()
+      LaunchUITabView()
     }
     .coordinateSpace(.named("MAINVIEW"))
 

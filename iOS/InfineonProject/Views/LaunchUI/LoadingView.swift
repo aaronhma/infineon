@@ -1,5 +1,5 @@
 //
-//  V2LoadingView.swift
+//  LoadingView.swift
 //  InfineonProject
 //
 //  Created by Aaron Ma on 1/16/26.
@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-struct V2LoadingView: View {
+struct LoadingView: View {
   @State private var isSpinning = false
 
   var body: some View {
@@ -36,7 +36,7 @@ struct V2LoadingView: View {
 }
 
 #Preview {
-  V2LoadingView()
+  LoadingView()
     .frame(width: 100, height: 100)
     .preferredColorScheme(.dark)
 }
