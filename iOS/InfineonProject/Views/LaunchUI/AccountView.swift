@@ -317,8 +317,10 @@ struct AccountView: View {
                 .clipShape(.circle)
 
               VStack(alignment: .leading, spacing: 4) {
-                Text(supabase.userProfile?.displayName ?? "No Name")
-                  .font(.headline)
+                Text(
+                  supabase.userProfile?.displayName ?? "No Name"
+                )
+                .font(.headline)
 
                 if let email = supabase.currentUser?.email {
                   Text(email)
@@ -357,9 +359,42 @@ struct AccountView: View {
           }
         }
 
+        Section {
+          Button(role: .destructive) {
+            Haptics.impact()
+            showingSignOutConfirmation = true
+          } label: {
+            Label {
+              Text("Sign Out")
+            } icon: {
+              SettingsBoxView(
+                icon: "rectangle.portrait.and.arrow.right",
+                color: .red
+              )
+            }
+          }
+          .confirmationDialog(
+            "Are you sure you want to sign out?",
+            isPresented: $showingSignOutConfirmation,
+            titleVisibility: .visible
+          ) {
+            Button("Sign Out", role: .destructive) {
+              Haptics.impact()
+              Task {
+                try? await supabase.signOut()
+              }
+            }
+            Button("Cancel", role: .cancel) {}
+          }
+        }
+
         // About Section
         Section {
-          Link(destination: URL(string: "https://github.com/aaronhma/infineon")!) {
+          Link(
+            destination: URL(
+              string: "https://github.com/aaronhma/infineon"
+            )!
+          ) {
             VStack(alignment: .leading, spacing: 8) {
               Text("ARGUS")
                 .font(.headline)
@@ -381,35 +416,30 @@ struct AccountView: View {
             Label {
               Text("Licensing")
             } icon: {
-              SettingsBoxView(icon: "graduationcap.fill", color: .indigo)
+              SettingsBoxView(
+                icon: "graduationcap.fill",
+                color: .indigo
+              )
             }
           }
-        }
+        } footer: {
+          let version =
+            Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "DEV"
+          let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "DEV"
 
-        Section {
-          Button(role: .destructive) {
-            Haptics.impact()
-            showingSignOutConfirmation = true
-          } label: {
-            Label {
-              Text("Sign Out")
-            } icon: {
-              SettingsBoxView(icon: "rectangle.portrait.and.arrow.right", color: .red)
+          HStack {
+            Spacer()
+
+            VStack(spacing: 10) {
+              Text("ARGUS")
+                .fontWidth(.expanded)
+
+              Text("Version v\(version) (\(build))")
             }
+
+            Spacer()
           }
-          .confirmationDialog(
-            "Are you sure you want to sign out?",
-            isPresented: $showingSignOutConfirmation,
-            titleVisibility: .visible
-          ) {
-            Button("Sign Out", role: .destructive) {
-              Haptics.impact()
-              Task {
-                try? await supabase.signOut()
-              }
-            }
-            Button("Cancel", role: .cancel) {}
-          }
+          .padding(.top)
         }
       }
       .toolbar {
@@ -456,7 +486,11 @@ struct AccountView: View {
         case .licensing:
           List {
             Section("License") {
-              Link(destination: URL(string: "https://github.com/aaronhma/infineon")!) {
+              Link(
+                destination: URL(
+                  string: "https://github.com/aaronhma/infineon"
+                )!
+              ) {
                 VStack(alignment: .leading, spacing: 8) {
                   Text("ARGUS")
                     .font(.headline)
@@ -474,17 +508,37 @@ struct AccountView: View {
               }
               .foregroundStyle(.primary)
 
-              licenseComponentView(name: "Copyright", creator: "Aaron Ma", license: "Apache-2")
+              licenseComponentView(
+                name: "Copyright",
+                creator: "Aaron Ma",
+                license: "Apache-2"
+              )
             }
 
             Section("AaronUI") {
-              licenseComponentView(name: "AaronUI", creator: "Aaron Ma", license: "Apache-2")
+              licenseComponentView(
+                name: "AaronUI",
+                creator: "Aaron Ma",
+                license: "Apache-2"
+              )
             }
 
             Section("Open Source Software") {
-              licenseComponentView(name: "Supabase", creator: "Supabase", license: "MIT")
-              licenseComponentView(name: "swift-asn1", creator: "Apple, Inc.", license: "Apache-2")
-              licenseComponentView(name: "swift-clocks", creator: "Point-Free", license: "MIT")
+              licenseComponentView(
+                name: "Supabase",
+                creator: "Supabase",
+                license: "MIT"
+              )
+              licenseComponentView(
+                name: "swift-asn1",
+                creator: "Apple, Inc.",
+                license: "Apache-2"
+              )
+              licenseComponentView(
+                name: "swift-clocks",
+                creator: "Point-Free",
+                license: "MIT"
+              )
               licenseComponentView(
                 name: "swift-concurrency-extras", creator: "Point-Free", license: "MIT")
               licenseComponentView(
@@ -504,7 +558,11 @@ struct AccountView: View {
 
   @ViewBuilder
   private func licenseComponentView(name: String, creator: String, license: String) -> some View {
-    NavigationLink(value: SettingsOptions.license(name: name, creator: creator, license: license)) {
+    NavigationLink(
+      value:
+        SettingsOptions
+        .license(name: name, creator: creator, license: license)
+    ) {
       HStack {
         VStack(alignment: .leading) {
           Text(name)
@@ -575,7 +633,10 @@ struct EditProfileView: View {
         HStack {
           Spacer()
 
-          PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+          PhotosPicker(
+            selection: $selectedPhotoItem,
+            matching: .images
+          ) {
             VStack(spacing: 8) {
               profileImageView
                 .frame(width: 100, height: 100)
@@ -634,10 +695,14 @@ struct EditProfileView: View {
     .onDisappear {
       hideKeyboard()
     }
-    .onChange(of: selectedPhotoItem) { _, newItem in
+    .onChange(of: selectedPhotoItem) {
+      _,
+      newItem in
       guard let newItem else { return }
       Task {
-        if let data = try? await newItem.loadTransferable(type: Data.self),
+        if let data = try? await newItem.loadTransferable(
+          type: Data.self
+        ),
           let uiImage = UIImage(data: data)
         {
           selectedImage = uiImage
@@ -651,7 +716,10 @@ struct EditProfileView: View {
     }
     .sheet(isPresented: $showingCropViewSheet) {
       if let selectedImage {
-        CropView(crop: .circle, image: selectedImage) { resultImage, status in
+        CropView(
+          crop: .circle,
+          image: selectedImage
+        ) { resultImage, status in
           if status {
             croppedImage = resultImage
           }
@@ -666,7 +734,10 @@ struct EditProfileView: View {
           .overlay {
             ProgressView("Saving...")
               .padding()
-              .background(.regularMaterial, in: .rect(cornerRadius: 12))
+              .background(
+                .regularMaterial,
+                in: .rect(cornerRadius: 12)
+              )
           }
       }
     }
@@ -721,7 +792,9 @@ struct EditProfileView: View {
       if let croppedImage,
         let imageData = croppedImage.jpegData(compressionQuality: 0.8)
       {
-        avatarPath = try await supabase.uploadUserAvatar(imageData: imageData)
+        avatarPath =
+          try await supabase
+          .uploadUserAvatar(imageData: imageData)
       }
 
       try await supabase.updateUserProfile(
@@ -772,7 +845,8 @@ struct NotificationSettingsView: View {
         .onChange(of: notificationsEnabled) {
           if notificationsEnabled {
             Task {
-              await UIApplication.shared.registerForRemoteNotifications()
+              await UIApplication.shared
+                .registerForRemoteNotifications()
             }
           }
         }
@@ -909,7 +983,9 @@ struct NotificationSettingsView: View {
   Text("Sheet will open")
     .sheet(isPresented: .constant(true)) {
       AccountView()
-        .navigationTransition(.zoom(sourceID: "settingsSheet", in: namespace))
+        .navigationTransition(
+          .zoom(sourceID: "settingsSheet", in: namespace)
+        )
     }
     .environment(appData)
 }

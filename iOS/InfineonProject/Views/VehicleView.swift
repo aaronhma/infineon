@@ -472,20 +472,38 @@ struct VehicleView: View {
               id: "accessSheet", namespace: namespace, shape: .capsule, applyGlass: false))
         }
 
-        ToolbarItem(placement: .topBarTrailing) {
-          Button {
-            Haptics.impact()
-            showingAccountSheet.toggle()
-          } label: {
-            ProfileToolbarImage()
+        if #available(iOS 26, macOS 26, watchOS 26, tvOS 26, visionOS 26, *) {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button {
+              Haptics.impact()
+              showingAccountSheet.toggle()
+            } label: {
+              ProfileToolbarImage()
+            }
+            .containerShape(.circle)
+            .contentShape(.circle)
+            .buttonBorderShape(.circle)
+            .clipShape(Circle())
+            .buttonStyle(
+              FluidZoomTransitionStyle(id: "settingsSheet", namespace: namespace, shape: .circle))
           }
-          .containerShape(.circle)
-          .contentShape(.circle)
-          .buttonBorderShape(.circle)
-          .clipShape(Circle())
-          .buttonStyle(
-            FluidZoomTransitionStyle(
-              id: "settingsSheet", namespace: namespace, shape: .circle, applyGlass: false))
+          .sharedBackgroundVisibility(.hidden)
+        } else {
+          ToolbarItem(placement: .topBarTrailing) {
+            Button {
+              Haptics.impact()
+              showingAccountSheet.toggle()
+            } label: {
+              ProfileToolbarImage()
+            }
+            .containerShape(.circle)
+            .contentShape(.circle)
+            .buttonBorderShape(.circle)
+            .clipShape(Circle())
+            .buttonStyle(
+              FluidZoomTransitionStyle(
+                id: "settingsSheet", namespace: namespace, shape: .circle, applyGlass: false))
+          }
         }
       }
     }
