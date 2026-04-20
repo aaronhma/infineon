@@ -4,9 +4,6 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Enable pgvector extension for face embedding storage and similarity search
-CREATE EXTENSION IF NOT EXISTS vector;
-
 -- ============================================
 -- STORAGE BUCKETS
 -- ============================================
@@ -157,32 +154,6 @@ CREATE INDEX IF NOT EXISTS idx_vehicle_access_vehicle_id ON public.vehicle_acces
 CREATE INDEX IF NOT EXISTS idx_vehicles_invite_code ON public.vehicles(invite_code);
 
 -- ============================================
--- DRIVER PROFILES TABLE
--- ============================================
-
--- Driver profiles: named faces for identification
-CREATE TABLE IF NOT EXISTS public.driver_profiles (
-    id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-
-    -- Link to vehicle (drivers are per-vehicle)
-    vehicle_id TEXT NOT NULL REFERENCES public.vehicles(id) ON DELETE CASCADE,
-
-    -- Driver info
-    name TEXT NOT NULL,
-    notes TEXT,
-
-    -- Reference face image (path in storage bucket)
-    profile_image_path TEXT,
-
-    -- Created by user
-    created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_driver_profiles_vehicle_id ON public.driver_profiles(vehicle_id);
-
--- ============================================
 -- FACE DETECTIONS TABLE
 -- ============================================
 
@@ -194,17 +165,8 @@ CREATE TABLE IF NOT EXISTS public.face_detections (
     -- Link to vehicle
     vehicle_id TEXT REFERENCES public.vehicles(id) ON DELETE CASCADE,
 
-    -- Link to identified driver (NULL if unidentified)
-    driver_profile_id UUID REFERENCES public.driver_profiles(id) ON DELETE SET NULL,
-
     -- Face detection metadata
     face_bbox JSONB, -- {x_min, y_min, x_max, y_max}
-
-    -- Face embedding for similarity matching (128-dimensional vector)
-    face_embedding vector(128),
-
-    -- Cluster ID to group similar unidentified faces
-    face_cluster_id UUID,
 
     -- Eye state data
     left_eye_state TEXT, -- 'OPEN' or 'CLOSED'
@@ -222,6 +184,15 @@ CREATE TABLE IF NOT EXISTS public.face_detections (
     -- Distraction detection
     is_phone_detected BOOLEAN DEFAULT FALSE,
     is_drinking_detected BOOLEAN DEFAULT FALSE,
+    is_distracted_gaze BOOLEAN DEFAULT FALSE,
+
+    -- Gyroscope / accelerometer
+    acc_mag REAL DEFAULT NULL,
+    acc_delta REAL DEFAULT NULL,
+    gyro_mag REAL DEFAULT NULL,
+    gyrox REAL DEFAULT NULL,
+    gyroy REAL DEFAULT NULL,
+    gyroz REAL DEFAULT NULL,
 
     -- Driving context (if available)
     speed_mph INTEGER,
@@ -241,19 +212,6 @@ CREATE INDEX IF NOT EXISTS idx_face_detections_created_at ON public.face_detecti
 CREATE INDEX IF NOT EXISTS idx_face_detections_session_id ON public.face_detections(session_id);
 CREATE INDEX IF NOT EXISTS idx_face_detections_intoxication ON public.face_detections(intoxication_score) WHERE intoxication_score >= 2;
 CREATE INDEX IF NOT EXISTS idx_face_detections_vehicle_id ON public.face_detections(vehicle_id);
-CREATE INDEX IF NOT EXISTS idx_face_detections_driver_profile ON public.face_detections(driver_profile_id);
-CREATE INDEX IF NOT EXISTS idx_face_detections_unidentified ON public.face_detections(vehicle_id) WHERE driver_profile_id IS NULL;
-
--- Create index for efficient similarity search on face embeddings
-CREATE INDEX IF NOT EXISTS idx_face_detections_embedding
-ON public.face_detections
-USING ivfflat (face_embedding vector_cosine_ops)
-WITH (lists = 100);
-
--- Create index for cluster lookups
-CREATE INDEX IF NOT EXISTS idx_face_detections_cluster_id
-ON public.face_detections(face_cluster_id)
-WHERE face_cluster_id IS NOT NULL;
 
 -- ============================================
 -- USER PROFILES TABLE
@@ -317,9 +275,6 @@ CREATE TABLE IF NOT EXISTS public.vehicle_trips (
     -- Session tracking (same session_id as face_detections)
     session_id UUID NOT NULL,
 
-    -- Link to identified driver (NULL if unidentified)
-    driver_profile_id UUID REFERENCES public.driver_profiles(id) ON DELETE SET NULL,
-
     -- Trip timing
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ended_at TIMESTAMPTZ,
@@ -342,6 +297,7 @@ CREATE TABLE IF NOT EXISTS public.vehicle_trips (
     -- Distraction event counts
     phone_distraction_event_count INTEGER DEFAULT 0,
     drinking_event_count INTEGER DEFAULT 0,
+    distracted_gaze_event_count INTEGER DEFAULT 0,
 
     -- Speed samples for average calculation
     speed_sample_count INTEGER DEFAULT 0,
@@ -358,7 +314,6 @@ CREATE TABLE IF NOT EXISTS public.vehicle_trips (
 CREATE INDEX IF NOT EXISTS idx_vehicle_trips_vehicle_id ON public.vehicle_trips(vehicle_id);
 CREATE INDEX IF NOT EXISTS idx_vehicle_trips_session_id ON public.vehicle_trips(session_id);
 CREATE INDEX IF NOT EXISTS idx_vehicle_trips_started_at ON public.vehicle_trips(started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_vehicle_trips_driver_profile ON public.vehicle_trips(driver_profile_id);
 CREATE INDEX IF NOT EXISTS idx_vehicle_trips_status ON public.vehicle_trips(status);
 
 -- ============================================
@@ -405,7 +360,6 @@ ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vehicle_access ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vehicle_realtime ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.face_detections ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.driver_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.vehicle_trips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.music_detections ENABLE ROW LEVEL SECURITY;
@@ -500,71 +454,6 @@ CREATE POLICY "face_detections_service_role_all" ON public.face_detections
 -- Authenticated users can read detections for vehicles they have access to
 CREATE POLICY "face_detections_select_with_access" ON public.face_detections
     FOR SELECT TO authenticated
-    USING (
-        vehicle_id IN (
-            SELECT vehicle_id FROM public.vehicle_access
-            WHERE user_id = auth.uid()
-        )
-    );
-
--- Authenticated users can update driver_profile_id for vehicles they have access to
-CREATE POLICY "face_detections_update_driver_profile" ON public.face_detections
-    FOR UPDATE TO authenticated
-    USING (
-        vehicle_id IN (
-            SELECT vehicle_id FROM public.vehicle_access
-            WHERE user_id = auth.uid()
-        )
-    )
-    WITH CHECK (
-        vehicle_id IN (
-            SELECT vehicle_id FROM public.vehicle_access
-            WHERE user_id = auth.uid()
-        )
-    );
-
--- ============================================
--- DRIVER PROFILES TABLE POLICIES
--- ============================================
-
--- Service role can do everything
-CREATE POLICY "driver_profiles_service_role_all" ON public.driver_profiles
-    FOR ALL TO service_role
-    USING (true) WITH CHECK (true);
-
--- Authenticated users can read profiles for vehicles they have access to
-CREATE POLICY "driver_profiles_select_with_access" ON public.driver_profiles
-    FOR SELECT TO authenticated
-    USING (
-        vehicle_id IN (
-            SELECT vehicle_id FROM public.vehicle_access
-            WHERE user_id = auth.uid()
-        )
-    );
-
--- Authenticated users can create profiles for vehicles they have access to
-CREATE POLICY "driver_profiles_insert_with_access" ON public.driver_profiles
-    FOR INSERT TO authenticated
-    WITH CHECK (
-        vehicle_id IN (
-            SELECT vehicle_id FROM public.vehicle_access
-            WHERE user_id = auth.uid()
-        )
-    );
-
--- Authenticated users can update profiles for vehicles they have access to
-CREATE POLICY "driver_profiles_update_with_access" ON public.driver_profiles
-    FOR UPDATE TO authenticated
-    USING (
-        vehicle_id IN (
-            SELECT vehicle_id FROM public.vehicle_access
-            WHERE user_id = auth.uid()
-        )
-    );
-
--- Authenticated users can delete profiles for vehicles they have access to
-CREATE POLICY "driver_profiles_delete_with_access" ON public.driver_profiles
-    FOR DELETE TO authenticated
     USING (
         vehicle_id IN (
             SELECT vehicle_id FROM public.vehicle_access
@@ -964,144 +853,6 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.update_user_profile(TEXT, TEXT, JSONB, BOOLEAN, TEXT) TO authenticated;
-
--- ============================================
--- FACE CLUSTERING FUNCTIONS
--- ============================================
-
--- Function to find similar faces and return a cluster_id
--- If a similar face exists, returns its cluster_id
--- If no similar face exists, returns a new UUID
-CREATE OR REPLACE FUNCTION public.find_or_create_face_cluster(
-    p_vehicle_id TEXT,
-    p_embedding vector(128),
-    p_similarity_threshold FLOAT DEFAULT 0.6
-)
-RETURNS UUID AS $$
-DECLARE
-    v_cluster_id UUID;
-    v_similar_face RECORD;
-BEGIN
-    -- Find the most similar unidentified face in the same vehicle
-    -- Using cosine similarity (1 - cosine_distance)
-    SELECT
-        face_cluster_id,
-        1 - (face_embedding <=> p_embedding) as similarity
-    INTO v_similar_face
-    FROM public.face_detections
-    WHERE vehicle_id = p_vehicle_id
-        AND face_embedding IS NOT NULL
-        AND face_cluster_id IS NOT NULL
-        -- Only compare with faces from the last 30 days for performance
-        AND created_at > NOW() - INTERVAL '30 days'
-    ORDER BY face_embedding <=> p_embedding ASC
-    LIMIT 1;
-
-    -- If found a similar face above threshold, use its cluster_id
-    IF v_similar_face IS NOT NULL AND v_similar_face.similarity >= p_similarity_threshold THEN
-        RETURN v_similar_face.face_cluster_id;
-    END IF;
-
-    -- No similar face found, generate new cluster_id
-    RETURN uuid_generate_v4();
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Function to propagate driver_profile_id to all faces in the same cluster
-CREATE OR REPLACE FUNCTION public.propagate_driver_profile_to_cluster()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Only run when driver_profile_id is being set (not cleared)
-    -- and when the face has a cluster_id
-    IF NEW.driver_profile_id IS NOT NULL
-        AND OLD.driver_profile_id IS NULL
-        AND NEW.face_cluster_id IS NOT NULL THEN
-
-        -- Update all faces in the same cluster that don't have a profile yet
-        UPDATE public.face_detections
-        SET driver_profile_id = NEW.driver_profile_id
-        WHERE face_cluster_id = NEW.face_cluster_id
-            AND vehicle_id = NEW.vehicle_id
-            AND driver_profile_id IS NULL
-            AND id != NEW.id;
-
-        RAISE NOTICE 'Propagated driver_profile_id % to cluster %',
-            NEW.driver_profile_id, NEW.face_cluster_id;
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Create trigger to automatically propagate profile assignments
-DROP TRIGGER IF EXISTS trigger_propagate_driver_profile ON public.face_detections;
-CREATE TRIGGER trigger_propagate_driver_profile
-    AFTER UPDATE OF driver_profile_id ON public.face_detections
-    FOR EACH ROW
-    EXECUTE FUNCTION public.propagate_driver_profile_to_cluster();
-
--- Function to get all unidentified face clusters for a vehicle
--- Returns one representative face per cluster for display in the app
-CREATE OR REPLACE FUNCTION public.get_unidentified_face_clusters(p_vehicle_id TEXT)
-RETURNS TABLE (
-    cluster_id UUID,
-    face_count BIGINT,
-    first_seen TIMESTAMPTZ,
-    last_seen TIMESTAMPTZ,
-    representative_image_path TEXT
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        fd.face_cluster_id as cluster_id,
-        COUNT(*) as face_count,
-        MIN(fd.created_at) as first_seen,
-        MAX(fd.created_at) as last_seen,
-        (
-            SELECT fd2.image_path
-            FROM public.face_detections fd2
-            WHERE fd2.face_cluster_id = fd.face_cluster_id
-            ORDER BY fd2.created_at DESC
-            LIMIT 1
-        ) as representative_image_path
-    FROM public.face_detections fd
-    WHERE fd.vehicle_id = p_vehicle_id
-        AND fd.driver_profile_id IS NULL
-        AND fd.face_cluster_id IS NOT NULL
-    GROUP BY fd.face_cluster_id
-    ORDER BY last_seen DESC;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Function to assign a profile to an entire cluster
-CREATE OR REPLACE FUNCTION public.assign_profile_to_cluster(
-    p_cluster_id UUID,
-    p_profile_id UUID
-)
-RETURNS JSONB AS $$
-DECLARE
-    v_updated_count INTEGER;
-BEGIN
-    -- Update all faces in the cluster
-    UPDATE public.face_detections
-    SET driver_profile_id = p_profile_id
-    WHERE face_cluster_id = p_cluster_id
-        AND driver_profile_id IS NULL;
-
-    GET DIAGNOSTICS v_updated_count = ROW_COUNT;
-
-    RETURN jsonb_build_object(
-        'success', true,
-        'updated_count', v_updated_count,
-        'cluster_id', p_cluster_id,
-        'profile_id', p_profile_id
-    );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-GRANT EXECUTE ON FUNCTION public.find_or_create_face_cluster(TEXT, vector(128), FLOAT) TO service_role;
-GRANT EXECUTE ON FUNCTION public.get_unidentified_face_clusters(TEXT) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.assign_profile_to_cluster(UUID, UUID) TO authenticated;
 
 -- ============================================
 -- REMOTE BUZZER CONTROL FUNCTIONS
