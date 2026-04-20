@@ -240,7 +240,6 @@ _ENV_ENABLE_STREAM, _ENV_STREAM_SET = _parse_env_bool("ENABLE_STREAM", False)
 _ENV_ENABLE_SHAZAM, _ENV_SHAZAM_SET = _parse_env_bool("ENABLE_SHAZAM", True)
 _ENV_ENABLE_MICROPHONE, _ENV_MIC_SET = _parse_env_bool("ENABLE_MICROPHONE", True)
 _ENV_ENABLE_DASHCAM, _ENV_DASHCAM_SET = _parse_env_bool("ENABLE_DASHCAM", True)
-_ENV_ENABLE_CUSTOM_MODELS, _ = _parse_env_bool("ENABLE_CUSTOM_MODELS", False)
 _ENV_MIRROR_CAMERA, _ = _parse_env_bool("MIRROR_CAMERA", False)
 
 # Stream / Shazam parameters (always from .env)
@@ -249,24 +248,6 @@ STREAM_FPS = int(os.environ.get("STREAM_FPS", "3"))
 STREAM_WIDTH = int(os.environ.get("STREAM_WIDTH", "640"))
 SHAZAM_INTERVAL = int(os.environ.get("SHAZAM_INTERVAL", "20"))
 SHAZAM_DEBUG = os.environ.get("SHAZAM_DEBUG", "false").lower() in ("true", "1", "yes")
-
-# Custom ONNX model paths — try INT8 first (fastest on RPi4), fall back to FP32
-_EYE_CANDIDATES = [
-    "models/checkpoints/eye_state_distilled_int8_dynamic.onnx",
-    "models/checkpoints/eye_state_distilled_fp32.onnx",
-]
-_ACTIVITY_CANDIDATES = [
-    "models/checkpoints/driver_activity_distilled_int8_dynamic.onnx",
-    "models/checkpoints/driver_activity_distilled_fp32.onnx",
-]
-
-
-def _find_model(candidates):
-    """Return the first model path that exists, or None."""
-    for path in candidates:
-        if os.path.exists(path):
-            return path
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -4387,44 +4368,6 @@ def main():
         impairment_detector = None
         width, height = 0, 0
 
-        # Custom ONNX model inference (replaces MediaPipe EAR + YOLO)
-        # Disabled by default — set ENABLE_CUSTOM_MODELS=true in .env to use
-        driver_system = None
-        if _ENV_ENABLE_CUSTOM_MODELS:
-            print("Loading custom ONNX models...", flush=True)
-            try:
-                print("  Importing DriverAwarenessSystem...", end=" ", flush=True)
-                from models.inference import DriverAwarenessSystem
-
-                print("ok")
-
-                eye_path = _find_model(_EYE_CANDIDATES)
-                activity_path = _find_model(_ACTIVITY_CANDIDATES)
-                if eye_path or activity_path:
-                    print(f"  Loading eye model: {eye_path}", flush=True)
-                    print(f"  Loading activity model: {activity_path}", flush=True)
-                    driver_system = DriverAwarenessSystem(
-                        eye_model_path=eye_path,
-                        activity_model_path=activity_path,
-                    )
-                    health = driver_system.get_health()
-                    print(
-                        f"  Custom ONNX models loaded: eye={health['eye_model_loaded']}, activity={health['activity_model_loaded']}"
-                    )
-                else:
-                    print("  No ONNX model files found in models/checkpoints/")
-            except ImportError as e:
-                print(f"FAILED ({e})")
-                print("  Custom models not available (models package not found)")
-            except Exception as e:
-                print(f"FAILED ({e})")
-                print("  Falling back to MediaPipe + YOLO")
-                driver_system = None
-        else:
-            print(
-                "Custom ONNX models disabled (set ENABLE_CUSTOM_MODELS=true in .env to enable)"
-            )
-
         if enable_camera:
             # Load camera, FaceAnalyzer, and YOLO all in parallel — camera
             # open (~0.5s) overlaps with model loading (~2-3s each).
@@ -4624,41 +4567,9 @@ def main():
                     frame, face_bbox=face_bbox
                 )
 
-                # Custom model inference: override distraction_data and intox_data
-                if driver_system:
-                    face_crop = detection_data["face_crop"] if detection_data else None
-                    awareness = driver_system.process_frame(
-                        face_crop=face_crop,
-                        upper_body_crop=frame,
-                    )
-                    # Override YOLO results with activity model output
-                    distraction_data = {
-                        "phone_detected": awareness["is_phone_detected"],
-                        "drinking_detected": awareness["is_drinking_detected"],
-                        "phone_bbox": None,
-                        "bottle_bbox": None,
-                        "phone_frames": 0,
-                        "drinking_frames": 0,
-                    }
-                    # Override MediaPipe EAR intoxication with eye model output
-                    intox_data = {
-                        "drowsy": awareness["is_drowsy"],
-                        "excessive_blinking": awareness["is_excessive_blinking"],
-                        "unstable_eyes": awareness["is_unstable_eyes"],
-                        "score": awareness["intoxication_score"],
-                        "ear": awareness["ear_score"],
-                    }
-                    # Override detection_data fields for Supabase upload
-                    if detection_data:
-                        detection_data["intox_data"] = intox_data
-                        detection_data["left_eye_state"] = awareness["left_eye_state"]
-                        detection_data["right_eye_state"] = awareness["right_eye_state"]
-                        detection_data["left_eye_ear"] = awareness["ear_score"]
-                        detection_data["right_eye_ear"] = awareness["ear_score"]
-                else:
-                    intox_data = (
-                        detection_data["intox_data"] if detection_data else None
-                    )
+                intox_data = (
+                    detection_data["intox_data"] if detection_data else None
+                )
 
                 # Extract gaze data from this frame (if available)
                 gaze_data = detection_data.get("gaze_data") if detection_data else None

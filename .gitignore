@@ -5,7 +5,6 @@
 # Environment/API keys
 iOS/InfineonProject/Utilities/Constants.swift
 .DS_Store
-cuda-gpu-models
 
 ## User settings
 xcuserdata/
